@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		548B89A0768EF8F441797E9D /* CoreMachO in Frameworks */ = {isa = PBXBuildFile; productRef = 35400FDE63F69779F3E076E0 /* CoreMachO */; };
+		6A0CE6CA3473B4B445467A70 /* MachOKnifeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */; };
 		CFC205DCBBE06A55E5CE900D /* MachOKnifeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */; };
 		E4F7A54A469BF6F1BC41D8B4 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D955F987017C05908960F1C /* Cocoa.framework */; };
 /* End PBXBuildFile section */
@@ -41,35 +42,32 @@
 		9566B7C22F6DB9D0002773C3 /* MachOKnife.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MachOKnife.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9566B7D22F6DB9D2002773C3 /* MachOKnifeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MachOKnifeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9566B7DC2F6DB9D2002773C3 /* MachOKnifeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MachOKnifeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		E753591758ED1B6B96B9140E /* machoe-cli */ = {isa = PBXFileReference; includeInIndex = 0; path = "machoe-cli"; sourceTree = BUILT_PRODUCTS_DIR; };
+		E753591758ED1B6B96B9140E /* machoe-cli */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = text; path = "machoe-cli"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		38F0A8915015B2EA631B6E66 /* MachOKnifeCLI */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = MachOKnifeCLI;
+			sourceTree = "<group>";
+		};
+		6140F67013C40CF86963B41F /* MachOKnifeApp */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = MachOKnifeApp;
 			sourceTree = "<group>";
 		};
 		9566B7C42F6DB9D0002773C3 /* MachOKnife */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = MachOKnife;
 			sourceTree = "<group>";
 		};
 		9566B7D52F6DB9D2002773C3 /* MachOKnifeTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = MachOKnifeTests;
 			sourceTree = "<group>";
 		};
 		9566B7DF2F6DB9D2002773C3 /* MachOKnifeUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = MachOKnifeUITests;
 			sourceTree = "<group>";
 		};
@@ -90,6 +88,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6A0CE6CA3473B4B445467A70 /* MachOKnifeKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -122,6 +121,7 @@
 			isa = PBXGroup;
 			children = (
 				9566B7C42F6DB9D0002773C3 /* MachOKnife */,
+				6140F67013C40CF86963B41F /* MachOKnifeApp */,
 				38F0A8915015B2EA631B6E66 /* MachOKnifeCLI */,
 				9566B7D52F6DB9D2002773C3 /* MachOKnifeTests */,
 				9566B7DF2F6DB9D2002773C3 /* MachOKnifeUITests */,
@@ -188,9 +188,13 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
+				6140F67013C40CF86963B41F /* MachOKnifeApp */,
 				9566B7C42F6DB9D0002773C3 /* MachOKnife */,
 			);
 			name = MachOKnife;
+			packageProductDependencies = (
+				69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */,
+			);
 			productName = MachOKnife;
 			productReference = 9566B7C22F6DB9D0002773C3 /* MachOKnife.app */;
 			productType = "com.apple.product-type.application";
@@ -271,8 +275,8 @@
 			mainGroup = 9566B7B92F6DB9D0002773C3;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "CoreMachO" */,
-				F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "MachOKnifeKit" */,
+				9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "Packages/CoreMachO" */,
+				F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "Packages/MachOKnifeKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 9566B7C32F6DB9D0002773C3 /* Products */;
@@ -530,13 +534,12 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMainStoryboardFile = Main;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = cn.vanjay.MachOKnife;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -564,13 +567,12 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMainStoryboardFile = Main;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = cn.vanjay.MachOKnife;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -715,14 +717,12 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "CoreMachO" */ = {
+		9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "Packages/CoreMachO" */ = {
 			isa = XCLocalSwiftPackageReference;
-			path = Packages/CoreMachO;
 			relativePath = Packages/CoreMachO;
 		};
-		F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "MachOKnifeKit" */ = {
+		F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "Packages/MachOKnifeKit" */ = {
 			isa = XCLocalSwiftPackageReference;
-			path = Packages/MachOKnifeKit;
 			relativePath = Packages/MachOKnifeKit;
 		};
 /* End XCLocalSwiftPackageReference section */
@@ -730,12 +730,12 @@
 /* Begin XCSwiftPackageProductDependency section */
 		35400FDE63F69779F3E076E0 /* CoreMachO */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "CoreMachO" */;
+			package = 9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "Packages/CoreMachO" */;
 			productName = CoreMachO;
 		};
 		69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "MachOKnifeKit" */;
+			package = F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "Packages/MachOKnifeKit" */;
 			productName = MachOKnifeKit;
 		};
 /* End XCSwiftPackageProductDependency section */
