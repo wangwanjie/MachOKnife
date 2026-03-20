@@ -10,6 +10,8 @@ final class AppSettings {
         static let language = "app.language"
         static let theme = "app.theme"
         static let recentFilesLimit = "app.recentFilesLimit"
+        static let cliInstallDirectoryBookmark = "app.cliInstallDirectoryBookmark"
+        static let cliInstallDirectoryPath = "app.cliInstallDirectoryPath"
     }
 
     private let defaults: UserDefaults
@@ -47,6 +49,43 @@ final class AppSettings {
             defaults.set(max(1, newValue), forKey: Keys.recentFilesLimit)
             notifyDidChange()
         }
+    }
+
+    func setCLIInstallDirectory(_ url: URL) throws {
+        let bookmarkData = try url.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+        defaults.set(bookmarkData, forKey: Keys.cliInstallDirectoryBookmark)
+        defaults.set(url.path, forKey: Keys.cliInstallDirectoryPath)
+        notifyDidChange()
+    }
+
+    func clearCLIInstallDirectory() {
+        defaults.removeObject(forKey: Keys.cliInstallDirectoryBookmark)
+        defaults.removeObject(forKey: Keys.cliInstallDirectoryPath)
+        notifyDidChange()
+    }
+
+    func cliInstallDirectoryURL() throws -> URL? {
+        if let bookmarkData = defaults.data(forKey: Keys.cliInstallDirectoryBookmark) {
+            var isStale = false
+            if let url = try? URL(
+                resolvingBookmarkData: bookmarkData,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) {
+                return url
+            }
+        }
+
+        guard let path = defaults.string(forKey: Keys.cliInstallDirectoryPath), path.isEmpty == false else {
+            return nil
+        }
+
+        return URL(filePath: path, directoryHint: .isDirectory)
     }
 
     func resolvedLanguage(preferredLanguages: [String] = Locale.preferredLanguages) -> AppLanguage {

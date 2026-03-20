@@ -33,6 +33,20 @@ struct AppSettingsTests {
         #expect(reloadedSettings.theme == .dark)
     }
 
+    @Test("CLI install directory persists across settings instances")
+    func cliInstallDirectoryPersistsAcrossSettingsInstances() throws {
+        let defaults = makeDefaults()
+        let installDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: installDirectory, withIntermediateDirectories: true)
+
+        let initialSettings = AppSettings(defaults: defaults)
+        try initialSettings.setCLIInstallDirectory(installDirectory)
+
+        let reloadedSettings = AppSettings(defaults: defaults)
+        #expect(try reloadedSettings.cliInstallDirectoryURL() == installDirectory)
+    }
+
     private func makeDefaults(fileID: String = #fileID, line: Int = #line) -> UserDefaults {
         let suiteName = "MachOKnifeTests.\(fileID).\(line).\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

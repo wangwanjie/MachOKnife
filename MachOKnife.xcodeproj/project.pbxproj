@@ -195,10 +195,12 @@
 				9566B7BE2F6DB9D0002773C3 /* Sources */,
 				9566B7BF2F6DB9D0002773C3 /* Frameworks */,
 				9566B7C02F6DB9D0002773C3 /* Resources */,
+				B84A4D0D1FCE4A91876A0B11 /* Embed machoe-cli */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				C13EAC8D06A7414C9E2BB443 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				6140F67013C40CF86963B41F /* MachOKnifeApp */,
@@ -335,6 +337,29 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		B84A4D0D1FCE4A91876A0B11 /* Embed machoe-cli */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/machoe-cli",
+			);
+			name = "Embed machoe-cli";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/CLI/machoe-cli",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\nCLI_SOURCE=\"${BUILT_PRODUCTS_DIR}/machoe-cli\"\nCLI_DEST_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/CLI\"\nCLI_DEST=\"${CLI_DEST_DIR}/machoe-cli\"\n\nif [ ! -f \"$CLI_SOURCE\" ]; then\n  echo \"error: machoe-cli not found at $CLI_SOURCE\" >&2\n  exit 1\nfi\n\nmkdir -p \"$CLI_DEST_DIR\"\ncp \"$CLI_SOURCE\" \"$CLI_DEST\"\nchmod 755 \"$CLI_DEST\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		9566B7BE2F6DB9D0002773C3 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -378,6 +403,12 @@
 			targetProxy = 9566B7DD2F6DB9D2002773C3 /* PBXContainerItemProxy */;
 		};
 		A3100FF8419DB8BD1F8D01B2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = "machoe-cli";
+			target = 39397536A4B5C6F2EF47901D /* machoe-cli */;
+			targetProxy = A3EA354E670B95A31702DFB6 /* PBXContainerItemProxy */;
+		};
+		C13EAC8D06A7414C9E2BB443 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			name = "machoe-cli";
 			target = 39397536A4B5C6F2EF47901D /* machoe-cli */;
@@ -551,7 +582,7 @@
 				DEVELOPMENT_TEAM = X6B6C6U6QV;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
@@ -584,7 +615,7 @@
 				DEVELOPMENT_TEAM = X6B6C6U6QV;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;

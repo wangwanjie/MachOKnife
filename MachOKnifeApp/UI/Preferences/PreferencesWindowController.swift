@@ -47,7 +47,7 @@ private final class PreferencesTabViewController: NSTabViewController {
         tabStyle = .toolbar
 
         addTab(title: L10n.preferencesGeneralTab, viewController: GeneralPreferencesViewController(settings: settings))
-        addTab(title: L10n.preferencesCLITab, viewController: PlaceholderPreferencesViewController(message: L10n.preferencesPlaceholderMilestone3))
+        addTab(title: L10n.preferencesCLITab, viewController: CLIPreferencesViewController(settings: settings))
         addTab(title: L10n.preferencesAppearanceTab, viewController: AppearancePreferencesViewController(settings: settings))
         addTab(title: L10n.preferencesUpdatesTab, viewController: PlaceholderPreferencesViewController(message: L10n.preferencesPlaceholderMilestone3))
         addTab(title: L10n.preferencesAdvancedTab, viewController: AdvancedPreferencesViewController())
@@ -251,7 +251,7 @@ private final class AdvancedPreferencesViewController: NSViewController {
 }
 
 @MainActor
-private func makeSectionLabel(_ text: String) -> NSTextField {
+func makeSectionLabel(_ text: String) -> NSTextField {
     let label = NSTextField(labelWithString: text)
     label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
     label.translatesAutoresizingMaskIntoConstraints = false
@@ -259,7 +259,7 @@ private func makeSectionLabel(_ text: String) -> NSTextField {
 }
 
 @MainActor
-private func makeHintLabel(_ text: String) -> NSTextField {
+func makeHintLabel(_ text: String) -> NSTextField {
     let label = NSTextField(wrappingLabelWithString: text)
     label.font = NSFont.systemFont(ofSize: 12)
     label.textColor = .secondaryLabelColor
@@ -268,7 +268,7 @@ private func makeHintLabel(_ text: String) -> NSTextField {
 }
 
 @MainActor
-private func makeRow(label: NSTextField, control: NSView) -> NSStackView {
+func makeRow(label: NSTextField, control: NSView) -> NSStackView {
     let row = NSStackView(views: [label, control])
     row.orientation = .horizontal
     row.alignment = .centerY
@@ -278,7 +278,7 @@ private func makeRow(label: NSTextField, control: NSView) -> NSStackView {
 }
 
 @MainActor
-private func makePlaceholderView(title: String?, message: String) -> NSView {
+func makePlaceholderView(title: String?, message: String) -> NSView {
     let container = NSView()
     let views: [NSView]
 

@@ -67,6 +67,36 @@ enum L10n {
     static var preferencesPlaceholderMilestone3: String { text("preferences.placeholder.milestone3", fallback: "Coming in Milestone 3.") }
     static var preferencesAdvancedTitle: String { text("preferences.advanced.title", fallback: "Advanced") }
     static var preferencesAdvancedSubtitle: String { text("preferences.advanced.subtitle", fallback: "Low-level tooling, CLI installation, and updater controls will appear here.") }
+    static var preferencesCLIStatusLabel: String { text("preferences.cli.status", fallback: "Status") }
+    static var preferencesCLIDirectoryLabel: String { text("preferences.cli.directory", fallback: "Install Directory") }
+    static var preferencesCLIExecutableLabel: String { text("preferences.cli.executable", fallback: "Installed Executable") }
+    static var preferencesCLIChooseDirectory: String { text("preferences.cli.choose", fallback: "Choose Directory…") }
+    static var preferencesCLIInstall: String { text("preferences.cli.install", fallback: "Install CLI") }
+    static var preferencesCLIUninstall: String { text("preferences.cli.uninstall", fallback: "Uninstall CLI") }
+    static var preferencesCLIStatusNotConfigured: String { text("preferences.cli.status.notConfigured", fallback: "Not Configured") }
+    static var preferencesCLIStatusReadyToInstall: String { text("preferences.cli.status.ready", fallback: "Ready to Install") }
+    static var preferencesCLIStatusInstalled: String { text("preferences.cli.status.installed", fallback: "Installed") }
+    static var preferencesCLIDirectoryNotConfigured: String { text("preferences.cli.directory.none", fallback: "No install directory selected.") }
+    static var preferencesCLIExecutableNotInstalled: String { text("preferences.cli.executable.none", fallback: "CLI is not installed.") }
+    static var preferencesCLIPathHelpGeneric: String { text("preferences.cli.pathHelp.generic", fallback: "Choose a writable directory and add it to PATH to run machoe-cli from Terminal.") }
+    static var preferencesCLIErrorTitle: String { text("preferences.cli.error.title", fallback: "CLI Installation") }
+
+    static func preferencesCLIPathHelp(directoryPath: String) -> String {
+        format("preferences.cli.pathHelp.path", fallback: "Add %@ to PATH to run machoe-cli from Terminal.", directoryPath)
+    }
+
+    static func preferencesCLIErrorMessage(for error: Error) -> String {
+        if let installError = error as? CLIInstallError {
+            switch installError {
+            case .installDirectoryNotConfigured:
+                return text("preferences.cli.error.directoryMissing", fallback: "Choose an install directory before installing the CLI.")
+            case .bundledCLINotFound:
+                return text("preferences.cli.error.bundledMissing", fallback: "The bundled machoe-cli payload could not be found in the app.")
+            }
+        }
+
+        return format("preferences.cli.error.generic", fallback: "The CLI operation failed: %@", error.localizedDescription)
+    }
 
     static func languageName(_ language: AppLanguage) -> String {
         switch language {
