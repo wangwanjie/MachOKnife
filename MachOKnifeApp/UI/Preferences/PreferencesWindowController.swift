@@ -38,6 +38,17 @@ final class PreferencesWindowController: NSWindowController {
         showWindow(sender)
         NSApp.activate(ignoringOtherApps: true)
     }
+
+    func selectTab(at index: Int) {
+        guard
+            let tabViewController = window?.contentViewController as? NSTabViewController,
+            tabViewController.tabViewItems.indices.contains(index)
+        else {
+            return
+        }
+
+        tabViewController.selectedTabViewItemIndex = index
+    }
 }
 
 @MainActor

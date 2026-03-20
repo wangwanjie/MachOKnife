@@ -1,13 +1,20 @@
 # MachOKnife
 
-MachOKnife is a native macOS Mach-O inspection tool with an AppKit GUI and a companion CLI.
+MachOKnife is a native macOS Mach-O inspection and metadata surgery tool with an AppKit GUI and a companion CLI.
 
-Milestone 1 focuses on:
+It currently ships:
 
-- read-only Mach-O parsing in local Swift packages
-- a three-pane workspace for opening and inspecting binaries
-- CLI inspection commands for slice summaries and dylib/rpath listing
-- localized preferences for language and appearance
+- AppKit workspace with drag and drop, file import, analyze, preview, save, and recent-file support
+- editable install name, dylib dependency, rpath, and platform/version workflows
+- CLI commands for inspection, validation, install-name editing, rpath rewriting, retagging, and dyld-cache-style dylib repair
+- localized preferences for language, appearance, CLI installation, updates, and recent-file limits
+- Sparkle update runtime wiring and GRDB-backed recent-files persistence
+
+## Screenshots
+
+![MachOKnife main window](docs/screenshots/main-window.png)
+
+![MachOKnife updates preferences](docs/screenshots/preferences-updates.png)
 
 ## Repository Layout
 
@@ -33,12 +40,13 @@ xcodebuild build \
 
 ## GUI Usage
 
-Milestone 1 supports:
-
 - dragging a Mach-O, `.dylib`, framework binary, or app binary into the workspace
 - `Open...` from the File menu
 - `Analyze` to re-run parsing on the current file
+- `Preview` and `Save` for metadata changes with diff-oriented feedback
 - localized Preferences tabs for General, CLI, Appearance, Updates, and Advanced
+- CLI install/uninstall controls and recent-file limit configuration
+- Sparkle-backed manual update check entry point from the app menu
 
 ## CLI Usage
 
@@ -47,6 +55,11 @@ Build the `machoe-cli` target from Xcode or through the `MachOKnife` scheme, the
 ```bash
 machoe-cli info /path/to/binary
 machoe-cli list-dylibs /path/to/binary
+machoe-cli validate /path/to/binary
+machoe-cli set-id /path/to/libExample.dylib --install-name @rpath/libExample.dylib --output /tmp/libExample.dylib
+machoe-cli rewrite-rpath /path/to/libExample.dylib --from /old/path --to @loader_path/Frameworks --output /tmp/libExample.dylib
+machoe-cli retag-platform /path/to/libExample.dylib --platform macos --min 13.0 --sdk 14.0 --output /tmp/libExample.dylib
+machoe-cli fix-dyld-cache-dylib /path/to/libCacheStyle.dylib --output /tmp/libCacheStyle.fixed.dylib
 ```
 
 To build a local verification fixture:
@@ -57,12 +70,26 @@ machoe-cli info Resources/Fixtures/generated/libFixture.dylib
 machoe-cli list-dylibs Resources/Fixtures/generated/libFixture.dylib
 ```
 
+To refresh README screenshots:
+
+```bash
+bash Scripts/capture_readme_screenshots.sh
+```
+
+## Updates
+
+Sparkle is wired into the app through `UpdateManager`. The repository includes a placeholder feed at `Resources/Updates/appcast.xml`; replace it with the published appcast and a real `SUPublicEDKey` before shipping a production build.
+
 ## Verification
 
-Run the milestone 1 verification pipeline:
+Run the current verification pipeline:
 
 ```bash
 bash Scripts/test_milestone_1.sh
 ```
 
-The script runs package tests, targeted app tests, builds deterministic fixture dylibs, and executes the CLI against them.
+For release assets, also run:
+
+```bash
+bash Scripts/capture_readme_screenshots.sh
+```

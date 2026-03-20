@@ -1,0 +1,10 @@
+.DS_Store
+build/
+default.profraw
+
+MachOKnife.xcodeproj/project.xcworkspace/xcuserdata/
+MachOKnife.xcodeproj/xcuserdata/
+
+Packages/*/.build/
+Packages/*/.swiftpm/
+Packages/*/Package.resolved
