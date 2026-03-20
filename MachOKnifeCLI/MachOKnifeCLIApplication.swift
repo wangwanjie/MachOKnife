@@ -1,5 +1,4 @@
 import Foundation
-import MachOKnifeKit
 
 enum MachOKnifeCLIApplication {
     static func main(arguments: [String] = CommandLine.arguments) {
@@ -21,15 +20,25 @@ enum MachOKnifeCLIApplication {
         }
 
         let command = arguments[1]
-        let url = URL(filePath: arguments[2])
-        let service = DocumentAnalysisService()
-        let analysis = try service.analyze(url: url)
+        let commandArguments = Array(arguments.dropFirst(2))
 
         switch command {
-        case "info":
-            return CLIReportRenderer.renderInfo(analysis)
-        case "list-dylibs":
-            return CLIReportRenderer.renderDylibs(analysis)
+        case InfoCommand.name:
+            return try InfoCommand.run(arguments: commandArguments)
+        case ListDylibsCommand.name:
+            return try ListDylibsCommand.run(arguments: commandArguments)
+        case RetagPlatformCommand.name:
+            return try RetagPlatformCommand.run(arguments: commandArguments)
+        case RewriteRPathCommand.name:
+            return try RewriteRPathCommand.run(arguments: commandArguments)
+        case FixDyldCacheDylibCommand.name:
+            return try FixDyldCacheDylibCommand.run(arguments: commandArguments)
+        case SetIDCommand.name:
+            return try SetIDCommand.run(arguments: commandArguments)
+        case StripSignatureCommand.name:
+            return try StripSignatureCommand.run(arguments: commandArguments)
+        case ValidateCommand.name:
+            return try ValidateCommand.run(arguments: commandArguments)
         default:
             throw CLIError.unsupportedCommand(command)
         }
@@ -45,11 +54,21 @@ struct CLIError: Error {
         usage:
           machoe-cli info <path>
           machoe-cli list-dylibs <path>
+          machoe-cli retag-platform <path> --platform macos|ios|iossim|maccatalyst --min <version> --sdk <version> --output <path>
+          machoe-cli rewrite-rpath <path> --from <path> --to <path> --output <path>
+          machoe-cli fix-dyld-cache-dylib <path> --output <path>
+          machoe-cli set-id <path> --install-name <path> --output <path>
+          machoe-cli strip-signature <path> --output <path>
+          machoe-cli validate <path>
         """,
         exitCode: 1
     )
 
     static func unsupportedCommand(_ command: String) -> CLIError {
         CLIError(message: "unsupported command '\(command)'", exitCode: 2)
+    }
+
+    static func invalidUsage(_ usage: String) -> CLIError {
+        CLIError(message: usage, exitCode: 1)
     }
 }

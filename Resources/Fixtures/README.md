@@ -14,6 +14,10 @@ This produces:
 
 - `Resources/Fixtures/generated/libFixtureDependency.dylib`
 - `Resources/Fixtures/generated/libFixture.dylib`
+- `Resources/Fixtures/cli/libCLIDependency.dylib`
+- `Resources/Fixtures/cli/libCLIEditable.dylib`
+- `Resources/Fixtures/cli/libCacheDependency.dylib`
+- `Resources/Fixtures/cli/libCacheStyle.dylib`
 
 `libFixture.dylib` is intentionally linked with:
 
@@ -26,6 +30,20 @@ That makes it a stable local sample for:
 - `machoe-cli info`
 - `machoe-cli list-dylibs`
 - basic GUI inspection
+
+## CLI Editing Fixtures
+
+The `Resources/Fixtures/cli/` binaries are checked in for smoke tests that exercise
+write flows such as:
+
+- `machoe-cli retag-platform`
+- `machoe-cli rewrite-rpath`
+- `machoe-cli set-id`
+- `machoe-cli strip-signature`
+- `machoe-cli fix-dyld-cache-dylib`
+
+They are generated ahead of time because the macOS unit-test sandbox blocks
+runtime `xcrun` / `clang` fixture compilation.
 
 ## Optional Real-World Samples
 

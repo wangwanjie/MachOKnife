@@ -18,6 +18,20 @@ public struct RetagEngine: Sendable {
         return try RetagPreview(diff: writer.preview(inputURL: inputURL, editPlan: plan))
     }
 
+    public func retagPlatform(
+        inputURL: URL,
+        outputURL: URL,
+        platform: MachOPlatform,
+        minimumOS: MachOVersion,
+        sdk: MachOVersion
+    ) throws -> RetagResult {
+        let plan = MachOEditPlan(
+            platformEdit: PlatformEdit(platform: platform, minimumOS: minimumOS, sdk: sdk)
+        )
+        let result = try writer.write(inputURL: inputURL, outputURL: outputURL, editPlan: plan)
+        return RetagResult(outputURL: result.outputURL, diff: result.diff)
+    }
+
     public func rewriteDylibPaths(
         inputURL: URL,
         outputURL: URL,
@@ -43,9 +57,20 @@ public struct RetagEngine: Sendable {
     }
 
     public func previewFixDyldCacheDylib(inputURL: URL) throws -> RetagPreview {
+        let plan = try makeDyldCacheFixPlan(inputURL: inputURL)
+        return try RetagPreview(diff: writer.preview(inputURL: inputURL, editPlan: plan))
+    }
+
+    public func fixDyldCacheDylib(inputURL: URL, outputURL: URL) throws -> RetagResult {
+        let plan = try makeDyldCacheFixPlan(inputURL: inputURL)
+        let result = try writer.write(inputURL: inputURL, outputURL: outputURL, editPlan: plan)
+        return RetagResult(outputURL: result.outputURL, diff: result.diff)
+    }
+
+    private func makeDyldCacheFixPlan(inputURL: URL) throws -> MachOEditPlan {
         let container = try MachOContainer.parse(at: inputURL)
         guard let slice = container.slices.first else {
-            return RetagPreview(diff: MachODiff())
+            return MachOEditPlan()
         }
 
         let installName = slice.installName ?? inputURL.path
@@ -68,12 +93,10 @@ public struct RetagEngine: Sendable {
             rpathEdits.append(.add("@loader_path"))
         }
 
-        let plan = MachOEditPlan(
+        return MachOEditPlan(
             installName: rewrittenInstallName,
             dylibEdits: dylibEdits,
             rpathEdits: rpathEdits
         )
-
-        return try RetagPreview(diff: writer.preview(inputURL: inputURL, editPlan: plan))
     }
 }
