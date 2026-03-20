@@ -1,0 +1,3 @@
+import Foundation
+
+MachOKnifeCLIApplication.main()

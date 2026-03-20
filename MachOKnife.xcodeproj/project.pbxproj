@@ -6,6 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		548B89A0768EF8F441797E9D /* CoreMachO in Frameworks */ = {isa = PBXBuildFile; productRef = 35400FDE63F69779F3E076E0 /* CoreMachO */; };
+		CFC205DCBBE06A55E5CE900D /* MachOKnifeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */; };
+		E4F7A54A469BF6F1BC41D8B4 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D955F987017C05908960F1C /* Cocoa.framework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		9566B7D32F6DB9D2002773C3 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -21,33 +27,65 @@
 			remoteGlobalIDString = 9566B7C12F6DB9D0002773C3;
 			remoteInfo = MachOKnife;
 		};
+		A3EA354E670B95A31702DFB6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9566B7BA2F6DB9D0002773C3 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 39397536A4B5C6F2EF47901D;
+			remoteInfo = "machoe-cli";
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		7D955F987017C05908960F1C /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		9566B7C22F6DB9D0002773C3 /* MachOKnife.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MachOKnife.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9566B7D22F6DB9D2002773C3 /* MachOKnifeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MachOKnifeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9566B7DC2F6DB9D2002773C3 /* MachOKnifeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MachOKnifeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E753591758ED1B6B96B9140E /* machoe-cli */ = {isa = PBXFileReference; includeInIndex = 0; path = "machoe-cli"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		38F0A8915015B2EA631B6E66 /* MachOKnifeCLI */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
+			path = MachOKnifeCLI;
+			sourceTree = "<group>";
+		};
 		9566B7C42F6DB9D0002773C3 /* MachOKnife */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = MachOKnife;
 			sourceTree = "<group>";
 		};
 		9566B7D52F6DB9D2002773C3 /* MachOKnifeTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = MachOKnifeTests;
 			sourceTree = "<group>";
 		};
 		9566B7DF2F6DB9D2002773C3 /* MachOKnifeUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = MachOKnifeUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		843F001C02071C5CADA2D4D3 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E4F7A54A469BF6F1BC41D8B4 /* Cocoa.framework in Frameworks */,
+				548B89A0768EF8F441797E9D /* CoreMachO in Frameworks */,
+				CFC205DCBBE06A55E5CE900D /* MachOKnifeKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		9566B7BF2F6DB9D0002773C3 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -72,13 +110,23 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		5667EE2480AE33DE674A3A4E /* OS X */ = {
+			isa = PBXGroup;
+			children = (
+				7D955F987017C05908960F1C /* Cocoa.framework */,
+			);
+			name = "OS X";
+			sourceTree = "<group>";
+		};
 		9566B7B92F6DB9D0002773C3 = {
 			isa = PBXGroup;
 			children = (
 				9566B7C42F6DB9D0002773C3 /* MachOKnife */,
+				38F0A8915015B2EA631B6E66 /* MachOKnifeCLI */,
 				9566B7D52F6DB9D2002773C3 /* MachOKnifeTests */,
 				9566B7DF2F6DB9D2002773C3 /* MachOKnifeUITests */,
 				9566B7C32F6DB9D0002773C3 /* Products */,
+				ACB07F3F26DE312387235AED /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -88,13 +136,45 @@
 				9566B7C22F6DB9D0002773C3 /* MachOKnife.app */,
 				9566B7D22F6DB9D2002773C3 /* MachOKnifeTests.xctest */,
 				9566B7DC2F6DB9D2002773C3 /* MachOKnifeUITests.xctest */,
+				E753591758ED1B6B96B9140E /* machoe-cli */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		ACB07F3F26DE312387235AED /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				5667EE2480AE33DE674A3A4E /* OS X */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		39397536A4B5C6F2EF47901D /* machoe-cli */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3D659514C1157A15B28DC4C7 /* Build configuration list for PBXNativeTarget "machoe-cli" */;
+			buildPhases = (
+				B5E950F95E4ABE1ECCF639CF /* Sources */,
+				843F001C02071C5CADA2D4D3 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				38F0A8915015B2EA631B6E66 /* MachOKnifeCLI */,
+			);
+			name = "machoe-cli";
+			packageProductDependencies = (
+				35400FDE63F69779F3E076E0 /* CoreMachO */,
+				69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */,
+			);
+			productName = "machoe-cli";
+			productReference = E753591758ED1B6B96B9140E /* machoe-cli */;
+			productType = "com.apple.product-type.tool";
+		};
 		9566B7C12F6DB9D0002773C3 /* MachOKnife */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 9566B7E62F6DB9D2002773C3 /* Build configuration list for PBXNativeTarget "MachOKnife" */;
@@ -111,8 +191,6 @@
 				9566B7C42F6DB9D0002773C3 /* MachOKnife */,
 			);
 			name = MachOKnife;
-			packageProductDependencies = (
-			);
 			productName = MachOKnife;
 			productReference = 9566B7C22F6DB9D0002773C3 /* MachOKnife.app */;
 			productType = "com.apple.product-type.application";
@@ -129,13 +207,12 @@
 			);
 			dependencies = (
 				9566B7D42F6DB9D2002773C3 /* PBXTargetDependency */,
+				A3100FF8419DB8BD1F8D01B2 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				9566B7D52F6DB9D2002773C3 /* MachOKnifeTests */,
 			);
 			name = MachOKnifeTests;
-			packageProductDependencies = (
-			);
 			productName = MachOKnifeTests;
 			productReference = 9566B7D22F6DB9D2002773C3 /* MachOKnifeTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -157,8 +234,6 @@
 				9566B7DF2F6DB9D2002773C3 /* MachOKnifeUITests */,
 			);
 			name = MachOKnifeUITests;
-			packageProductDependencies = (
-			);
 			productName = MachOKnifeUITests;
 			productReference = 9566B7DC2F6DB9D2002773C3 /* MachOKnifeUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -195,6 +270,10 @@
 			);
 			mainGroup = 9566B7B92F6DB9D0002773C3;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "CoreMachO" */,
+				F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "MachOKnifeKit" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 9566B7C32F6DB9D0002773C3 /* Products */;
 			projectDirPath = "";
@@ -203,6 +282,7 @@
 				9566B7C12F6DB9D0002773C3 /* MachOKnife */,
 				9566B7D12F6DB9D2002773C3 /* MachOKnifeTests */,
 				9566B7DB2F6DB9D2002773C3 /* MachOKnifeUITests */,
+				39397536A4B5C6F2EF47901D /* machoe-cli */,
 			);
 		};
 /* End PBXProject section */
@@ -253,6 +333,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B5E950F95E4ABE1ECCF639CF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -266,9 +353,47 @@
 			target = 9566B7C12F6DB9D0002773C3 /* MachOKnife */;
 			targetProxy = 9566B7DD2F6DB9D2002773C3 /* PBXContainerItemProxy */;
 		};
+		A3100FF8419DB8BD1F8D01B2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = "machoe-cli";
+			target = 39397536A4B5C6F2EF47901D /* machoe-cli */;
+			targetProxy = A3EA354E670B95A31702DFB6 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		184B5DC2B99A06637625300D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "cn.vanjay.machoe-cli";
+				PRODUCT_MODULE_NAME = machoe_cli;
+				PRODUCT_NAME = "machoe-cli";
+				SDKROOT = macosx;
+				SWIFT_MODULE_NAME = machoe_cli;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		39415C120D1D44E98311B042 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "cn.vanjay.machoe-cli";
+				PRODUCT_MODULE_NAME = machoe_cli;
+				PRODUCT_NAME = "machoe-cli";
+				SDKROOT = macosx;
+				SWIFT_MODULE_NAME = machoe_cli;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
 		9566B7E42F6DB9D2002773C3 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -330,6 +455,7 @@
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
 		};
@@ -386,6 +512,7 @@
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
 		};
@@ -540,6 +667,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		3D659514C1157A15B28DC4C7 /* Build configuration list for PBXNativeTarget "machoe-cli" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				184B5DC2B99A06637625300D /* Release */,
+				39415C120D1D44E98311B042 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		9566B7BD2F6DB9D0002773C3 /* Build configuration list for PBXProject "MachOKnife" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -577,6 +713,32 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "CoreMachO" */ = {
+			isa = XCLocalSwiftPackageReference;
+			path = Packages/CoreMachO;
+			relativePath = Packages/CoreMachO;
+		};
+		F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "MachOKnifeKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			path = Packages/MachOKnifeKit;
+			relativePath = Packages/MachOKnifeKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		35400FDE63F69779F3E076E0 /* CoreMachO */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "CoreMachO" */;
+			productName = CoreMachO;
+		};
+		69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "MachOKnifeKit" */;
+			productName = MachOKnifeKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 9566B7BA2F6DB9D0002773C3 /* Project object */;
 }

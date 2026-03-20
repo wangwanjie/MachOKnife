@@ -21,11 +21,19 @@ public struct MachOSlice: Sendable {
     public let offset: Int
     public let is64Bit: Bool
     public let loadCommands: [MachOLoadCommand]
+    public let installName: String?
+    public let dylibReferences: [DylibReference]
+    public let rpaths: [String]
 }
 
 public struct MachOLoadCommand: Sendable {
     public let command: UInt32
     public let size: UInt32
+}
+
+public struct DylibReference: Sendable {
+    public let command: UInt32
+    public let path: String
 }
 
 public enum MachOParseError: Error {
@@ -82,6 +90,9 @@ private struct MachOFileParser {
         var cursor = commandsStart
         var loadCommands = [MachOLoadCommand]()
         loadCommands.reserveCapacity(Int(headerInfo.numberOfCommands))
+        var installName: String?
+        var dylibReferences = [DylibReference]()
+        var rpaths = [String]()
 
         for _ in 0..<headerInfo.numberOfCommands {
             let command = try read(load_command.self, at: cursor)
@@ -98,13 +109,46 @@ private struct MachOFileParser {
             }
 
             loadCommands.append(MachOLoadCommand(command: commandType, size: commandSize))
+
+            switch commandType {
+            case UInt32(LC_ID_DYLIB):
+                let dylibCommand = try read(dylib_command.self, at: cursor)
+                let path = try readLoadCommandString(
+                    at: cursor,
+                    stringOffset: normalize(dylibCommand.dylib.name.offset, swapped: headerInfo.swapped),
+                    commandSize: commandSize
+                )
+                installName = path
+            case UInt32(LC_LOAD_DYLIB), UInt32(LC_LOAD_WEAK_DYLIB), UInt32(LC_REEXPORT_DYLIB), UInt32(LC_LOAD_UPWARD_DYLIB):
+                let dylibCommand = try read(dylib_command.self, at: cursor)
+                let path = try readLoadCommandString(
+                    at: cursor,
+                    stringOffset: normalize(dylibCommand.dylib.name.offset, swapped: headerInfo.swapped),
+                    commandSize: commandSize
+                )
+                dylibReferences.append(DylibReference(command: commandType, path: path))
+            case UInt32(LC_RPATH):
+                let rpathCommand = try read(rpath_command.self, at: cursor)
+                let path = try readLoadCommandString(
+                    at: cursor,
+                    stringOffset: normalize(rpathCommand.path.offset, swapped: headerInfo.swapped),
+                    commandSize: commandSize
+                )
+                rpaths.append(path)
+            default:
+                break
+            }
+
             cursor = endOffset
         }
 
         return MachOSlice(
             offset: offset,
             is64Bit: headerInfo.is64Bit,
-            loadCommands: loadCommands
+            loadCommands: loadCommands,
+            installName: installName,
+            dylibReferences: dylibReferences,
+            rpaths: rpaths
         )
     }
 
@@ -142,6 +186,18 @@ private struct MachOFileParser {
         return data.withUnsafeBytes { rawBuffer in
             rawBuffer.loadUnaligned(fromByteOffset: offset, as: T.self)
         }
+    }
+
+    private func readLoadCommandString(at commandOffset: Int, stringOffset: UInt32, commandSize: UInt32) throws -> String {
+        let stringStart = commandOffset + Int(stringOffset)
+        let commandEnd = commandOffset + Int(commandSize)
+        guard stringStart < commandEnd, commandEnd <= data.count else {
+            throw MachOParseError.outOfBounds(offset: stringStart, size: commandEnd - stringStart)
+        }
+
+        let bytes = data[stringStart..<commandEnd]
+        let stringBytes = bytes.prefix { $0 != 0 }
+        return String(decoding: stringBytes, as: UTF8.self)
     }
 
     private func normalize(_ value: UInt32, swapped: Bool) -> UInt32 {
