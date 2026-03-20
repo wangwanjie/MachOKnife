@@ -77,7 +77,7 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
     }
 
     private func buildUI() {
-        let titleLabel = NSTextField(labelWithString: "Structure")
+        let titleLabel = NSTextField(labelWithString: L10n.sourceListTitle)
         titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         titleLabel.textColor = .secondaryLabelColor
         titleLabel.translatesAutoresizingMaskIntoConstraints = false

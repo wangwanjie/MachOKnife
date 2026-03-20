@@ -56,6 +56,11 @@
 			path = MachOKnifeApp;
 			sourceTree = "<group>";
 		};
+		7B65E3B83D5F3B85A99E17CA /* LocalizationResources */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Resources/Localization;
+			sourceTree = "<group>";
+		};
 		9566B7C42F6DB9D0002773C3 /* MachOKnife */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = MachOKnife;
@@ -122,6 +127,7 @@
 			children = (
 				9566B7C42F6DB9D0002773C3 /* MachOKnife */,
 				6140F67013C40CF86963B41F /* MachOKnifeApp */,
+				7B65E3B83D5F3B85A99E17CA /* LocalizationResources */,
 				38F0A8915015B2EA631B6E66 /* MachOKnifeCLI */,
 				9566B7D52F6DB9D2002773C3 /* MachOKnifeTests */,
 				9566B7DF2F6DB9D2002773C3 /* MachOKnifeUITests */,
@@ -189,6 +195,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				6140F67013C40CF86963B41F /* MachOKnifeApp */,
+				7B65E3B83D5F3B85A99E17CA /* LocalizationResources */,
 				9566B7C42F6DB9D0002773C3 /* MachOKnife */,
 			);
 			name = MachOKnife;

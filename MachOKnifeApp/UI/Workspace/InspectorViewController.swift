@@ -31,7 +31,7 @@ final class InspectorViewController: NSViewController {
     }
 
     private func buildUI() {
-        let titleLabel = NSTextField(labelWithString: "Inspector")
+        let titleLabel = NSTextField(labelWithString: L10n.inspectorTitle)
         titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         titleLabel.textColor = .secondaryLabelColor
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -40,7 +40,7 @@ final class InspectorViewController: NSViewController {
         textView.isSelectable = true
         textView.drawsBackground = false
         textView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        textView.string = "Dependencies and rpaths will appear here."
+        textView.string = L10n.inspectorPlaceholder
 
         let scrollView = NSScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -67,7 +67,7 @@ final class InspectorViewController: NSViewController {
         viewModel.$inspectorText
             .receive(on: RunLoop.main)
             .sink { [weak self] inspectorText in
-                self?.textView.string = inspectorText.isEmpty ? "Dependencies and rpaths will appear here." : inspectorText
+                self?.textView.string = inspectorText.isEmpty ? L10n.inspectorPlaceholder : inspectorText
             }
             .store(in: &cancellables)
     }

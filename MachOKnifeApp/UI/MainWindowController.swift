@@ -21,7 +21,7 @@ final class MainWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "MachOKnife"
+        window.title = L10n.workspaceWindowTitle
         window.minSize = NSSize(width: 1180, height: 720)
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
@@ -59,7 +59,7 @@ final class MainWindowController: NSWindowController {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = []
-        panel.title = "Open Mach-O"
+        panel.title = L10n.openPanelTitle
 
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let url = panel.url else { return }

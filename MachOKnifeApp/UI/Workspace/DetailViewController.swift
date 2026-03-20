@@ -6,9 +6,9 @@ final class DetailViewController: NSViewController {
     var promptForDocument: (() -> Void)?
 
     private let viewModel: WorkspaceViewModel
-    private let emptyStateTitleLabel = NSTextField(labelWithString: "Open a Mach-O to begin")
-    private let emptyStateSubtitleLabel = NSTextField(labelWithString: "Drop a Mach-O, dylib, framework, or archive here, or choose Open to analyze it.")
-    private let openButton = NSButton(title: "Open File", target: nil, action: nil)
+    private let emptyStateTitleLabel = NSTextField(labelWithString: L10n.workspaceEmptyTitle)
+    private let emptyStateSubtitleLabel = NSTextField(labelWithString: L10n.workspaceEmptySubtitle)
+    private let openButton = NSButton(title: L10n.workspaceEmptyOpenButton, target: nil, action: nil)
     private let textView = NSTextView()
     private let scrollView = NSScrollView()
     private var cancellables = Set<AnyCancellable>()
