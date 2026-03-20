@@ -11,6 +11,7 @@
 		3C4D5E6F708192A3B4C5D6E7 /* CoreMachO in Frameworks */ = {isa = PBXBuildFile; productRef = 35400FDE63F69779F3E076E0 /* CoreMachO */; };
 		548B89A0768EF8F441797E9D /* CoreMachO in Frameworks */ = {isa = PBXBuildFile; productRef = 35400FDE63F69779F3E076E0 /* CoreMachO */; };
 		6A0CE6CA3473B4B445467A70 /* MachOKnifeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */; };
+		A7D1E1023B4C5D6E7F8091A2 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A7D1E1043B4C5D6E7F8091A2 /* Sparkle */; };
 		A1B2C3D4E5F60718293A4B5C /* RetagEngine in Frameworks */ = {isa = PBXBuildFile; productRef = B1C2D3E4F5061728394A5B6C /* RetagEngine */; };
 		CFC205DCBBE06A55E5CE900D /* MachOKnifeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */; };
 		E4F7A54A469BF6F1BC41D8B4 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D955F987017C05908960F1C /* Cocoa.framework */; };
@@ -100,6 +101,7 @@
 				3C4D5E6F708192A3B4C5D6E7 /* CoreMachO in Frameworks */,
 				1A2B3C4D5E6F708192A3B4C5 /* MachOKnifeDB in Frameworks */,
 				6A0CE6CA3473B4B445467A70 /* MachOKnifeKit in Frameworks */,
+				A7D1E1023B4C5D6E7F8091A2 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -212,6 +214,7 @@
 				35400FDE63F69779F3E076E0 /* CoreMachO */,
 				2B3C4D5E6F708192A3B4C5D6 /* MachOKnifeDB */,
 				69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */,
+				A7D1E1043B4C5D6E7F8091A2 /* Sparkle */,
 			);
 			productName = MachOKnife;
 			productReference = 9566B7C22F6DB9D0002773C3 /* MachOKnife.app */;
@@ -299,6 +302,7 @@
 				0F1E2D3C4B5A69788796A5B4 /* XCLocalSwiftPackageReference "Packages/MachOKnifeDB" */,
 				F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "Packages/MachOKnifeKit" */,
 				D1E2F3A4B5C60718293A4B5C /* XCLocalSwiftPackageReference "Packages/RetagEngine" */,
+				A7D1E1033B4C5D6E7F8091A2 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 9566B7C32F6DB9D0002773C3 /* Products */;
@@ -576,6 +580,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = MachOKnife.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -586,6 +591,11 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_SUAllowsAutomaticUpdates = YES;
+				INFOPLIST_KEY_SUEnableAutomaticChecks = YES;
+				INFOPLIST_KEY_SUEnableInstallerLauncherService = YES;
+				INFOPLIST_KEY_SUScheduledCheckInterval = 86400;
+				INFOPLIST_KEY_SUVerifyUpdateBeforeExtraction = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -609,6 +619,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = MachOKnife.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -619,6 +630,11 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_SUAllowsAutomaticUpdates = YES;
+				INFOPLIST_KEY_SUEnableAutomaticChecks = YES;
+				INFOPLIST_KEY_SUEnableInstallerLauncherService = YES;
+				INFOPLIST_KEY_SUScheduledCheckInterval = 86400;
+				INFOPLIST_KEY_SUVerifyUpdateBeforeExtraction = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -767,6 +783,17 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		A7D1E1033B4C5D6E7F8091A2 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.8.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCLocalSwiftPackageReference section */
 		0F1E2D3C4B5A69788796A5B4 /* XCLocalSwiftPackageReference "Packages/MachOKnifeDB" */ = {
 			isa = XCLocalSwiftPackageReference;
@@ -801,6 +828,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "Packages/MachOKnifeKit" */;
 			productName = MachOKnifeKit;
+		};
+		A7D1E1043B4C5D6E7F8091A2 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A7D1E1033B4C5D6E7F8091A2 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 		B1C2D3E4F5061728394A5B6C /* RetagEngine */ = {
 			isa = XCSwiftPackageProductDependency;

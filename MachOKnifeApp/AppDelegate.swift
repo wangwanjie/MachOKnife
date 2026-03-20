@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = AppSettings.shared
+    private let updateManager = UpdateManager()
     private lazy var recentFilesController = try? RecentFilesController(settings: settings)
     private var mainWindowController: MainWindowController?
     private var preferencesWindowController: PreferencesWindowController?
@@ -79,6 +80,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preferencesWindowController.present(sender)
     }
 
+    @objc private func checkForUpdates(_ sender: Any?) {
+        updateManager.checkForUpdates()
+    }
+
     private func buildMainMenu() {
         let mainMenu = NSMenu()
 
@@ -88,6 +93,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let preferencesItem = NSMenuItem(title: L10n.menuPreferences, action: #selector(showPreferences(_:)), keyEquivalent: ",")
         preferencesItem.target = self
         appMenu.addItem(preferencesItem)
+        let updatesItem = NSMenuItem(title: L10n.menuCheckForUpdates, action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+        updatesItem.target = self
+        appMenu.addItem(updatesItem)
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(NSMenuItem(title: L10n.menuQuit(), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = appMenu
@@ -161,5 +169,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.toolTip = url.path
             recentFilesMenu.addItem(item)
         }
+    }
+}
+
+extension AppDelegate: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard menuItem.action == #selector(checkForUpdates(_:)) else {
+            return true
+        }
+
+        return updateManager.status().canCheckForUpdates
     }
 }

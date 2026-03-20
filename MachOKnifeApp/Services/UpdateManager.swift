@@ -1,7 +1,5 @@
 import Foundation
-#if canImport(Sparkle)
 import Sparkle
-#endif
 
 enum UpdateCheckStrategy: String, CaseIterable {
     case manual
@@ -50,14 +48,15 @@ final class UpdateManager {
     typealias ClientProvider = () -> UpdateClient?
 
     private let configurationProvider: ConfigurationProvider
-    private let clientProvider: ClientProvider
+    private let injectedClientProvider: ClientProvider?
+    private lazy var defaultClient = Self.makeDefaultClient()
 
     init(
         configurationProvider: @escaping ConfigurationProvider = UpdateManager.defaultConfiguration,
         clientProvider: ClientProvider? = nil
     ) {
         self.configurationProvider = configurationProvider
-        self.clientProvider = clientProvider ?? UpdateManager.defaultClient
+        self.injectedClientProvider = clientProvider
     }
 
     func status() -> Status {
@@ -73,7 +72,7 @@ final class UpdateManager {
             return makeUnavailableStatus(reason: .publicKeyMissing)
         }
 
-        guard let client = clientProvider() else {
+        guard let client = activeClient() else {
             return makeUnavailableStatus(reason: .sparkleUnavailable)
         }
 
@@ -88,7 +87,7 @@ final class UpdateManager {
 
     func checkForUpdates() {
         guard
-            let client = clientProvider(),
+            let client = activeClient(),
             status().availability == .ready,
             client.canCheckForUpdates
         else {
@@ -99,7 +98,7 @@ final class UpdateManager {
     }
 
     func setUpdateCheckStrategy(_ strategy: UpdateCheckStrategy) {
-        guard let client = clientProvider(), status().availability == .ready else {
+        guard let client = activeClient(), status().availability == .ready else {
             return
         }
 
@@ -113,7 +112,7 @@ final class UpdateManager {
     }
 
     func setAutomaticallyDownloadsUpdates(_ isEnabled: Bool) {
-        guard let client = clientProvider(), status().availability == .ready else {
+        guard let client = activeClient(), status().availability == .ready else {
             return
         }
 
@@ -137,11 +136,52 @@ final class UpdateManager {
         return UpdateConfiguration(feedURLString: feedURLString, publicEDKey: publicEDKey)
     }
 
-    nonisolated private static func defaultClient() -> UpdateClient? {
-        #if canImport(Sparkle)
-        nil
-        #else
-        nil
-        #endif
+    private func activeClient() -> UpdateClient? {
+        injectedClientProvider?() ?? defaultClient
+    }
+
+    private static func makeDefaultClient() -> UpdateClient {
+        SparkleUpdateClient()
+    }
+}
+
+@MainActor
+private final class SparkleUpdateClient: NSObject, UpdateClient {
+    private let updaterController: SPUStandardUpdaterController
+
+    override init() {
+        self.updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+        super.init()
+    }
+
+    var canCheckForUpdates: Bool {
+        updaterController.updater.canCheckForUpdates
+    }
+
+    var automaticallyChecksForUpdates: Bool {
+        get { updaterController.updater.automaticallyChecksForUpdates }
+        set { updaterController.updater.automaticallyChecksForUpdates = newValue }
+    }
+
+    var updateCheckInterval: TimeInterval {
+        get { updaterController.updater.updateCheckInterval }
+        set { updaterController.updater.updateCheckInterval = newValue }
+    }
+
+    var allowsAutomaticUpdates: Bool {
+        updaterController.updater.allowsAutomaticUpdates
+    }
+
+    var automaticallyDownloadsUpdates: Bool {
+        get { updaterController.updater.automaticallyDownloadsUpdates }
+        set { updaterController.updater.automaticallyDownloadsUpdates = newValue }
+    }
+
+    func checkForUpdates() {
+        updaterController.checkForUpdates(nil)
     }
 }

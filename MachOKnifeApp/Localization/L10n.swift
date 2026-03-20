@@ -7,6 +7,7 @@ enum L10n {
     static var appName: String { text("app.name", fallback: "MachOKnife") }
 
     static var menuPreferences: String { text("menu.preferences", fallback: "Preferences...") }
+    static var menuCheckForUpdates: String { text("menu.checkForUpdates", fallback: "Check for Updates...") }
     static var menuFile: String { text("menu.file", fallback: "File") }
     static var menuOpen: String { text("menu.open", fallback: "Open...") }
     static var menuOpenRecent: String { text("menu.openRecent", fallback: "Open Recent") }
