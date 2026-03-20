@@ -5,11 +5,11 @@ final class PreferencesWindowController: NSWindowController {
     private static let autosaveName = NSWindow.FrameAutosaveName("MachOKnifePreferencesWindowFrame")
 
     convenience init() {
-        self.init(settings: .shared)
+        self.init(settings: .shared, updateManager: UpdateManager())
     }
 
-    init(settings: AppSettings) {
-        let tabViewController = PreferencesTabViewController(settings: settings)
+    init(settings: AppSettings, updateManager: UpdateManager) {
+        let tabViewController = PreferencesTabViewController(settings: settings, updateManager: updateManager)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 620, height: 420),
             styleMask: [.titled, .closable, .miniaturizable],
@@ -42,14 +42,14 @@ final class PreferencesWindowController: NSWindowController {
 
 @MainActor
 private final class PreferencesTabViewController: NSTabViewController {
-    init(settings: AppSettings) {
+    init(settings: AppSettings, updateManager: UpdateManager) {
         super.init(nibName: nil, bundle: nil)
         tabStyle = .toolbar
 
         addTab(title: L10n.preferencesGeneralTab, viewController: GeneralPreferencesViewController(settings: settings))
         addTab(title: L10n.preferencesCLITab, viewController: CLIPreferencesViewController(settings: settings))
         addTab(title: L10n.preferencesAppearanceTab, viewController: AppearancePreferencesViewController(settings: settings))
-        addTab(title: L10n.preferencesUpdatesTab, viewController: PlaceholderPreferencesViewController(message: L10n.preferencesPlaceholderMilestone3))
+        addTab(title: L10n.preferencesUpdatesTab, viewController: UpdatesPreferencesViewController(updateManager: updateManager))
         addTab(title: L10n.preferencesAdvancedTab, viewController: AdvancedPreferencesViewController())
     }
 

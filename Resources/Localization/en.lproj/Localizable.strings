@@ -1,6 +1,7 @@
 "app.name" = "MachOKnife";
 "menu.about" = "About %@";
 "menu.preferences" = "Preferences...";
+"menu.checkForUpdates" = "Check for Updates...";
 "menu.quit" = "Quit %@";
 "menu.file" = "File";
 "menu.open" = "Open...";
@@ -48,6 +49,19 @@
 "preferences.general.recentLimit" = "Recent Files Limit";
 "preferences.general.recentHint" = "Controls how many recently opened files are retained.";
 "preferences.appearance.theme" = "Theme";
+"preferences.updates.status" = "Update Service";
+"preferences.updates.checkStrategy" = "Check Frequency";
+"preferences.updates.automaticDownloads" = "Automatically download updates";
+"preferences.updates.automaticDownloads.hint" = "Downloaded updates are staged and installed after you confirm the relaunch.";
+"preferences.updates.checkNow" = "Check Now";
+"preferences.updates.status.ready" = "Ready";
+"preferences.updates.status.configurationRequired" = "Configuration Required";
+"preferences.updates.detail.ready" = "Sparkle is configured and update checks are available.";
+"preferences.updates.detail.feedURLMissing" = "Set SUFeedURL in the app Info to enable Sparkle updates.";
+"preferences.updates.detail.publicKeyMissing" = "Set SUPublicEDKey in the app Info to enable Sparkle updates.";
+"preferences.updates.detail.sparkleUnavailable" = "Sparkle could not start in the current environment.";
+"preferences.updates.checkStrategy.manual" = "Manual Only";
+"preferences.updates.checkStrategy.daily" = "Daily";
 "preferences.cli.status" = "Status";
 "preferences.cli.directory" = "Install Directory";
 "preferences.cli.executable" = "Installed Executable";

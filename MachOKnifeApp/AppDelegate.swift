@@ -75,7 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showPreferences(_ sender: Any?) {
-        let preferencesWindowController = preferencesWindowController ?? PreferencesWindowController(settings: settings)
+        let preferencesWindowController = preferencesWindowController
+            ?? PreferencesWindowController(settings: settings, updateManager: updateManager)
         self.preferencesWindowController = preferencesWindowController
         preferencesWindowController.present(sender)
     }

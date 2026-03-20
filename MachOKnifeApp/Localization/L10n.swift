@@ -68,6 +68,17 @@ enum L10n {
     static var preferencesPlaceholderMilestone3: String { text("preferences.placeholder.milestone3", fallback: "Coming in Milestone 3.") }
     static var preferencesAdvancedTitle: String { text("preferences.advanced.title", fallback: "Advanced") }
     static var preferencesAdvancedSubtitle: String { text("preferences.advanced.subtitle", fallback: "Low-level tooling, CLI installation, and updater controls will appear here.") }
+    static var preferencesUpdatesStatusLabel: String { text("preferences.updates.status", fallback: "Update Service") }
+    static var preferencesUpdatesCheckStrategyLabel: String { text("preferences.updates.checkStrategy", fallback: "Check Frequency") }
+    static var preferencesUpdatesAutomaticDownloadsLabel: String { text("preferences.updates.automaticDownloads", fallback: "Automatically download updates") }
+    static var preferencesUpdatesAutomaticDownloadsHint: String { text("preferences.updates.automaticDownloads.hint", fallback: "Downloaded updates are staged and installed after you confirm the relaunch.") }
+    static var preferencesUpdatesCheckNow: String { text("preferences.updates.checkNow", fallback: "Check Now") }
+    static var preferencesUpdatesStatusReady: String { text("preferences.updates.status.ready", fallback: "Ready") }
+    static var preferencesUpdatesStatusConfigurationRequired: String { text("preferences.updates.status.configurationRequired", fallback: "Configuration Required") }
+    static var preferencesUpdatesDetailReady: String { text("preferences.updates.detail.ready", fallback: "Sparkle is configured and update checks are available.") }
+    static var preferencesUpdatesDetailFeedURLMissing: String { text("preferences.updates.detail.feedURLMissing", fallback: "Set SUFeedURL in the app Info to enable Sparkle updates.") }
+    static var preferencesUpdatesDetailPublicKeyMissing: String { text("preferences.updates.detail.publicKeyMissing", fallback: "Set SUPublicEDKey in the app Info to enable Sparkle updates.") }
+    static var preferencesUpdatesDetailSparkleUnavailable: String { text("preferences.updates.detail.sparkleUnavailable", fallback: "Sparkle could not start in the current environment.") }
     static var preferencesCLIStatusLabel: String { text("preferences.cli.status", fallback: "Status") }
     static var preferencesCLIDirectoryLabel: String { text("preferences.cli.directory", fallback: "Install Directory") }
     static var preferencesCLIExecutableLabel: String { text("preferences.cli.executable", fallback: "Installed Executable") }
@@ -120,6 +131,15 @@ enum L10n {
             return text("theme.light", fallback: "Light")
         case .dark:
             return text("theme.dark", fallback: "Dark")
+        }
+    }
+
+    static func updateCheckStrategyName(_ strategy: UpdateCheckStrategy) -> String {
+        switch strategy {
+        case .manual:
+            return text("preferences.updates.checkStrategy.manual", fallback: "Manual Only")
+        case .daily:
+            return text("preferences.updates.checkStrategy.daily", fallback: "Daily")
         }
     }
 

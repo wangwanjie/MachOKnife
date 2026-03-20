@@ -1,6 +1,7 @@
 "app.name" = "MachOKnife";
 "menu.about" = "關於%@";
 "menu.preferences" = "偏好設定...";
+"menu.checkForUpdates" = "檢查更新...";
 "menu.quit" = "結束%@";
 "menu.file" = "檔案";
 "menu.open" = "打開...";
@@ -48,6 +49,19 @@
 "preferences.general.recentLimit" = "最近檔案數量上限";
 "preferences.general.recentHint" = "控制最近打開檔案的保留數量。";
 "preferences.appearance.theme" = "主題";
+"preferences.updates.status" = "更新服務";
+"preferences.updates.checkStrategy" = "檢查頻率";
+"preferences.updates.automaticDownloads" = "自動下載更新";
+"preferences.updates.automaticDownloads.hint" = "更新會先下載到本機，待你確認後再執行重新啟動安裝。";
+"preferences.updates.checkNow" = "立即檢查";
+"preferences.updates.status.ready" = "已就緒";
+"preferences.updates.status.configurationRequired" = "需要設定";
+"preferences.updates.detail.ready" = "Sparkle 已完成設定，可以執行更新檢查。";
+"preferences.updates.detail.feedURLMissing" = "請在應用程式 Info 中設定 SUFeedURL 以啟用 Sparkle 更新。";
+"preferences.updates.detail.publicKeyMissing" = "請在應用程式 Info 中設定 SUPublicEDKey 以啟用 Sparkle 更新。";
+"preferences.updates.detail.sparkleUnavailable" = "Sparkle 在目前環境中無法啟動。";
+"preferences.updates.checkStrategy.manual" = "僅手動";
+"preferences.updates.checkStrategy.daily" = "每天";
 "preferences.cli.status" = "狀態";
 "preferences.cli.directory" = "安裝目錄";
 "preferences.cli.executable" = "已安裝可執行檔";
