@@ -10,6 +10,15 @@ public enum MachOWriteError: Error {
 public struct MachOWriter: Sendable {
     public init() {}
 
+    public func preview(inputURL: URL, editPlan: MachOEditPlan) throws -> MachODiff {
+        let originalData = try Data(contentsOf: inputURL, options: [.mappedIfSafe])
+        let container = try MachOContainer.parse(at: inputURL)
+        let diffEntries = try container.slices.flatMap { slice in
+            try rewriteSlice(slice, in: originalData, plan: editPlan).diffEntries
+        }
+        return MachODiff(entries: diffEntries)
+    }
+
     public func write(inputURL: URL, outputURL: URL, editPlan: MachOEditPlan) throws -> MachOWriteResult {
         let originalData = try Data(contentsOf: inputURL, options: [.mappedIfSafe])
         let container = try MachOContainer.parse(at: inputURL)

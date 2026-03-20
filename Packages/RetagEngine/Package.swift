@@ -3,6 +3,26 @@ import PackageDescription
 
 let package = Package(
     name: "RetagEngine",
-    products: [],
-    targets: []
+    platforms: [
+        .macOS(.v13),
+    ],
+    products: [
+        .library(
+            name: "RetagEngine",
+            targets: ["RetagEngine"]
+        ),
+    ],
+    dependencies: [
+        .package(path: "../CoreMachO"),
+    ],
+    targets: [
+        .target(
+            name: "RetagEngine",
+            dependencies: ["CoreMachO"]
+        ),
+        .testTarget(
+            name: "RetagEngineTests",
+            dependencies: ["RetagEngine"]
+        ),
+    ]
 )
