@@ -122,5 +122,42 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
                 outlineView.expandItem(nil, expandChildren: true)
             }
             .store(in: &cancellables)
+
+        viewModel.$selection
+            .receive(on: RunLoop.main)
+            .sink { [weak self] selection in
+                self?.applySelection(selection)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func applySelection(_ selection: WorkspaceViewModel.Selection?) {
+        let targetRow = row(for: selection, items: outlineItems)
+        guard targetRow != outlineView.selectedRow else { return }
+
+        if targetRow >= 0 {
+            outlineView.selectRowIndexes(IndexSet(integer: targetRow), byExtendingSelection: false)
+        } else {
+            outlineView.deselectAll(nil)
+        }
+    }
+
+    private func row(
+        for selection: WorkspaceViewModel.Selection?,
+        items: [WorkspaceViewModel.OutlineItem],
+        parent: WorkspaceViewModel.OutlineItem? = nil
+    ) -> Int {
+        for item in items {
+            if item.selection == selection {
+                return outlineView.row(forItem: item)
+            }
+
+            let nestedRow = row(for: selection, items: item.children, parent: item)
+            if nestedRow >= 0 {
+                return nestedRow
+            }
+        }
+
+        return -1
     }
 }

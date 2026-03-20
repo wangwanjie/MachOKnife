@@ -4,6 +4,7 @@ import Combine
 @MainActor
 final class DetailViewController: NSViewController {
     var promptForDocument: (() -> Void)?
+    var openDocument: ((URL) -> Void)?
 
     private let viewModel: WorkspaceViewModel
     private let emptyStateTitleLabel = NSTextField(labelWithString: L10n.workspaceEmptyTitle)
@@ -26,7 +27,7 @@ final class DetailViewController: NSViewController {
     override func loadView() {
         let dropView = WorkspaceDropView()
         dropView.onFileURLDropped = { [weak self] url in
-            self?.viewModel.openDocument(at: url)
+            self?.openDocument?(url)
         }
         view = dropView
     }

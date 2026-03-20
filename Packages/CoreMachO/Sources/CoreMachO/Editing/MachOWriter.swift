@@ -14,7 +14,8 @@ public struct MachOWriter: Sendable {
         let originalData = try Data(contentsOf: inputURL, options: [.mappedIfSafe])
         let container = try MachOContainer.parse(at: inputURL)
         let diffEntries = try container.slices.flatMap { slice in
-            try rewriteSlice(slice, in: originalData, plan: editPlan).diffEntries
+            guard applies(editPlan, to: slice) else { return [DiffEntry]() }
+            return try rewriteSlice(slice, in: originalData, plan: editPlan).diffEntries
         }
         return MachODiff(entries: diffEntries)
     }
@@ -27,6 +28,7 @@ public struct MachOWriter: Sendable {
         var removedCodeSignature = false
 
         for slice in container.slices {
+            guard applies(editPlan, to: slice) else { continue }
             let rewrite = try rewriteSlice(slice, in: originalData, plan: editPlan)
             rewrittenData.replaceSubrange(rewrite.commandAreaRange, with: rewrite.commandAreaData)
             patchHeader(in: &rewrittenData, slice: slice, commandCount: rewrite.commandCount, sizeofCommands: rewrite.sizeofCommands)
@@ -36,6 +38,10 @@ public struct MachOWriter: Sendable {
 
         try rewrittenData.write(to: outputURL, options: [.atomic])
         return MachOWriteResult(outputURL: outputURL, diff: MachODiff(entries: diffEntries), removedCodeSignature: removedCodeSignature)
+    }
+
+    private func applies(_ plan: MachOEditPlan, to slice: MachOSlice) -> Bool {
+        plan.targetSliceOffset == nil || plan.targetSliceOffset == slice.offset
     }
 
     private func rewriteSlice(_ slice: MachOSlice, in data: Data, plan: MachOEditPlan) throws -> SliceRewriteResult {

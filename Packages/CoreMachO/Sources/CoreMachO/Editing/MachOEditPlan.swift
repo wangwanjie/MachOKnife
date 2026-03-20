@@ -1,12 +1,31 @@
 import Foundation
 
 public struct MachOEditPlan: Sendable {
+    public let targetSliceOffset: Int?
     public let installName: String?
     public let dylibEdits: [DylibEdit]
     public let rpathEdits: [RPathEdit]
     public let platformEdit: PlatformEdit?
     public let segmentProtectionEdits: [SegmentProtectionEdit]
     public let stripCodeSignature: Bool
+
+    public init(
+        targetSliceOffset: Int? = nil,
+        installName: String? = nil,
+        dylibEdits: [DylibEdit] = [],
+        rpathEdits: [RPathEdit] = [],
+        platformEdit: PlatformEdit? = nil,
+        segmentProtectionEdits: [SegmentProtectionEdit] = [],
+        stripCodeSignature: Bool = false
+    ) {
+        self.targetSliceOffset = targetSliceOffset
+        self.installName = installName
+        self.dylibEdits = dylibEdits
+        self.rpathEdits = rpathEdits
+        self.platformEdit = platformEdit
+        self.segmentProtectionEdits = segmentProtectionEdits
+        self.stripCodeSignature = stripCodeSignature
+    }
 
     public init(
         installName: String? = nil,
@@ -16,12 +35,15 @@ public struct MachOEditPlan: Sendable {
         segmentProtectionEdits: [SegmentProtectionEdit] = [],
         stripCodeSignature: Bool = false
     ) {
-        self.installName = installName
-        self.dylibEdits = dylibEdits
-        self.rpathEdits = rpathEdits
-        self.platformEdit = platformEdit
-        self.segmentProtectionEdits = segmentProtectionEdits
-        self.stripCodeSignature = stripCodeSignature
+        self.init(
+            targetSliceOffset: nil,
+            installName: installName,
+            dylibEdits: dylibEdits,
+            rpathEdits: rpathEdits,
+            platformEdit: platformEdit,
+            segmentProtectionEdits: segmentProtectionEdits,
+            stripCodeSignature: stripCodeSignature
+        )
     }
 }
 

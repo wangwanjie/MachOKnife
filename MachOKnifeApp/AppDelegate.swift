@@ -3,9 +3,11 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = AppSettings.shared
+    private lazy var recentFilesController = try? RecentFilesController(settings: settings)
     private var mainWindowController: MainWindowController?
     private var preferencesWindowController: PreferencesWindowController?
     private var settingsObserver: NSObjectProtocol?
+    private let recentFilesMenu = NSMenu(title: "")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMainMenu()
@@ -13,8 +15,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         observeSettings()
 
         let mainWindowController = MainWindowController()
+        mainWindowController.onDocumentOpened = { [weak self] url in
+            self?.recordRecentFile(url)
+        }
         self.mainWindowController = mainWindowController
         mainWindowController.present(nil)
+        refreshRecentFilesMenu()
     }
 
     deinit {
@@ -35,9 +41,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        mainWindowController?.present(nil)
-        mainWindowController?.openDocument(at: URL(fileURLWithPath: path))
-        sender.reply(toOpenOrPrint: .success)
+        let didOpen = mainWindowController?.openDocument(at: URL(fileURLWithPath: path)) ?? false
+        sender.reply(toOpenOrPrint: didOpen ? .success : .failure)
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
@@ -51,6 +56,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func reanalyzeDocument(_ sender: Any?) {
         mainWindowController?.reanalyzeCurrentDocument()
+    }
+
+    @objc private func openRecentDocument(_ sender: NSMenuItem) {
+        guard
+            let path = sender.representedObject as? String,
+            let mainWindowController
+        else {
+            return
+        }
+
+        _ = mainWindowController.openDocument(at: URL(fileURLWithPath: path))
     }
 
     @objc private func showMainWindow(_ sender: Any?) {
@@ -82,6 +98,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let openItem = NSMenuItem(title: L10n.menuOpen, action: #selector(openDocument(_:)), keyEquivalent: "o")
         openItem.target = self
         fileMenu.addItem(openItem)
+        recentFilesMenu.title = L10n.menuOpenRecent
+        let openRecentItem = NSMenuItem(title: L10n.menuOpenRecent, action: nil, keyEquivalent: "")
+        openRecentItem.submenu = recentFilesMenu
+        fileMenu.addItem(openRecentItem)
+        fileMenu.addItem(NSMenuItem.separator())
 
         let analyzeItem = NSMenuItem(title: L10n.menuAnalyze, action: #selector(reanalyzeDocument(_:)), keyEquivalent: "r")
         analyzeItem.target = self
@@ -112,7 +133,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.applyAppearance()
+                self?.refreshRecentFilesMenu()
             }
+        }
+    }
+
+    private func recordRecentFile(_ url: URL) {
+        try? recentFilesController?.recordOpen(url: url)
+        refreshRecentFilesMenu()
+    }
+
+    private func refreshRecentFilesMenu() {
+        recentFilesMenu.removeAllItems()
+
+        let recentFiles = (try? recentFilesController?.recentFileURLs()) ?? []
+        guard !recentFiles.isEmpty else {
+            let emptyItem = NSMenuItem(title: L10n.menuOpenRecentEmpty, action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            recentFilesMenu.addItem(emptyItem)
+            return
+        }
+
+        for url in recentFiles {
+            let item = NSMenuItem(title: url.lastPathComponent, action: #selector(openRecentDocument(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = url.path
+            item.toolTip = url.path
+            recentFilesMenu.addItem(item)
         }
     }
 }

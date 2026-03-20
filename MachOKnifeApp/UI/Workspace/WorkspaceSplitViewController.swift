@@ -3,16 +3,21 @@ import AppKit
 @MainActor
 final class WorkspaceSplitViewController: NSSplitViewController {
     var promptForDocument: (() -> Void)?
+    var openDocument: ((URL) -> Void)?
+    private let inspectorViewController: InspectorViewController
 
     init(viewModel: WorkspaceViewModel) {
+        self.inspectorViewController = InspectorViewController(viewModel: viewModel)
         super.init(nibName: nil, bundle: nil)
 
         let sourceListViewController = SourceListViewController(viewModel: viewModel)
         let detailViewController = DetailViewController(viewModel: viewModel)
-        let inspectorViewController = InspectorViewController(viewModel: viewModel)
 
         detailViewController.promptForDocument = { [weak self] in
             self?.promptForDocument?()
+        }
+        detailViewController.openDocument = { [weak self] url in
+            self?.openDocument?(url)
         }
 
         let sourceItem = NSSplitViewItem(sidebarWithViewController: sourceListViewController)
@@ -33,5 +38,9 @@ final class WorkspaceSplitViewController: NSSplitViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    func selectPreviewInspectorTab() {
+        inspectorViewController.selectPreviewTab()
     }
 }

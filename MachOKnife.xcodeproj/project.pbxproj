@@ -7,9 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A1B2C3D4E5F60718293A4B5C /* RetagEngine in Frameworks */ = {isa = PBXBuildFile; productRef = B1C2D3E4F5061728394A5B6C /* RetagEngine */; };
+		1A2B3C4D5E6F708192A3B4C5 /* MachOKnifeDB in Frameworks */ = {isa = PBXBuildFile; productRef = 2B3C4D5E6F708192A3B4C5D6 /* MachOKnifeDB */; };
+		3C4D5E6F708192A3B4C5D6E7 /* CoreMachO in Frameworks */ = {isa = PBXBuildFile; productRef = 35400FDE63F69779F3E076E0 /* CoreMachO */; };
 		548B89A0768EF8F441797E9D /* CoreMachO in Frameworks */ = {isa = PBXBuildFile; productRef = 35400FDE63F69779F3E076E0 /* CoreMachO */; };
 		6A0CE6CA3473B4B445467A70 /* MachOKnifeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */; };
+		A1B2C3D4E5F60718293A4B5C /* RetagEngine in Frameworks */ = {isa = PBXBuildFile; productRef = B1C2D3E4F5061728394A5B6C /* RetagEngine */; };
 		CFC205DCBBE06A55E5CE900D /* MachOKnifeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */; };
 		E4F7A54A469BF6F1BC41D8B4 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D955F987017C05908960F1C /* Cocoa.framework */; };
 /* End PBXBuildFile section */
@@ -95,6 +97,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3C4D5E6F708192A3B4C5D6E7 /* CoreMachO in Frameworks */,
+				1A2B3C4D5E6F708192A3B4C5 /* MachOKnifeDB in Frameworks */,
 				6A0CE6CA3473B4B445467A70 /* MachOKnifeKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -203,6 +207,8 @@
 			);
 			name = MachOKnife;
 			packageProductDependencies = (
+				35400FDE63F69779F3E076E0 /* CoreMachO */,
+				2B3C4D5E6F708192A3B4C5D6 /* MachOKnifeDB */,
 				69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */,
 			);
 			productName = MachOKnife;
@@ -288,6 +294,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "Packages/CoreMachO" */,
+				0F1E2D3C4B5A69788796A5B4 /* XCLocalSwiftPackageReference "Packages/MachOKnifeDB" */,
 				F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "Packages/MachOKnifeKit" */,
 				D1E2F3A4B5C60718293A4B5C /* XCLocalSwiftPackageReference "Packages/RetagEngine" */,
 			);
@@ -730,6 +737,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		0F1E2D3C4B5A69788796A5B4 /* XCLocalSwiftPackageReference "Packages/MachOKnifeDB" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/MachOKnifeDB;
+		};
 		9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "Packages/CoreMachO" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/CoreMachO;
@@ -745,6 +756,11 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		2B3C4D5E6F708192A3B4C5D6 /* MachOKnifeDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0F1E2D3C4B5A69788796A5B4 /* XCLocalSwiftPackageReference "Packages/MachOKnifeDB" */;
+			productName = MachOKnifeDB;
+		};
 		35400FDE63F69779F3E076E0 /* CoreMachO */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "Packages/CoreMachO" */;
