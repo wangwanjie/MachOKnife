@@ -4,14 +4,15 @@ import AppKit
 final class WorkspaceSplitViewController: NSSplitViewController {
     var promptForDocument: (() -> Void)?
     var openDocument: ((URL) -> Void)?
-    private let inspectorViewController: InspectorViewController
+    var copySelectedNodeInfo: (() -> Void)?
+    var exportSelectedNodeInfo: (() -> Void)?
+    private let sourceListViewController: SourceListViewController
+    private let detailViewController: DetailViewController
 
     init(viewModel: WorkspaceViewModel) {
-        self.inspectorViewController = InspectorViewController(viewModel: viewModel)
+        self.sourceListViewController = SourceListViewController(viewModel: viewModel)
+        self.detailViewController = DetailViewController(viewModel: viewModel)
         super.init(nibName: nil, bundle: nil)
-
-        let sourceListViewController = SourceListViewController(viewModel: viewModel)
-        let detailViewController = DetailViewController(viewModel: viewModel)
 
         detailViewController.promptForDocument = { [weak self] in
             self?.promptForDocument?()
@@ -19,20 +20,21 @@ final class WorkspaceSplitViewController: NSSplitViewController {
         detailViewController.openDocument = { [weak self] url in
             self?.openDocument?(url)
         }
+        sourceListViewController.copySelectedNodeInfo = { [weak self] in
+            self?.copySelectedNodeInfo?()
+        }
+        sourceListViewController.exportSelectedNodeInfo = { [weak self] in
+            self?.exportSelectedNodeInfo?()
+        }
 
         let sourceItem = NSSplitViewItem(sidebarWithViewController: sourceListViewController)
         sourceItem.minimumThickness = 220
-        sourceItem.maximumThickness = 360
+        sourceItem.maximumThickness = 420
 
         let detailItem = NSSplitViewItem(viewController: detailViewController)
 
-        let inspectorItem = NSSplitViewItem(viewController: inspectorViewController)
-        inspectorItem.minimumThickness = 260
-        inspectorItem.maximumThickness = 420
-
         addSplitViewItem(sourceItem)
         addSplitViewItem(detailItem)
-        addSplitViewItem(inspectorItem)
     }
 
     @available(*, unavailable)
@@ -41,6 +43,11 @@ final class WorkspaceSplitViewController: NSSplitViewController {
     }
 
     func selectPreviewInspectorTab() {
-        inspectorViewController.selectPreviewTab()
+        // TODO: Reintroduce preview/retag-specific tooling as a separate tools window.
+    }
+
+    func reloadLocalization() {
+        sourceListViewController.reloadLocalization()
+        detailViewController.reloadLocalization()
     }
 }

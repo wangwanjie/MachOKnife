@@ -6,6 +6,32 @@ import Testing
 
 @MainActor
 struct WorkspaceViewModelTests {
+    @Test("close document clears loaded state and returns workspace to empty state")
+    func closeDocumentClearsLoadedState() throws {
+        let fixtureURL = try makeEditableFixtureCopy()
+        let viewModel = WorkspaceViewModel()
+
+        #expect(viewModel.openDocument(at: fixtureURL))
+        #expect(viewModel.hasLoadedDocument)
+        #expect(viewModel.currentFileURL == fixtureURL)
+        #expect(!viewModel.outlineItems.isEmpty)
+        #expect(!viewModel.detailText.isEmpty)
+
+        viewModel.closeCurrentDocument()
+
+        #expect(viewModel.hasLoadedDocument == false)
+        #expect(viewModel.currentFileURL == nil)
+        #expect(viewModel.analysis == nil)
+        #expect(viewModel.outlineItems.isEmpty)
+        #expect(viewModel.selection == nil)
+        #expect(viewModel.editableSlice == nil)
+        #expect(viewModel.selectedSliceSummary == nil)
+        #expect(viewModel.detailText.isEmpty)
+        #expect(viewModel.inspectorText.isEmpty)
+        #expect(viewModel.previewText.isEmpty)
+        #expect(viewModel.errorMessage == nil)
+    }
+
     @Test("preview reflects install-name and rpath draft changes")
     func previewReflectsInstallNameAndRPathDraftChanges() throws {
         let fixtureURL = try makeEditableFixtureCopy()
@@ -133,6 +159,41 @@ struct WorkspaceViewModelTests {
         #expect(analysis.slices.count == 2)
         #expect(analysis.slices[0].installName == "@rpath/libFatSlice0Only.dylib")
         #expect(analysis.slices[1].installName == "@rpath/libFatEditable.dylib")
+    }
+
+    @Test("outline exposes header, commands, segments, dylibs, rpaths, and symbols for each slice")
+    func outlineExposesStructuredViewerSectionsForEachSlice() throws {
+        let suiteName = "MachOKnifeTests.WorkspaceOutline.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let settings = AppSettings(defaults: defaults)
+        settings.language = .english
+
+        let originalSettingsProvider = L10n.settingsProvider
+        let originalBundleProvider = L10n.bundleProvider
+        L10n.settingsProvider = { settings }
+        L10n.bundleProvider = { .main }
+        defer {
+            L10n.settingsProvider = originalSettingsProvider
+            L10n.bundleProvider = originalBundleProvider
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let fixtureURL = try makeEditableFixtureCopy()
+        let viewModel = WorkspaceViewModel()
+
+        #expect(viewModel.openDocument(at: fixtureURL))
+
+        let documentItem = try #require(viewModel.outlineItems.first)
+        let sliceItem = try #require(documentItem.children.first)
+        let sectionTitles = sliceItem.children.map(\.title)
+
+        #expect(sectionTitles.contains("Header"))
+        #expect(sectionTitles.contains("Load Commands"))
+        #expect(sectionTitles.contains("Segments"))
+        #expect(sectionTitles.contains("Dynamic Libraries"))
+        #expect(sectionTitles.contains("RPaths"))
+        #expect(sectionTitles.contains("Symbols"))
     }
 
     private func makeEditableFixtureCopy() throws -> URL {

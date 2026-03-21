@@ -12,6 +12,7 @@ public struct MachOLoadCommandInfo: Sendable {
         case buildVersion(BuildVersionInfo)
         case versionMin(VersionMinInfo)
         case segment(SegmentInfo)
+        case symbolTable(SymbolTableInfo)
         case uuid(UUID)
         case codeSignature(LinkEditDataInfo)
         case encryptionInfo(EncryptionInfo)
@@ -52,4 +53,22 @@ public struct EncryptionInfo: Sendable {
     public let cryptOffset: UInt32
     public let cryptSize: UInt32
     public let cryptID: UInt32
+}
+
+public struct SymbolTableInfo: Sendable {
+    public let command: UInt32
+    public let commandOffset: Int
+    public let symbolOffset: UInt32
+    public let symbolCount: UInt32
+    public let stringTableOffset: UInt32
+    public let stringTableSize: UInt32
+}
+
+public struct SymbolInfo: Sendable {
+    public let name: String
+    public let stringTableIndex: UInt32
+    public let type: UInt8
+    public let sectionNumber: UInt8
+    public let description: UInt16
+    public let value: UInt64
 }

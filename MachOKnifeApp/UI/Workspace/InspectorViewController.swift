@@ -32,6 +32,7 @@ final class InspectorViewController: NSViewController {
 
     private let viewModel: WorkspaceViewModel
     private let tabView = NSTabView()
+    private let titleLabel = NSTextField(labelWithString: "")
     private let overviewSummaryLabel = NSTextField(wrappingLabelWithString: "")
     private let installNameField = NSTextField(string: "")
     private let dylibEmptyLabel = NSTextField(wrappingLabelWithString: "")
@@ -59,10 +60,7 @@ final class InspectorViewController: NSViewController {
     }
 
     override func loadView() {
-        let container = NSView()
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        view = container
+        view = AdaptiveBackgroundView(backgroundColor: .controlBackgroundColor)
     }
 
     override func viewDidLoad() {
@@ -75,8 +73,27 @@ final class InspectorViewController: NSViewController {
         tabView.selectTabViewItem(at: Tab.preview.rawValue)
     }
 
+    func reloadLocalization() {
+        titleLabel.stringValue = L10n.inspectorTitle
+        if tabView.numberOfTabViewItems > Tab.preview.rawValue {
+            tabView.tabViewItem(at: Tab.overview.rawValue).label = L10n.inspectorTabOverview
+            tabView.tabViewItem(at: Tab.dylibs.rawValue).label = L10n.inspectorTabDylibs
+            tabView.tabViewItem(at: Tab.rpaths.rawValue).label = L10n.inspectorTabRPaths
+            tabView.tabViewItem(at: Tab.platform.rawValue).label = L10n.inspectorTabPlatform
+            tabView.tabViewItem(at: Tab.preview.rawValue).label = L10n.inspectorTabPreview
+        }
+        dylibEmptyLabel.stringValue = L10n.inspectorDylibsEmpty
+        rpathEmptyLabel.stringValue = L10n.inspectorRPathsEmpty
+        addRPathButton.title = L10n.inspectorAddRPath
+        previewButton.title = L10n.inspectorPreviewAction
+        if previewTextView.string == L10n.inspectorPreviewPlaceholder || previewTextView.string.isEmpty {
+            previewTextView.string = L10n.inspectorPreviewPlaceholder
+        }
+        renderDraft(viewModel.editableSlice, sliceSummary: viewModel.selectedSliceSummary)
+    }
+
     private func buildUI() {
-        let titleLabel = NSTextField(labelWithString: L10n.inspectorTitle)
+        titleLabel.stringValue = L10n.inspectorTitle
         titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         titleLabel.textColor = .secondaryLabelColor
         titleLabel.translatesAutoresizingMaskIntoConstraints = false

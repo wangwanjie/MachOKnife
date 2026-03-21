@@ -26,6 +26,8 @@ public struct MachOSlice: Sendable {
     public let buildVersion: BuildVersionInfo?
     public let versionMin: VersionMinInfo?
     public let segments: [SegmentInfo]
+    public let symbolTable: SymbolTableInfo?
+    public let symbols: [SymbolInfo]
     public let uuid: UUID?
     public let codeSignature: LinkEditDataInfo?
     public let encryptionInfo: EncryptionInfo?

@@ -1,8 +1,10 @@
 import Foundation
+import AppKit
 import Sparkle
 
 enum UpdateCheckStrategy: String, CaseIterable {
     case manual
+    case startup
     case daily
 }
 
@@ -19,6 +21,7 @@ protocol UpdateClient: AnyObject {
     var automaticallyDownloadsUpdates: Bool { get set }
 
     func checkForUpdates()
+    func checkForUpdatesInBackground()
 }
 
 @MainActor
@@ -49,14 +52,21 @@ final class UpdateManager {
 
     private let configurationProvider: ConfigurationProvider
     private let injectedClientProvider: ClientProvider?
+    private let defaults: UserDefaults
     private lazy var defaultClient = Self.makeDefaultClient()
+
+    private enum Keys {
+        static let updateCheckStrategy = "app.updateCheckStrategy"
+    }
 
     init(
         configurationProvider: @escaping ConfigurationProvider = UpdateManager.defaultConfiguration,
-        clientProvider: ClientProvider? = nil
+        clientProvider: ClientProvider? = nil,
+        defaults: UserDefaults = .standard
     ) {
         self.configurationProvider = configurationProvider
         self.injectedClientProvider = clientProvider
+        self.defaults = defaults
     }
 
     func status() -> Status {
@@ -78,7 +88,8 @@ final class UpdateManager {
 
         return Status(
             availability: .ready,
-            updateCheckStrategy: client.automaticallyChecksForUpdates ? .daily : .manual,
+            updateCheckStrategy: storedUpdateCheckStrategy()
+                ?? (client.automaticallyChecksForUpdates ? .daily : .manual),
             canCheckForUpdates: client.canCheckForUpdates,
             canAutomaticallyDownloadUpdates: client.allowsAutomaticUpdates,
             automaticallyDownloadsUpdates: client.automaticallyDownloadsUpdates
@@ -97,6 +108,31 @@ final class UpdateManager {
         client.checkForUpdates()
     }
 
+    func performLaunchCheckIfNeeded() {
+        let currentStatus = status()
+        guard
+            currentStatus.availability == .ready,
+            currentStatus.updateCheckStrategy == .startup,
+            let client = activeClient(),
+            client.canCheckForUpdates
+        else {
+            return
+        }
+
+        client.checkForUpdatesInBackground()
+    }
+
+    func openGitHubHomepage() {
+        guard
+            let urlString = Bundle.main.object(forInfoDictionaryKey: "MachOKnifeGitHubURL") as? String,
+            let url = URL(string: urlString)
+        else {
+            return
+        }
+
+        NSWorkspace.shared.open(url)
+    }
+
     func setUpdateCheckStrategy(_ strategy: UpdateCheckStrategy) {
         guard let client = activeClient(), status().availability == .ready else {
             return
@@ -104,8 +140,13 @@ final class UpdateManager {
 
         switch strategy {
         case .manual:
+            persistUpdateCheckStrategy(.manual)
+            client.automaticallyChecksForUpdates = false
+        case .startup:
+            persistUpdateCheckStrategy(.startup)
             client.automaticallyChecksForUpdates = false
         case .daily:
+            persistUpdateCheckStrategy(.daily)
             client.updateCheckInterval = Self.dailyUpdateCheckInterval
             client.automaticallyChecksForUpdates = true
         }
@@ -122,7 +163,7 @@ final class UpdateManager {
     private func makeUnavailableStatus(reason: UnavailableReason) -> Status {
         Status(
             availability: .unavailable(reason),
-            updateCheckStrategy: .manual,
+            updateCheckStrategy: storedUpdateCheckStrategy() ?? .manual,
             canCheckForUpdates: false,
             canAutomaticallyDownloadUpdates: false,
             automaticallyDownloadsUpdates: false
@@ -138,6 +179,17 @@ final class UpdateManager {
 
     private func activeClient() -> UpdateClient? {
         injectedClientProvider?() ?? defaultClient
+    }
+
+    private func storedUpdateCheckStrategy() -> UpdateCheckStrategy? {
+        guard let rawValue = defaults.string(forKey: Keys.updateCheckStrategy) else {
+            return nil
+        }
+        return UpdateCheckStrategy(rawValue: rawValue)
+    }
+
+    private func persistUpdateCheckStrategy(_ strategy: UpdateCheckStrategy) {
+        defaults.set(strategy.rawValue, forKey: Keys.updateCheckStrategy)
     }
 
     private static func makeDefaultClient() -> UpdateClient {
@@ -183,5 +235,9 @@ private final class SparkleUpdateClient: NSObject, UpdateClient {
 
     func checkForUpdates() {
         updaterController.checkForUpdates(nil)
+    }
+
+    func checkForUpdatesInBackground() {
+        updaterController.updater.checkForUpdatesInBackground()
     }
 }

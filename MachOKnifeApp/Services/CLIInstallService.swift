@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 struct CLIInstallStatus: Equatable {
@@ -57,13 +58,20 @@ final class CLIInstallService: CLIInstallServicing {
 
         let installedCLIURL = installDirectoryURL.appendingPathComponent("machoe-cli", isDirectory: false)
 
-        try accessDirectory(installDirectoryURL) {
-            try fileManager.createDirectory(at: installDirectoryURL, withIntermediateDirectories: true)
-            if fileManager.fileExists(atPath: installedCLIURL.path) {
-                try fileManager.removeItem(at: installedCLIURL)
+        do {
+            try accessDirectory(installDirectoryURL) {
+                try fileManager.createDirectory(at: installDirectoryURL, withIntermediateDirectories: true)
+                if fileManager.fileExists(atPath: installedCLIURL.path) {
+                    try fileManager.removeItem(at: installedCLIURL)
+                }
+                try fileManager.copyItem(at: bundledCLIURL, to: installedCLIURL)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installedCLIURL.path)
             }
-            try fileManager.copyItem(at: bundledCLIURL, to: installedCLIURL)
-            try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installedCLIURL.path)
+        } catch {
+            guard requiresAdministratorPrivileges(error) else {
+                throw error
+            }
+            try installWithPrivileges(sourceURL: bundledCLIURL, destinationURL: installedCLIURL)
         }
 
         return try status()
@@ -76,10 +84,17 @@ final class CLIInstallService: CLIInstallServicing {
             return currentStatus
         }
 
-        try accessDirectory(currentStatus.installDirectoryURL) {
-            if fileManager.fileExists(atPath: installedCLIURL.path) {
-                try fileManager.removeItem(at: installedCLIURL)
+        do {
+            try accessDirectory(currentStatus.installDirectoryURL) {
+                if fileManager.fileExists(atPath: installedCLIURL.path) {
+                    try fileManager.removeItem(at: installedCLIURL)
+                }
             }
+        } catch {
+            guard requiresAdministratorPrivileges(error) else {
+                throw error
+            }
+            try removeWithPrivileges(url: installedCLIURL)
         }
 
         return try status()
@@ -101,8 +116,44 @@ final class CLIInstallService: CLIInstallServicing {
             Bundle.main.sharedSupportURL?.appendingPathComponent("machoe-cli", isDirectory: false),
             Bundle.main.resourceURL?.appendingPathComponent("machoe-cli", isDirectory: false),
             Bundle.main.url(forAuxiliaryExecutable: "machoe-cli"),
+            Bundle.main.bundleURL
+                .deletingLastPathComponent()
+                .appendingPathComponent("machoe-cli", isDirectory: false),
         ]
 
         return candidates.compactMap { $0 }.first(where: { FileManager.default.fileExists(atPath: $0.path) })
+    }
+
+    private func requiresAdministratorPrivileges(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileWriteNoPermissionError
+    }
+
+    private func installWithPrivileges(sourceURL: URL, destinationURL: URL) throws {
+        let script = """
+        do shell script "mkdir -p \(shellQuoted(destinationURL.deletingLastPathComponent().path)) && /usr/bin/install -m 755 \(shellQuoted(sourceURL.path)) \(shellQuoted(destinationURL.path))" with administrator privileges
+        """
+        try runPrivileged(script: script)
+    }
+
+    private func removeWithPrivileges(url: URL) throws {
+        let script = """
+        do shell script "if [ -e \(shellQuoted(url.path)) ]; then /bin/rm -f \(shellQuoted(url.path)); fi" with administrator privileges
+        """
+        try runPrivileged(script: script)
+    }
+
+    private func runPrivileged(script: String) throws {
+        var error: NSDictionary?
+        let appleScript = NSAppleScript(source: script)
+        appleScript?.executeAndReturnError(&error)
+        if let error {
+            let message = (error[NSAppleScript.errorMessage] as? String) ?? "Administrator command failed."
+            throw NSError(domain: "MachOKnife.CLIInstall", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+    }
+
+    private func shellQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 }

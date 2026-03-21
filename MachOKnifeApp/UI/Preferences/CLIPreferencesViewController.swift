@@ -2,12 +2,26 @@ import AppKit
 
 @MainActor
 final class CLIPreferencesViewController: NSViewController {
+    private enum LastAction {
+        case idle
+        case installed(path: String)
+        case uninstalled(path: String)
+        case failed(message: String)
+    }
+
     private let settings: AppSettings
     private let viewModel: CLIPreferencesViewModel
+    private var settingsObserver: NSObjectProtocol?
+    private var lastAction: LastAction = .idle
 
+    private let statusLabel = makeSectionLabel("")
+    private let directoryLabel = makeSectionLabel("")
+    private let executableLabel = makeSectionLabel("")
+    private let lastActionLabel = makeSectionLabel("")
     private let statusValueLabel = NSTextField(labelWithString: "")
     private let directoryValueLabel = NSTextField(wrappingLabelWithString: "")
     private let executableValueLabel = NSTextField(wrappingLabelWithString: "")
+    private let lastActionValueLabel = NSTextField(wrappingLabelWithString: "")
     private let pathHelpLabel = NSTextField(wrappingLabelWithString: "")
     private let chooseDirectoryButton = NSButton(title: "", target: nil, action: nil)
     private let installButton = NSButton(title: "", target: nil, action: nil)
@@ -33,6 +47,13 @@ final class CLIPreferencesViewController: NSViewController {
         super.viewDidLoad()
         buildUI()
         refreshState()
+        observeSettings()
+    }
+
+    deinit {
+        if let settingsObserver {
+            NotificationCenter.default.removeObserver(settingsObserver)
+        }
     }
 
     @objc private func chooseDirectory(_ sender: Any?) {
@@ -59,8 +80,21 @@ final class CLIPreferencesViewController: NSViewController {
 
     @objc private func installCLI(_ sender: Any?) {
         do {
+            statusValueLabel.stringValue = L10n.preferencesCLIStatusReadyToInstall
             try viewModel.installCLI()
             applyState()
+            switch viewModel.state {
+            case let .installed(installedCLIURL):
+                lastAction = .installed(path: installedCLIURL.path)
+            case let .readyToInstall(installDirectory):
+                let executablePath = installDirectory
+                    .appendingPathComponent("machoe-cli", isDirectory: false)
+                    .path
+                lastAction = .failed(message: L10n.preferencesCLIInstallIncomplete(path: executablePath))
+            case .notConfigured:
+                lastAction = .failed(message: L10n.preferencesCLIErrorMessage(for: CLIInstallError.installDirectoryNotConfigured))
+            }
+            applyLastActionText()
         } catch {
             presentCLIError(error)
         }
@@ -68,25 +102,46 @@ final class CLIPreferencesViewController: NSViewController {
 
     @objc private func uninstallCLI(_ sender: Any?) {
         do {
+            let removedPath = viewModel.state.installedCLIURL?.path
             try viewModel.uninstallCLI()
             applyState()
+            if let removedPath {
+                lastAction = .uninstalled(path: removedPath)
+                applyLastActionText()
+            }
         } catch {
             presentCLIError(error)
         }
     }
 
+    func reloadLocalization() {
+        statusLabel.stringValue = L10n.preferencesCLIStatusLabel
+        directoryLabel.stringValue = L10n.preferencesCLIDirectoryLabel
+        executableLabel.stringValue = L10n.preferencesCLIExecutableLabel
+        lastActionLabel.stringValue = L10n.preferencesCLILastActionLabel
+        chooseDirectoryButton.title = L10n.preferencesCLIChooseDirectory
+        installButton.title = L10n.preferencesCLIInstall
+        uninstallButton.title = L10n.preferencesCLIUninstall
+        applyLastActionText()
+        applyState()
+    }
+
     private func buildUI() {
         let statusRow = makeRow(
-            label: makeSectionLabel(L10n.preferencesCLIStatusLabel),
+            label: statusLabel,
             control: statusValueLabel
         )
         let directoryRow = makeRow(
-            label: makeSectionLabel(L10n.preferencesCLIDirectoryLabel),
+            label: directoryLabel,
             control: directoryValueLabel
         )
         let executableRow = makeRow(
-            label: makeSectionLabel(L10n.preferencesCLIExecutableLabel),
+            label: executableLabel,
             control: executableValueLabel
+        )
+        let lastActionRow = makeRow(
+            label: lastActionLabel,
+            control: lastActionValueLabel
         )
 
         statusValueLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
@@ -99,19 +154,20 @@ final class CLIPreferencesViewController: NSViewController {
             label.translatesAutoresizingMaskIntoConstraints = false
         }
 
+        lastActionValueLabel.font = NSFont.systemFont(ofSize: 12)
+        lastActionValueLabel.textColor = .secondaryLabelColor
+        lastActionValueLabel.translatesAutoresizingMaskIntoConstraints = false
+
         pathHelpLabel.font = NSFont.systemFont(ofSize: 12)
         pathHelpLabel.textColor = .secondaryLabelColor
         pathHelpLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        chooseDirectoryButton.title = L10n.preferencesCLIChooseDirectory
         chooseDirectoryButton.target = self
         chooseDirectoryButton.action = #selector(chooseDirectory(_:))
 
-        installButton.title = L10n.preferencesCLIInstall
         installButton.target = self
         installButton.action = #selector(installCLI(_:))
 
-        uninstallButton.title = L10n.preferencesCLIUninstall
         uninstallButton.target = self
         uninstallButton.action = #selector(uninstallCLI(_:))
 
@@ -121,7 +177,7 @@ final class CLIPreferencesViewController: NSViewController {
         buttonsRow.spacing = 8
         buttonsRow.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [statusRow, directoryRow, executableRow, buttonsRow, pathHelpLabel])
+        let stack = NSStackView(views: [statusRow, directoryRow, executableRow, lastActionRow, buttonsRow, pathHelpLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 18
@@ -135,6 +191,10 @@ final class CLIPreferencesViewController: NSViewController {
             stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
         ])
+
+        preferredContentSize = NSSize(width: 640, height: 300)
+        applyLastActionText()
+        reloadLocalization()
     }
 
     private func refreshState() {
@@ -179,11 +239,50 @@ final class CLIPreferencesViewController: NSViewController {
     }
 
     private func presentCLIError(_ error: Error) {
+        statusValueLabel.stringValue = error.localizedDescription
+        statusValueLabel.textColor = .systemRed
+        lastAction = .failed(message: error.localizedDescription)
+        applyLastActionText()
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = L10n.preferencesCLIErrorTitle
         alert.informativeText = L10n.preferencesCLIErrorMessage(for: error)
         alert.addButton(withTitle: "OK")
-        alert.runModal()
+        if let window = view.window {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
+    }
+
+    private func observeSettings() {
+        settingsObserver = NotificationCenter.default.addObserver(
+            forName: AppSettings.didChangeNotification,
+            object: settings,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshState()
+            self?.reloadLocalization()
+        }
+    }
+
+    private func applyLastActionText() {
+        switch lastAction {
+        case .idle:
+            lastActionValueLabel.stringValue = L10n.preferencesCLILastActionIdle
+        case let .installed(path):
+            lastActionValueLabel.stringValue = L10n.preferencesCLISuccessInstall(path: path)
+        case let .uninstalled(path):
+            lastActionValueLabel.stringValue = L10n.preferencesCLISuccessUninstall(path: path)
+        case let .failed(message):
+            lastActionValueLabel.stringValue = message
+        }
+    }
+}
+
+private extension CLIPreferencesViewModel.State {
+    var installedCLIURL: URL? {
+        guard case let .installed(installedCLIURL) = self else { return nil }
+        return installedCLIURL
     }
 }

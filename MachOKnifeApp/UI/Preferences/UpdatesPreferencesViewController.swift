@@ -5,6 +5,8 @@ final class UpdatesPreferencesViewController: NSViewController {
     private let viewModel: UpdatesPreferencesViewModel
     private let strategyOptions = UpdateCheckStrategy.allCases
 
+    private let statusLabel = makeSectionLabel("")
+    private let strategyLabel = makeSectionLabel("")
     private let statusValueLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(wrappingLabelWithString: "")
     private let strategyPopUpButton = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -56,13 +58,24 @@ final class UpdatesPreferencesViewController: NSViewController {
         applyState()
     }
 
+    func reloadLocalization() {
+        statusLabel.stringValue = L10n.preferencesUpdatesStatusLabel
+        strategyLabel.stringValue = L10n.preferencesUpdatesCheckStrategyLabel
+        strategyPopUpButton.removeAllItems()
+        strategyPopUpButton.addItems(withTitles: strategyOptions.map(L10n.updateCheckStrategyName(_:)))
+        automaticDownloadsButton.title = L10n.preferencesUpdatesAutomaticDownloadsLabel
+        automaticDownloadsHintLabel.stringValue = L10n.preferencesUpdatesAutomaticDownloadsHint
+        checkForUpdatesButton.title = L10n.preferencesUpdatesCheckNow
+        applyState()
+    }
+
     private func buildUI() {
         let statusRow = makeRow(
-            label: makeSectionLabel(L10n.preferencesUpdatesStatusLabel),
+            label: statusLabel,
             control: statusValueLabel
         )
         let strategyRow = makeRow(
-            label: makeSectionLabel(L10n.preferencesUpdatesCheckStrategyLabel),
+            label: strategyLabel,
             control: strategyPopUpButton
         )
 
@@ -76,19 +89,15 @@ final class UpdatesPreferencesViewController: NSViewController {
         strategyPopUpButton.target = self
         strategyPopUpButton.action = #selector(strategyChanged(_:))
         strategyPopUpButton.translatesAutoresizingMaskIntoConstraints = false
-        strategyPopUpButton.addItems(withTitles: strategyOptions.map(L10n.updateCheckStrategyName(_:)))
 
-        automaticDownloadsButton.title = L10n.preferencesUpdatesAutomaticDownloadsLabel
         automaticDownloadsButton.target = self
         automaticDownloadsButton.action = #selector(automaticDownloadsChanged(_:))
         automaticDownloadsButton.translatesAutoresizingMaskIntoConstraints = false
 
         automaticDownloadsHintLabel.font = NSFont.systemFont(ofSize: 12)
         automaticDownloadsHintLabel.textColor = .secondaryLabelColor
-        automaticDownloadsHintLabel.stringValue = L10n.preferencesUpdatesAutomaticDownloadsHint
         automaticDownloadsHintLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        checkForUpdatesButton.title = L10n.preferencesUpdatesCheckNow
         checkForUpdatesButton.target = self
         checkForUpdatesButton.action = #selector(checkForUpdates(_:))
 
@@ -113,6 +122,9 @@ final class UpdatesPreferencesViewController: NSViewController {
             stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
         ])
+
+        preferredContentSize = NSSize(width: 640, height: 280)
+        reloadLocalization()
     }
 
     private func refreshState() {

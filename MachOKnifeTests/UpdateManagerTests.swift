@@ -10,7 +10,8 @@ struct UpdateManagerTests {
             configurationProvider: {
                 UpdateConfiguration(feedURLString: "", publicEDKey: "")
             },
-            clientProvider: { nil }
+            clientProvider: { nil },
+            defaults: makeIsolatedDefaults()
         )
 
         let status = manager.status()
@@ -36,7 +37,8 @@ struct UpdateManagerTests {
                     publicEDKey: "test-public-key"
                 )
             },
-            clientProvider: { client }
+            clientProvider: { client },
+            defaults: makeIsolatedDefaults()
         )
 
         let status = manager.status()
@@ -65,7 +67,8 @@ struct UpdateManagerTests {
                     publicEDKey: "test-public-key"
                 )
             },
-            clientProvider: { client }
+            clientProvider: { client },
+            defaults: makeIsolatedDefaults()
         )
 
         let status = manager.status()
@@ -91,13 +94,54 @@ struct UpdateManagerTests {
                     publicEDKey: "test-public-key"
                 )
             },
-            clientProvider: { client }
+            clientProvider: { client },
+            defaults: makeIsolatedDefaults()
         )
 
         manager.setUpdateCheckStrategy(.daily)
 
         #expect(client.automaticallyChecksForUpdates == true)
         #expect(client.updateCheckInterval == 24 * 60 * 60)
+    }
+
+    @Test("setting startup strategy disables periodic checks but still performs launch-time background checks")
+    func settingStartupStrategyDisablesPeriodicChecksButStillPerformsLaunchTimeBackgroundChecks() {
+        let suiteName = "MachOKnifeTests.UpdateManagerTests.Startup.\(UUID().uuidString)"
+        let defaults = try! #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let client = StubUpdateClient(
+            canCheckForUpdates: true,
+            automaticallyChecksForUpdates: true,
+            updateCheckInterval: 24 * 60 * 60,
+            allowsAutomaticUpdates: true,
+            automaticallyDownloadsUpdates: false
+        )
+
+        let manager = UpdateManager(
+            configurationProvider: {
+                UpdateConfiguration(
+                    feedURLString: "https://example.com/appcast.xml",
+                    publicEDKey: "test-public-key"
+                )
+            },
+            clientProvider: { client },
+            defaults: defaults
+        )
+
+        manager.setUpdateCheckStrategy(.startup)
+
+        #expect(client.automaticallyChecksForUpdates == false)
+        #expect(manager.status().updateCheckStrategy == .startup)
+
+        manager.performLaunchCheckIfNeeded()
+
+        #expect(client.checkForUpdatesCallCount == 0)
+        #expect(client.backgroundCheckForUpdatesCallCount == 1)
     }
 
     @Test("setting manual strategy disables automatic checks")
@@ -117,7 +161,8 @@ struct UpdateManagerTests {
                     publicEDKey: "test-public-key"
                 )
             },
-            clientProvider: { client }
+            clientProvider: { client },
+            defaults: makeIsolatedDefaults()
         )
 
         manager.setUpdateCheckStrategy(.manual)
@@ -142,7 +187,8 @@ struct UpdateManagerTests {
                     publicEDKey: "test-public-key"
                 )
             },
-            clientProvider: { client }
+            clientProvider: { client },
+            defaults: makeIsolatedDefaults()
         )
 
         manager.setAutomaticallyDownloadsUpdates(true)
@@ -167,7 +213,8 @@ struct UpdateManagerTests {
                     publicEDKey: "test-public-key"
                 )
             },
-            clientProvider: { client }
+            clientProvider: { client },
+            defaults: makeIsolatedDefaults()
         )
 
         readyManager.checkForUpdates()
@@ -177,12 +224,69 @@ struct UpdateManagerTests {
             configurationProvider: {
                 UpdateConfiguration(feedURLString: "", publicEDKey: "")
             },
-            clientProvider: { client }
+            clientProvider: { client },
+            defaults: makeIsolatedDefaults()
         )
 
         unavailableManager.checkForUpdates()
         #expect(client.checkForUpdatesCallCount == 1)
     }
+
+    @Test("launch-time checks only run in background for the startup strategy")
+    func launchTimeChecksOnlyRunInBackgroundForTheStartupStrategy() {
+        let startupClient = StubUpdateClient(
+            canCheckForUpdates: true,
+            automaticallyChecksForUpdates: false,
+            updateCheckInterval: 0,
+            allowsAutomaticUpdates: true,
+            automaticallyDownloadsUpdates: false
+        )
+        let startupDefaults = makeIsolatedDefaults()
+        startupDefaults.set(UpdateCheckStrategy.startup.rawValue, forKey: "app.updateCheckStrategy")
+        let startupManager = UpdateManager(
+            configurationProvider: {
+                UpdateConfiguration(
+                    feedURLString: "https://example.com/appcast.xml",
+                    publicEDKey: "test-public-key"
+                )
+            },
+            clientProvider: { startupClient },
+            defaults: startupDefaults
+        )
+
+        startupManager.performLaunchCheckIfNeeded()
+        #expect(startupClient.checkForUpdatesCallCount == 0)
+        #expect(startupClient.backgroundCheckForUpdatesCallCount == 1)
+
+        let dailyClient = StubUpdateClient(
+            canCheckForUpdates: true,
+            automaticallyChecksForUpdates: true,
+            updateCheckInterval: 24 * 60 * 60,
+            allowsAutomaticUpdates: true,
+            automaticallyDownloadsUpdates: false
+        )
+        let dailyDefaults = makeIsolatedDefaults()
+        dailyDefaults.set(UpdateCheckStrategy.daily.rawValue, forKey: "app.updateCheckStrategy")
+        let dailyManager = UpdateManager(
+            configurationProvider: {
+                UpdateConfiguration(
+                    feedURLString: "https://example.com/appcast.xml",
+                    publicEDKey: "test-public-key"
+                )
+            },
+            clientProvider: { dailyClient },
+            defaults: dailyDefaults
+        )
+
+        dailyManager.performLaunchCheckIfNeeded()
+        #expect(dailyClient.checkForUpdatesCallCount == 0)
+        #expect(dailyClient.backgroundCheckForUpdatesCallCount == 0)
+    }
+}
+
+private func makeIsolatedDefaults() -> UserDefaults {
+    let suiteName = "MachOKnifeTests.UpdateManager.\(UUID().uuidString)"
+    return UserDefaults(suiteName: suiteName) ?? .standard
 }
 
 @MainActor
@@ -193,6 +297,7 @@ private final class StubUpdateClient: UpdateClient {
     let allowsAutomaticUpdates: Bool
     var automaticallyDownloadsUpdates: Bool
     private(set) var checkForUpdatesCallCount = 0
+    private(set) var backgroundCheckForUpdatesCallCount = 0
 
     init(
         canCheckForUpdates: Bool,
@@ -210,5 +315,9 @@ private final class StubUpdateClient: UpdateClient {
 
     func checkForUpdates() {
         checkForUpdatesCallCount += 1
+    }
+
+    func checkForUpdatesInBackground() {
+        backgroundCheckForUpdatesCallCount += 1
     }
 }

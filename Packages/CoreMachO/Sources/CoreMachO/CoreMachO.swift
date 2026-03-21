@@ -66,6 +66,7 @@ struct MachOFileParser {
         var buildVersion: BuildVersionInfo?
         var versionMin: VersionMinInfo?
         var segments = [SegmentInfo]()
+        var symbolTable: SymbolTableInfo?
         var uuid: UUID?
         var codeSignature: LinkEditDataInfo?
         var encryptionInfo: EncryptionInfo?
@@ -109,6 +110,8 @@ struct MachOFileParser {
                 versionMin = info
             } else if case let .segment(info)? = payload {
                 segments.append(info)
+            } else if case let .symbolTable(info)? = payload {
+                symbolTable = info
             } else if case let .uuid(info)? = payload {
                 uuid = info
             } else if case let .codeSignature(info)? = payload {
@@ -129,6 +132,8 @@ struct MachOFileParser {
             cursor = commandEnd
         }
 
+        let symbols = try symbolTable.map { try parseSymbols(using: $0, is64Bit: parsedHeader.info.is64Bit, swapped: parsedHeader.swapped) } ?? []
+
         return MachOSlice(
             offset: offset,
             header: parsedHeader.info,
@@ -139,6 +144,8 @@ struct MachOFileParser {
             buildVersion: buildVersion,
             versionMin: versionMin,
             segments: segments,
+            symbolTable: symbolTable,
+            symbols: symbols,
             uuid: uuid,
             codeSignature: codeSignature,
             encryptionInfo: encryptionInfo
@@ -164,6 +171,8 @@ struct MachOFileParser {
             return .segment(try parseSegmentCommand32(at: commandOffset, command: commandType, commandSize: commandSize, swapped: swapped))
         case UInt32(LC_SEGMENT_64):
             return .segment(try parseSegmentCommand64(at: commandOffset, command: commandType, commandSize: commandSize, swapped: swapped))
+        case UInt32(LC_SYMTAB):
+            return .symbolTable(try parseSymbolTableCommand(at: commandOffset, command: commandType, swapped: swapped))
         case UInt32(LC_UUID):
             return .uuid(try parseUUIDCommand(at: commandOffset))
         case UInt32(LC_CODE_SIGNATURE):
@@ -326,6 +335,18 @@ struct MachOFileParser {
         )
     }
 
+    private func parseSymbolTableCommand(at offset: Int, command: UInt32, swapped: Bool) throws -> SymbolTableInfo {
+        let symbolTableCommand = try read(symtab_command.self, at: offset)
+        return SymbolTableInfo(
+            command: command,
+            commandOffset: offset,
+            symbolOffset: normalize(symbolTableCommand.symoff, swapped: swapped),
+            symbolCount: normalize(symbolTableCommand.nsyms, swapped: swapped),
+            stringTableOffset: normalize(symbolTableCommand.stroff, swapped: swapped),
+            stringTableSize: normalize(symbolTableCommand.strsize, swapped: swapped)
+        )
+    }
+
     private func parseUUIDCommand(at offset: Int) throws -> UUID {
         let command = try read(uuid_command.self, at: offset)
         let bytes = withUnsafeBytes(of: command.uuid) { Array($0) }
@@ -367,6 +388,57 @@ struct MachOFileParser {
             cryptSize: normalize(encryptionCommand.cryptsize, swapped: swapped),
             cryptID: normalize(encryptionCommand.cryptid, swapped: swapped)
         )
+    }
+
+    private func parseSymbols(using symbolTable: SymbolTableInfo, is64Bit: Bool, swapped: Bool) throws -> [SymbolInfo] {
+        let count = Int(symbolTable.symbolCount)
+        let symbolEntrySize = is64Bit ? MemoryLayout<nlist_64>.size : MemoryLayout<nlist>.size
+        let symbolsStart = Int(symbolTable.symbolOffset)
+        let symbolsSize = count * symbolEntrySize
+        guard symbolsStart >= 0, symbolsStart + symbolsSize <= data.count else {
+            throw MachOParseError.outOfBounds(offset: symbolsStart, size: symbolsSize)
+        }
+
+        let stringTableStart = Int(symbolTable.stringTableOffset)
+        let stringTableSize = Int(symbolTable.stringTableSize)
+        guard stringTableStart >= 0, stringTableStart + stringTableSize <= data.count else {
+            throw MachOParseError.outOfBounds(offset: stringTableStart, size: stringTableSize)
+        }
+
+        return try (0..<count).map { index in
+            let offset = symbolsStart + index * symbolEntrySize
+            if is64Bit {
+                let symbol = try read(nlist_64.self, at: offset)
+                let stringTableIndex = normalize(symbol.n_un.n_strx, swapped: swapped)
+                return SymbolInfo(
+                    name: try readStringTableEntry(
+                        at: stringTableStart,
+                        size: stringTableSize,
+                        index: stringTableIndex
+                    ),
+                    stringTableIndex: stringTableIndex,
+                    type: symbol.n_type,
+                    sectionNumber: symbol.n_sect,
+                    description: normalizeSymbolDescription(symbol.n_desc, swapped: swapped),
+                    value: normalize(symbol.n_value, swapped: swapped)
+                )
+            } else {
+                let symbol = try read(nlist.self, at: offset)
+                let stringTableIndex = normalize(symbol.n_un.n_strx, swapped: swapped)
+                return SymbolInfo(
+                    name: try readStringTableEntry(
+                        at: stringTableStart,
+                        size: stringTableSize,
+                        index: stringTableIndex
+                    ),
+                    stringTableIndex: stringTableIndex,
+                    type: symbol.n_type,
+                    sectionNumber: symbol.n_sect,
+                    description: normalizeSymbolDescription(symbol.n_desc, swapped: swapped),
+                    value: UInt64(normalize(symbol.n_value, swapped: swapped))
+                )
+            }
+        }
     }
 
     private func parseHeader(at offset: Int, magic: UInt32) throws -> ParsedHeader {
@@ -430,6 +502,20 @@ struct MachOFileParser {
         return String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
     }
 
+    private func readStringTableEntry(at stringTableOffset: Int, size: Int, index: UInt32) throws -> String {
+        if index == 0 {
+            return ""
+        }
+
+        let start = stringTableOffset + Int(index)
+        let end = stringTableOffset + size
+        guard start >= stringTableOffset, start < end, end <= data.count else {
+            throw MachOParseError.outOfBounds(offset: start, size: max(0, end - start))
+        }
+
+        return String(decoding: data[start..<end].prefix { $0 != 0 }, as: UTF8.self)
+    }
+
     private func parseVersion(_ rawValue: UInt32) -> MachOVersion {
         MachOVersion(
             major: Int((rawValue >> 16) & 0xffff),
@@ -469,6 +555,22 @@ struct MachOFileParser {
 
     private func normalize(_ value: Int32, swapped: Bool) -> Int32 {
         Int32(bitPattern: normalize(UInt32(bitPattern: value), swapped: swapped))
+    }
+
+    private func normalize(_ value: Int16, swapped: Bool) -> Int16 {
+        Int16(bitPattern: normalize(UInt16(bitPattern: value), swapped: swapped))
+    }
+
+    private func normalize(_ value: UInt16, swapped: Bool) -> UInt16 {
+        swapped ? value.byteSwapped : value
+    }
+
+    private func normalizeSymbolDescription(_ value: UInt16, swapped: Bool) -> UInt16 {
+        normalize(value, swapped: swapped)
+    }
+
+    private func normalizeSymbolDescription(_ value: Int16, swapped: Bool) -> UInt16 {
+        UInt16(bitPattern: normalize(value, swapped: swapped))
     }
 }
 

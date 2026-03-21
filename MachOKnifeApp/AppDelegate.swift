@@ -2,13 +2,27 @@ import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let settings = AppSettings.shared
-    private let updateManager = UpdateManager()
+    private let settings: AppSettings
+    private let updateManager: UpdateManager
     private lazy var recentFilesController = try? RecentFilesController(settings: settings)
     private var mainWindowController: MainWindowController?
     private var preferencesWindowController: PreferencesWindowController?
+    private var retagWindowController: RetagWindowController?
+    private var xcframeworkBuildWindowController: XCFrameworkBuildWindowController?
     private var settingsObserver: NSObjectProtocol?
-    private let recentFilesMenu = NSMenu(title: "")
+    private var recentFilesMenu = NSMenu(title: "")
+
+    override init() {
+        self.settings = .shared
+        self.updateManager = UpdateManager()
+        super.init()
+    }
+
+    init(settings: AppSettings, updateManager: UpdateManager) {
+        self.settings = settings
+        self.updateManager = updateManager
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMainMenu()
@@ -22,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.mainWindowController = mainWindowController
         mainWindowController.present(nil)
         refreshRecentFilesMenu()
+        updateManager.performLaunchCheckIfNeeded()
     }
 
     deinit {
@@ -55,19 +70,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindowController?.promptForDocument(sender)
     }
 
-    @objc private func reanalyzeDocument(_ sender: Any?) {
-        mainWindowController?.reanalyzeCurrentDocument()
+    @objc private func closeDocument(_ sender: Any?) {
+        guard
+            let mainWindow = mainWindowController?.window,
+            NSApp.keyWindow === mainWindow || NSApp.mainWindow === mainWindow
+        else {
+            return
+        }
+
+        mainWindowController?.closeCurrentDocument()
     }
 
     @objc private func openRecentDocument(_ sender: NSMenuItem) {
         guard
-            let path = sender.representedObject as? String,
+            let url = sender.representedObject as? URL,
             let mainWindowController
         else {
             return
         }
 
-        _ = mainWindowController.openDocument(at: URL(fileURLWithPath: path))
+        _ = mainWindowController.openDocument(at: url)
     }
 
     @objc private func showMainWindow(_ sender: Any?) {
@@ -85,8 +107,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateManager.checkForUpdates()
     }
 
+    @objc private func openGitHubHomepage(_ sender: Any?) {
+        updateManager.openGitHubHomepage()
+    }
+
+    @objc private func showRetagTool(_ sender: Any?) {
+        let retagWindowController = retagWindowController ?? RetagWindowController()
+        self.retagWindowController = retagWindowController
+        retagWindowController.present(sender)
+    }
+
+    @objc private func showXCFrameworkBuilder(_ sender: Any?) {
+        let controller = xcframeworkBuildWindowController ?? XCFrameworkBuildWindowController()
+        xcframeworkBuildWindowController = controller
+        controller.present(sender)
+    }
+
+    @objc private func copySelectedNodeInfo(_ sender: Any?) {
+        mainWindowController?.copySelectedNodeInfo()
+    }
+
+    @objc private func exportSelectedNodeInfo(_ sender: Any?) {
+        mainWindowController?.exportSelectedNodeInfo()
+    }
+
     private func buildMainMenu() {
         let mainMenu = NSMenu()
+        let recentFilesMenu = NSMenu(title: L10n.menuOpenRecent)
+        self.recentFilesMenu = recentFilesMenu
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
@@ -107,17 +155,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let openItem = NSMenuItem(title: L10n.menuOpen, action: #selector(openDocument(_:)), keyEquivalent: "o")
         openItem.target = self
         fileMenu.addItem(openItem)
-        recentFilesMenu.title = L10n.menuOpenRecent
+        let closeWindowItem = NSMenuItem(title: L10n.menuCloseWindow, action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        closeWindowItem.target = nil
+        closeWindowItem.keyEquivalentModifierMask = [.command]
+        fileMenu.addItem(closeWindowItem)
+        let closeItem = NSMenuItem(title: L10n.menuCloseFile, action: #selector(closeDocument(_:)), keyEquivalent: "W")
+        closeItem.target = self
+        closeItem.keyEquivalentModifierMask = [.command, .shift]
+        fileMenu.addItem(closeItem)
+        let exportNodeInfoItem = NSMenuItem(title: L10n.menuExportNodeInfo, action: #selector(exportSelectedNodeInfo(_:)), keyEquivalent: "e")
+        exportNodeInfoItem.target = self
+        exportNodeInfoItem.keyEquivalentModifierMask = [.command, .shift]
+        fileMenu.addItem(exportNodeInfoItem)
         let openRecentItem = NSMenuItem(title: L10n.menuOpenRecent, action: nil, keyEquivalent: "")
         openRecentItem.submenu = recentFilesMenu
         fileMenu.addItem(openRecentItem)
-        fileMenu.addItem(NSMenuItem.separator())
-
-        let analyzeItem = NSMenuItem(title: L10n.menuAnalyze, action: #selector(reanalyzeDocument(_:)), keyEquivalent: "r")
-        analyzeItem.target = self
-        fileMenu.addItem(analyzeItem)
         fileItem.submenu = fileMenu
         mainMenu.addItem(fileItem)
+
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: L10n.menuEdit)
+        let copyNodeInfoItem = NSMenuItem(title: L10n.menuCopyNodeInfo, action: #selector(copySelectedNodeInfo(_:)), keyEquivalent: "c")
+        copyNodeInfoItem.target = self
+        editMenu.addItem(copyNodeInfoItem)
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+
+        let toolsItem = NSMenuItem()
+        let toolsMenu = NSMenu(title: L10n.menuTools)
+        let retagItem = NSMenuItem(title: L10n.menuRetag, action: #selector(showRetagTool(_:)), keyEquivalent: "t")
+        retagItem.keyEquivalentModifierMask = [.command, .option]
+        retagItem.target = self
+        toolsMenu.addItem(retagItem)
+        let xcframeworkItem = NSMenuItem(title: L10n.menuBuildXCFramework, action: #selector(showXCFrameworkBuilder(_:)), keyEquivalent: "x")
+        xcframeworkItem.keyEquivalentModifierMask = [.command, .option]
+        xcframeworkItem.target = self
+        toolsMenu.addItem(xcframeworkItem)
+        toolsItem.submenu = toolsMenu
+        mainMenu.addItem(toolsItem)
 
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: L10n.menuWindow)
@@ -126,6 +201,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowMenu.addItem(showWindowItem)
         windowItem.submenu = windowMenu
         mainMenu.addItem(windowItem)
+
+        let helpItem = NSMenuItem()
+        let helpMenu = NSMenu(title: L10n.menuHelp)
+        let githubItem = NSMenuItem(title: L10n.menuGitHub, action: #selector(openGitHubHomepage(_:)), keyEquivalent: "?")
+        githubItem.target = self
+        helpMenu.addItem(githubItem)
+        helpItem.submenu = helpMenu
+        helpItem.title = L10n.menuHelp
+        mainMenu.addItem(helpItem)
 
         NSApp.mainMenu = mainMenu
     }
@@ -137,13 +221,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func observeSettings() {
         settingsObserver = NotificationCenter.default.addObserver(
             forName: AppSettings.didChangeNotification,
-            object: settings,
+            object: nil,
             queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.applyAppearance()
-                self?.refreshRecentFilesMenu()
+        ) { [weak self] notification in
+            let changedSettings = notification.object as AnyObject?
+            guard let self else { return }
+
+            if let changedSettings, changedSettings !== self.settings {
+                return
             }
+
+            self.applyAppearance()
+            self.buildMainMenu()
+            self.mainWindowController?.reloadLocalization()
+            self.preferencesWindowController?.reloadLocalization()
+            self.retagWindowController?.reloadLocalization()
+            self.xcframeworkBuildWindowController?.reloadLocalization()
+            self.refreshRecentFilesMenu()
         }
     }
 
@@ -166,7 +260,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for url in recentFiles {
             let item = NSMenuItem(title: url.lastPathComponent, action: #selector(openRecentDocument(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = url.path
+            item.representedObject = url
             item.toolTip = url.path
             recentFilesMenu.addItem(item)
         }
@@ -175,10 +269,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        guard menuItem.action == #selector(checkForUpdates(_:)) else {
+        switch menuItem.action {
+        case #selector(checkForUpdates(_:)):
+            return updateManager.status().canCheckForUpdates
+        case #selector(closeDocument(_:)):
+            guard
+                mainWindowController?.viewModel.hasLoadedDocument == true,
+                let mainWindow = mainWindowController?.window
+            else {
+                return false
+            }
+
+            return NSApp.keyWindow === mainWindow || NSApp.mainWindow === mainWindow
+        case #selector(copySelectedNodeInfo(_:)), #selector(exportSelectedNodeInfo(_:)):
+            guard
+                mainWindowController?.canCopyOrExportSelectedNodeInfo == true,
+                let mainWindow = mainWindowController?.window
+            else {
+                return false
+            }
+
+            return NSApp.keyWindow === mainWindow || NSApp.mainWindow === mainWindow
+        default:
             return true
         }
-
-        return updateManager.status().canCheckForUpdates
     }
 }

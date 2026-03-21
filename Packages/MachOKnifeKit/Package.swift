@@ -14,12 +14,14 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../CoreMachO"),
+        .package(url: "https://github.com/p-x9/MachOKit.git", branch: "main"),
     ],
     targets: [
         .target(
             name: "MachOKnifeKit",
             dependencies: [
                 .product(name: "CoreMachO", package: "CoreMachO"),
+                .product(name: "MachOKit", package: "MachOKit"),
             ]
         ),
         .testTarget(

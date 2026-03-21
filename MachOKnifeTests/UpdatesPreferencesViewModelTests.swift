@@ -11,7 +11,8 @@ struct UpdatesPreferencesViewModelTests {
                 configurationProvider: {
                     UpdateConfiguration(feedURLString: "", publicEDKey: "")
                 },
-                clientProvider: { nil }
+                clientProvider: { nil },
+                defaults: makeIsolatedUpdatesDefaults()
             )
         )
 
@@ -41,7 +42,8 @@ struct UpdatesPreferencesViewModelTests {
                         publicEDKey: "test-public-key"
                     )
                 },
-                clientProvider: { client }
+                clientProvider: { client },
+                defaults: makeIsolatedUpdatesDefaults()
             )
         )
 
@@ -72,7 +74,8 @@ struct UpdatesPreferencesViewModelTests {
                         publicEDKey: "test-public-key"
                     )
                 },
-                clientProvider: { client }
+                clientProvider: { client },
+                defaults: makeIsolatedUpdatesDefaults()
             )
         )
 
@@ -86,6 +89,11 @@ struct UpdatesPreferencesViewModelTests {
         #expect(viewModel.state.updateCheckStrategy == .daily)
         #expect(viewModel.state.automaticallyDownloadsUpdates)
     }
+}
+
+private func makeIsolatedUpdatesDefaults() -> UserDefaults {
+    let suiteName = "MachOKnifeTests.UpdatesPreferences.\(UUID().uuidString)"
+    return UserDefaults(suiteName: suiteName) ?? .standard
 }
 
 @MainActor
@@ -111,4 +119,6 @@ private final class StubPreferencesUpdateClient: UpdateClient {
     }
 
     func checkForUpdates() {}
+
+    func checkForUpdatesInBackground() {}
 }

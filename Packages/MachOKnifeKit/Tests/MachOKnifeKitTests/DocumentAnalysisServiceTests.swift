@@ -14,6 +14,11 @@ struct DocumentAnalysisServiceTests {
         #expect(analysis.containerKind == .thin)
         #expect(analysis.slices.count == 1)
         #expect(analysis.slices.first?.loadCommandCount ?? 0 > 0)
+        #expect(analysis.slices.first?.header.fileType == 1)
+        #expect(analysis.slices.first?.loadCommands.isEmpty == false)
+        #expect(analysis.slices.first?.segments.isEmpty == false)
+        #expect(analysis.slices.first?.segments.first?.sections.isEmpty == false)
+        #expect(analysis.slices.first?.symbols.contains(where: { $0.name.contains("_machoknife_fixture") }) == true)
     }
 }
 
