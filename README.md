@@ -80,6 +80,20 @@ bash Scripts/capture_readme_screenshots.sh
 
 Sparkle is wired into the app through `UpdateManager`. The repository includes a placeholder feed at `Resources/Updates/appcast.xml`; replace it with the published appcast and a real `SUPublicEDKey` before shipping a production build.
 
+## Release
+
+The repository now includes a scriptable release path:
+
+```bash
+bash Scripts/build_dmg.sh --no-notarize
+bash Scripts/generate_appcast.sh --archive build/dmg/MachOKnife_V_1.0.dmg
+bash Scripts/publish_github_release.sh --dmg build/dmg/MachOKnife_V_1.0.dmg --draft
+```
+
+`build_dmg.sh` builds and re-signs the app, creates a polished DMG, and can optionally notarize it.
+`generate_appcast.sh` signs Sparkle feed entries with your Sparkle key account and writes the feed to `Resources/Updates/appcast.xml`.
+`publish_github_release.sh` uploads the DMG to GitHub Releases and refreshes the appcast using the published release notes.
+
 ## Verification
 
 Run the current verification pipeline:

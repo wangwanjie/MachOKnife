@@ -14,7 +14,12 @@ struct RepositoryLayoutTests {
             "Packages/MachOKnifeKit/Package.swift",
             "Packages/MachOKnifeDB/Package.swift",
             "Resources",
+            "Resources/Updates/appcast.xml",
             "Scripts",
+            "Scripts/common.sh",
+            "Scripts/build_dmg.sh",
+            "Scripts/generate_appcast.sh",
+            "Scripts/publish_github_release.sh",
         ]
 
         for path in requiredPaths {
