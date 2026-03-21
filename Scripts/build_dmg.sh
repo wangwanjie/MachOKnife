@@ -40,7 +40,6 @@ let stroke = NSColor(calibratedRed: 0.77, green: 0.84, blue: 0.89, alpha: 1)
 let image = NSImage(size: size)
 image.lockFocus()
 
-NSBezierPath(roundedRect: rect, xRadius: 26, yRadius: 26).fill(with: .sourceOver)
 base.setFill()
 NSBezierPath(roundedRect: rect, xRadius: 26, yRadius: 26).fill()
 
@@ -149,7 +148,10 @@ import plistlib
 import sys
 
 path = pathlib.Path(sys.argv[1])
-data = plistlib.loads(path.read_bytes())
+try:
+    data = plistlib.loads(path.read_bytes())
+except Exception:
+    raise SystemExit(1)
 data.pop("com.apple.security.get-task-allow", None)
 data.pop("application-identifier", None)
 data.pop("com.apple.developer.team-identifier", None)

@@ -11,8 +11,8 @@
 		3C4D5E6F708192A3B4C5D6E7 /* CoreMachO in Frameworks */ = {isa = PBXBuildFile; productRef = 35400FDE63F69779F3E076E0 /* CoreMachO */; };
 		548B89A0768EF8F441797E9D /* CoreMachO in Frameworks */ = {isa = PBXBuildFile; productRef = 35400FDE63F69779F3E076E0 /* CoreMachO */; };
 		6A0CE6CA3473B4B445467A70 /* MachOKnifeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */; };
-		A7D1E1023B4C5D6E7F8091A2 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A7D1E1043B4C5D6E7F8091A2 /* Sparkle */; };
 		A1B2C3D4E5F60718293A4B5C /* RetagEngine in Frameworks */ = {isa = PBXBuildFile; productRef = B1C2D3E4F5061728394A5B6C /* RetagEngine */; };
+		A7D1E1023B4C5D6E7F8091A2 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A7D1E1043B4C5D6E7F8091A2 /* Sparkle */; };
 		CFC205DCBBE06A55E5CE900D /* MachOKnifeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */; };
 		E4F7A54A469BF6F1BC41D8B4 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D955F987017C05908960F1C /* Cocoa.framework */; };
 /* End PBXBuildFile section */
@@ -49,6 +49,16 @@
 		E753591758ED1B6B96B9140E /* machoe-cli */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = text; path = "machoe-cli"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		7A9F18C42E5B4A6C8D1E3F90 /* Exceptions for "MachOKnife" folder in "MachOKnife" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 9566B7C12F6DB9D0002773C3 /* MachOKnife */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		38F0A8915015B2EA631B6E66 /* MachOKnifeCLI */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
@@ -67,6 +77,9 @@
 		};
 		9566B7C42F6DB9D0002773C3 /* MachOKnife */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7A9F18C42E5B4A6C8D1E3F90 /* Exceptions for "MachOKnife" folder in "MachOKnife" target */,
+			);
 			path = MachOKnife;
 			sourceTree = "<group>";
 		};
@@ -588,14 +601,8 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
-				INFOPLIST_KEY_SUAllowsAutomaticUpdates = YES;
-				INFOPLIST_KEY_SUEnableAutomaticChecks = YES;
-				INFOPLIST_KEY_SUEnableInstallerLauncherService = YES;
-				INFOPLIST_KEY_SUScheduledCheckInterval = 86400;
-				INFOPLIST_KEY_SUVerifyUpdateBeforeExtraction = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MachOKnife/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -627,14 +634,8 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
-				INFOPLIST_KEY_SUAllowsAutomaticUpdates = YES;
-				INFOPLIST_KEY_SUEnableAutomaticChecks = YES;
-				INFOPLIST_KEY_SUEnableInstallerLauncherService = YES;
-				INFOPLIST_KEY_SUScheduledCheckInterval = 86400;
-				INFOPLIST_KEY_SUVerifyUpdateBeforeExtraction = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MachOKnife/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -783,17 +784,6 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		A7D1E1033B4C5D6E7F8091A2 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/sparkle-project/Sparkle.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.8.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
 /* Begin XCLocalSwiftPackageReference section */
 		0F1E2D3C4B5A69788796A5B4 /* XCLocalSwiftPackageReference "Packages/MachOKnifeDB" */ = {
 			isa = XCLocalSwiftPackageReference;
@@ -812,6 +802,17 @@
 			relativePath = Packages/MachOKnifeKit;
 		};
 /* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A7D1E1033B4C5D6E7F8091A2 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.8.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		2B3C4D5E6F708192A3B4C5D6 /* MachOKnifeDB */ = {
