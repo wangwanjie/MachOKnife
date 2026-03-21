@@ -1,31 +1,39 @@
 # MachOKnife
 
-MachOKnife is a native macOS Mach-O inspection and metadata surgery tool with an AppKit GUI and a companion CLI.
+MachOKnife is a native macOS Mach-O browser and utility suite with an AppKit GUI, a companion CLI, Sparkle updates, and release tooling for DMG and appcast publishing.
 
-It currently ships:
+## What It Ships Today
 
-- AppKit workspace with drag and drop, file import, analyze, preview, save, and recent-file support
-- editable install name, dylib dependency, rpath, and platform/version workflows
-- CLI commands for inspection, validation, install-name editing, rpath rewriting, retagging, and dyld-cache-style dylib repair
-- localized preferences for language, appearance, CLI installation, updates, and recent-file limits
-- Sparkle update runtime wiring and GRDB-backed recent-files persistence
+- MachOKit-backed document browser with lazy tree expansion and MachO-Explorer-style grouping
+- searchable workspace with RAW/RVA address modes, `Detail` and `Data` panes, and node-level copy/export actions
+- inspection support for thin and fat Mach-O binaries, load commands, sections, symbols, string tables, Objective-C metadata, and related grouped summaries
+- localized Preferences for General, CLI, Appearance, and Updates, including immediate language refresh and adaptive window sizing
+- Tools menu windows for `Retag` and `Build XCFramework`
+- `machoe-cli` commands for inspection, validation, install-name editing, rpath rewriting, retagging, and dyld-cache-style dylib repair
+- GRDB-backed recent files with security-scoped bookmark restoration after relaunch
+- Sparkle update runtime plus scripted DMG, GitHub Release, and appcast generation
 
 ## Screenshots
 
-![MachOKnife main window](docs/screenshots/main-window.png)
+![MachOKnife snapshot 1](snapshots/1.png)
 
-![MachOKnife updates preferences](docs/screenshots/preferences-updates.png)
+![MachOKnife snapshot 2](snapshots/2.png)
+
+![MachOKnife snapshot 3](snapshots/3.png)
+
+![MachOKnife snapshot 4](snapshots/4.png)
 
 ## Repository Layout
 
-- `Packages/CoreMachO`: low-level Mach-O parsing
-- `Packages/MachOKnifeKit`: shared analysis models and services
+- `Packages/CoreMachO`: low-level parsing and rewrite helpers shared by the app and CLI
+- `Packages/MachOKnifeKit`: browser models, document services, and shared inspection logic
 - `Packages/MachOKnifeDB`: GRDB-backed persistence primitives
-- `MachOKnifeApp`: AppKit application shell
+- `MachOKnifeApp`: AppKit application shell, preferences, workspace UI, and tool windows
 - `MachOKnifeCLI`: `machoe-cli` sources
 - `Resources/Localization`: app localizations
-- `Resources/Fixtures`: generated milestone fixtures
-- `Scripts`: repeatable verification helpers
+- `Resources/Fixtures`: generated fixtures used by smoke tests
+- `Resources/Updates`: Sparkle feed output
+- `Scripts`: build, DMG, release, and appcast helpers
 
 ## Build And Run
 
@@ -40,13 +48,33 @@ xcodebuild build \
 
 ## GUI Usage
 
-- dragging a Mach-O, `.dylib`, framework binary, or app binary into the workspace
-- `Open...` from the File menu
-- `Analyze` to re-run parsing on the current file
-- `Preview` and `Save` for metadata changes with diff-oriented feedback
-- localized Preferences tabs for General, CLI, Appearance, Updates, and Advanced
-- CLI install/uninstall controls and recent-file limit configuration
-- Sparkle-backed manual update check entry point from the app menu
+### Opening Files
+
+- drag a Mach-O, `.dylib`, framework binary, or app binary into the main workspace
+- use `File > Open…`
+- use `File > Open Recent` to reopen previously authorized files after app relaunch
+- use `File > Close File` to return the workspace to the initial empty state with confirmation
+
+### Workspace Browser
+
+- browse the document through a tree structured like MachO-Explorer
+- search nodes from the main workspace
+- switch the address column between `RAW` and `RVA`
+- inspect semantic fields in `Detail` and bytes in `Data`
+- right-click any node or row to copy/export the current view
+- export the selected node from the File menu or copy it from the Edit menu
+
+### Preferences
+
+- `General`: language and core app behavior
+- `CLI`: install or uninstall the bundled `machoe-cli` into a user-selected directory
+- `Appearance`: follow system, light, or dark
+- `Updates`: manual, daily, and startup check strategies with Sparkle status visibility
+
+### Tools
+
+- `Retag…`: open a dedicated window for platform metadata retagging with drag and drop, target selection, output configuration, progress, and cancellation
+- `Build XCFramework…`: open a dedicated window for packaging supported inputs into an XCFramework
 
 ## CLI Usage
 
@@ -62,7 +90,7 @@ machoe-cli retag-platform /path/to/libExample.dylib --platform macos --min 13.0 
 machoe-cli fix-dyld-cache-dylib /path/to/libCacheStyle.dylib --output /tmp/libCacheStyle.fixed.dylib
 ```
 
-To build a local verification fixture:
+To build local verification fixtures:
 
 ```bash
 bash Scripts/build_fixtures.sh
@@ -70,40 +98,41 @@ machoe-cli info Resources/Fixtures/generated/libFixture.dylib
 machoe-cli list-dylibs Resources/Fixtures/generated/libFixture.dylib
 ```
 
-To refresh README screenshots:
-
-```bash
-bash Scripts/capture_readme_screenshots.sh
-```
-
 ## Updates
 
-Sparkle is wired into the app through `UpdateManager`. The repository includes a placeholder feed at `Resources/Updates/appcast.xml`; replace it with the published appcast and a real `SUPublicEDKey` before shipping a production build.
+Sparkle is wired through `UpdateManager`. The published feed lives at `Resources/Updates/appcast.xml`, and the app expects valid `SUFeedURL` and `SUPublicEDKey` values in the app configuration for production releases.
 
-## Release
+## Release Workflow
 
-The repository now includes a scriptable release path:
+Build, notarize, publish, and refresh the feed with the included scripts:
 
 ```bash
-bash Scripts/build_dmg.sh --no-notarize
-bash Scripts/generate_appcast.sh --archive build/dmg/MachOKnife_V_1.0.dmg
-bash Scripts/publish_github_release.sh --dmg build/dmg/MachOKnife_V_1.0.dmg --draft
+bash Scripts/build_dmg.sh
+bash Scripts/generate_appcast.sh --archive build/dmg/MachOKnife_V_1.1.dmg
+bash Scripts/publish_github_release.sh --dmg build/dmg/MachOKnife_V_1.1.dmg
 ```
 
-`build_dmg.sh` builds and re-signs the app, creates a polished DMG, and can optionally notarize it.
-`generate_appcast.sh` signs Sparkle feed entries with your Sparkle key account and writes the feed to `Resources/Updates/appcast.xml`.
-`publish_github_release.sh` uploads the DMG to GitHub Releases and refreshes the appcast using the published release notes.
+- `build_dmg.sh` builds the app, re-signs it for distribution, creates the DMG, and can notarize it
+- `generate_appcast.sh` signs Sparkle feed entries and writes `Resources/Updates/appcast.xml`
+- `publish_github_release.sh` uploads the DMG to GitHub Releases and refreshes the appcast using the published release notes
 
 ## Verification
 
-Run the current verification pipeline:
+Run the full project test suite:
 
 ```bash
-bash Scripts/test_milestone_1.sh
+xcodebuild test \
+  -project MachOKnife.xcodeproj \
+  -scheme MachOKnife \
+  -destination 'platform=macOS,arch=x86_64'
 ```
 
-For release assets, also run:
+Generate README screenshots through the snapshot test:
 
 ```bash
-bash Scripts/capture_readme_screenshots.sh
+xcodebuild test \
+  -project MachOKnife.xcodeproj \
+  -scheme MachOKnife \
+  -destination 'platform=macOS,arch=x86_64' \
+  -only-testing:MachOKnifeTests/ReadmeAssetsTests
 ```
