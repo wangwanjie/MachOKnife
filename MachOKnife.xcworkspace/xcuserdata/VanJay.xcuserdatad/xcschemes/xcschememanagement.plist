@@ -7,27 +7,27 @@
 		<key>Associations (Playground).xcscheme</key>
 		<dict>
 			<key>orderHint</key>
-			<integer>10</integer>
+			<integer>6</integer>
 		</dict>
 		<key>MyPlayground (Playground).xcscheme</key>
 		<dict>
 			<key>orderHint</key>
-			<integer>11</integer>
+			<integer>7</integer>
 		</dict>
 		<key>SnapKitPlayground (Playground).xcscheme</key>
 		<dict>
 			<key>orderHint</key>
-			<integer>14</integer>
+			<integer>10</integer>
 		</dict>
 		<key>Tour (Playground).xcscheme</key>
 		<dict>
 			<key>orderHint</key>
-			<integer>12</integer>
+			<integer>8</integer>
 		</dict>
 		<key>TransactionObserver (Playground).xcscheme</key>
 		<dict>
 			<key>orderHint</key>
-			<integer>13</integer>
+			<integer>9</integer>
 		</dict>
 	</dict>
 </dict>
