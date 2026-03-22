@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import MachOKnifeKit
+import SnapKit
 
 @MainActor
 final class DetailViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
@@ -197,31 +198,25 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
         view.addSubview(emptyStack)
         view.addSubview(contentContainer)
 
-        NSLayoutConstraint.activate([
-            emptyStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            emptyStack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            emptyStack.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
-            emptyStack.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
-
-            contentContainer.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
-            contentContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
-            contentContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
-            contentContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -16),
-
-            topControls.topAnchor.constraint(equalTo: contentContainer.topAnchor),
-            topControls.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            topControls.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-
-            detailContainer.topAnchor.constraint(equalTo: topControls.bottomAnchor, constant: 12),
-            detailContainer.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            detailContainer.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            detailContainer.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
-
-            dataContainer.topAnchor.constraint(equalTo: topControls.bottomAnchor, constant: 12),
-            dataContainer.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            dataContainer.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            dataContainer.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
-        ])
+        emptyStack.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+            make.leading.greaterThanOrEqualToSuperview().inset(24)
+            make.trailing.lessThanOrEqualToSuperview().inset(24)
+        }
+        contentContainer.snp.makeConstraints { make in
+            make.edges.equalToSuperview().inset(NSEdgeInsets(top: 16, left: 18, bottom: 16, right: 18))
+        }
+        topControls.snp.makeConstraints { make in
+            make.top.leading.trailing.equalToSuperview()
+        }
+        detailContainer.snp.makeConstraints { make in
+            make.top.equalTo(topControls.snp.bottom).offset(12)
+            make.leading.trailing.bottom.equalToSuperview()
+        }
+        dataContainer.snp.makeConstraints { make in
+            make.top.equalTo(topControls.snp.bottom).offset(12)
+            make.leading.trailing.bottom.equalToSuperview()
+        }
 
         updateDisplayedPane()
         reloadLocalization()
@@ -266,17 +261,14 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
         detailContainer.addSubview(detailTableScrollView)
         detailContainer.addSubview(detailEmptyLabel)
 
-        NSLayoutConstraint.activate([
-            detailTableScrollView.topAnchor.constraint(equalTo: detailContainer.topAnchor),
-            detailTableScrollView.leadingAnchor.constraint(equalTo: detailContainer.leadingAnchor),
-            detailTableScrollView.trailingAnchor.constraint(equalTo: detailContainer.trailingAnchor),
-            detailTableScrollView.bottomAnchor.constraint(equalTo: detailContainer.bottomAnchor),
-
-            detailEmptyLabel.centerXAnchor.constraint(equalTo: detailContainer.centerXAnchor),
-            detailEmptyLabel.centerYAnchor.constraint(equalTo: detailContainer.centerYAnchor),
-            detailEmptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: detailContainer.leadingAnchor, constant: 24),
-            detailEmptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: detailContainer.trailingAnchor, constant: -24),
-        ])
+        detailTableScrollView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        detailEmptyLabel.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+            make.leading.greaterThanOrEqualToSuperview().inset(24)
+            make.trailing.lessThanOrEqualToSuperview().inset(24)
+        }
     }
 
     private func configureDataTable() {
@@ -318,17 +310,14 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
         dataContainer.addSubview(dataTableScrollView)
         dataContainer.addSubview(dataEmptyLabel)
 
-        NSLayoutConstraint.activate([
-            dataTableScrollView.topAnchor.constraint(equalTo: dataContainer.topAnchor),
-            dataTableScrollView.leadingAnchor.constraint(equalTo: dataContainer.leadingAnchor),
-            dataTableScrollView.trailingAnchor.constraint(equalTo: dataContainer.trailingAnchor),
-            dataTableScrollView.bottomAnchor.constraint(equalTo: dataContainer.bottomAnchor),
-
-            dataEmptyLabel.centerXAnchor.constraint(equalTo: dataContainer.centerXAnchor),
-            dataEmptyLabel.centerYAnchor.constraint(equalTo: dataContainer.centerYAnchor),
-            dataEmptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: dataContainer.leadingAnchor, constant: 24),
-            dataEmptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: dataContainer.trailingAnchor, constant: -24),
-        ])
+        dataTableScrollView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        dataEmptyLabel.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+            make.leading.greaterThanOrEqualToSuperview().inset(24)
+            make.trailing.lessThanOrEqualToSuperview().inset(24)
+        }
     }
 
     private func bindViewModel() {
@@ -380,16 +369,14 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
 
         if cell.textField == nil {
             let textField = NSTextField(labelWithString: "")
-            textField.translatesAutoresizingMaskIntoConstraints = false
             textField.maximumNumberOfLines = 1
             textField.usesSingleLineMode = true
             textField.lineBreakMode = .byTruncatingMiddle
             cell.addSubview(textField)
-            NSLayoutConstraint.activate([
-                textField.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-                textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
-                textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            ])
+            textField.snp.makeConstraints { make in
+                make.leading.trailing.equalToSuperview().inset(6)
+                make.centerY.equalToSuperview()
+            }
             cell.textField = textField
         }
 
@@ -422,17 +409,15 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
 
         if cell.textField == nil {
             let textField = NSTextField(labelWithString: "")
-            textField.translatesAutoresizingMaskIntoConstraints = false
             textField.maximumNumberOfLines = 1
             textField.usesSingleLineMode = true
             textField.lineBreakMode = .byClipping
             textField.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
             cell.addSubview(textField)
-            NSLayoutConstraint.activate([
-                textField.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-                textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
-                textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            ])
+            textField.snp.makeConstraints { make in
+                make.leading.trailing.equalToSuperview().inset(6)
+                make.centerY.equalToSuperview()
+            }
             cell.textField = textField
         }
 

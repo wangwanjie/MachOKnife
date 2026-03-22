@@ -108,6 +108,33 @@ struct MachOEditWriterTests {
         #expect(result.removedCodeSignature)
         #expect(slice.codeSignature == nil)
     }
+
+    @Test("converts version-min commands to build-version when retagging to mac catalyst")
+    func convertsVersionMinCommandsToBuildVersionForMacCatalyst() throws {
+        let fixture = try WriterFixtureFactory.makeVersionMinDynamicLibraryFixture()
+        let outputURL = fixture.directory.appendingPathComponent("rewritten-catalyst.dylib")
+
+        _ = try MachOWriter().write(
+            inputURL: fixture.binaryURL,
+            outputURL: outputURL,
+            editPlan: MachOEditPlan(
+                platformEdit: PlatformEdit(
+                    platform: .macCatalyst,
+                    minimumOS: MachOVersion(major: 14, minor: 0, patch: 0),
+                    sdk: MachOVersion(major: 14, minor: 4, patch: 0)
+                )
+            )
+        )
+
+        let container = try MachOContainer.parse(at: outputURL)
+        let slice = try #require(container.slices.first)
+        let buildVersion = try #require(slice.buildVersion)
+
+        #expect(slice.versionMin == nil)
+        #expect(buildVersion.platform == .macCatalyst)
+        #expect(buildVersion.minimumOS == MachOVersion(major: 14, minor: 0, patch: 0))
+        #expect(buildVersion.sdk == MachOVersion(major: 14, minor: 4, patch: 0))
+    }
 }
 
 private struct WriterFixture {
@@ -179,6 +206,32 @@ private enum WriterFixtureFactory {
             binaryURL: mainBinaryURL,
             dependencyInstallName: dependencyInstallName
         )
+    }
+
+    static func makeVersionMinDynamicLibraryFixture() throws -> WriterFixture {
+        let fixture = try makeSignedDynamicLibraryFixture()
+        let container = try MachOContainer.parse(at: fixture.binaryURL)
+        let slice = try #require(container.slices.first)
+        let buildVersion = try #require(slice.buildVersion)
+
+        var data = try Data(contentsOf: fixture.binaryURL)
+        writeUInt32(UInt32(LC_VERSION_MIN_IPHONEOS), into: &data, at: buildVersion.commandOffset)
+        writeUInt32(packedVersion(MachOVersion(major: 11, minor: 0, patch: 0)), into: &data, at: buildVersion.commandOffset + 8)
+        writeUInt32(packedVersion(MachOVersion(major: 16, minor: 5, patch: 0)), into: &data, at: buildVersion.commandOffset + 12)
+        try data.write(to: fixture.binaryURL, options: [.atomic])
+
+        return fixture
+    }
+
+    private static func packedVersion(_ version: MachOVersion) -> UInt32 {
+        UInt32(version.major << 16) | UInt32(version.minor << 8) | UInt32(version.patch)
+    }
+
+    private static func writeUInt32(_ value: UInt32, into data: inout Data, at offset: Int) {
+        var mutableValue = value
+        withUnsafeBytes(of: &mutableValue) { rawBuffer in
+            data.replaceSubrange(offset..<(offset + rawBuffer.count), with: rawBuffer)
+        }
     }
 }
 

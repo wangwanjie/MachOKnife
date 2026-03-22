@@ -141,6 +141,10 @@ final class MainWindowController: NSWindowController {
         viewModel.browserSelectedNode != nil
     }
 
+    var hasCurrentFileURL: Bool {
+        viewModel.currentFileURL != nil
+    }
+
     func copySelectedNodeInfo() {
         guard let document = makeSelectedNodeInfoDocument() else { return }
 
@@ -187,6 +191,21 @@ final class MainWindowController: NSWindowController {
         }
     }
 
+    func showCurrentFileInFinder() {
+        guard let currentFileURL = viewModel.currentFileURL else {
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([currentFileURL])
+    }
+
+    func copyCurrentFilePath() {
+        guard let currentFileURL = viewModel.currentFileURL else {
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(currentFileURL.path, forType: .string)
+    }
+
     private func bindViewModel() {
         Publishers.CombineLatest3(viewModel.$analysis, viewModel.$editableSlice, viewModel.$previewText)
             .receive(on: RunLoop.main)
@@ -200,7 +219,9 @@ final class MainWindowController: NSWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.reloadLocalization()
+            Task { @MainActor [weak self] in
+                self?.reloadLocalization()
+            }
         }
     }
 

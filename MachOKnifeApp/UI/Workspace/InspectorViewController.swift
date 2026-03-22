@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import CoreMachO
 import MachOKnifeKit
+import SnapKit
 
 @MainActor
 final class InspectorViewController: NSViewController {
@@ -109,16 +110,14 @@ final class InspectorViewController: NSViewController {
         view.addSubview(titleLabel)
         view.addSubview(tabView)
 
-        NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
-            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
-            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
-
-            tabView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
-            tabView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
-            tabView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-            tabView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
-        ])
+        titleLabel.snp.makeConstraints { make in
+            make.top.equalToSuperview().inset(12)
+            make.leading.trailing.equalToSuperview().inset(14)
+        }
+        tabView.snp.makeConstraints { make in
+            make.top.equalTo(titleLabel.snp.bottom).offset(8)
+            make.leading.trailing.bottom.equalToSuperview().inset(12)
+        }
     }
 
     private func makeOverviewTab() -> NSView {
@@ -217,27 +216,21 @@ final class InspectorViewController: NSViewController {
         previewTextView.string = L10n.inspectorPreviewPlaceholder
 
         let scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
         scrollView.documentView = previewTextView
 
         let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(previewButton)
         container.addSubview(scrollView)
 
-        previewButton.translatesAutoresizingMaskIntoConstraints = false
-
-        NSLayoutConstraint.activate([
-            previewButton.topAnchor.constraint(equalTo: container.topAnchor),
-            previewButton.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-
-            scrollView.topAnchor.constraint(equalTo: previewButton.bottomAnchor, constant: 12),
-            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
+        previewButton.snp.makeConstraints { make in
+            make.top.leading.equalToSuperview()
+        }
+        scrollView.snp.makeConstraints { make in
+            make.top.equalTo(previewButton.snp.bottom).offset(12)
+            make.leading.trailing.bottom.equalToSuperview()
+        }
 
         return container
     }
@@ -300,8 +293,9 @@ final class InspectorViewController: NSViewController {
             row.orientation = .vertical
             row.alignment = .leading
             row.spacing = 6
-            row.translatesAutoresizingMaskIntoConstraints = false
-            textField.widthAnchor.constraint(equalToConstant: 280).isActive = true
+            textField.snp.makeConstraints { make in
+                make.width.equalTo(280)
+            }
             dylibStackView.addArrangedSubview(row)
         }
     }
@@ -315,7 +309,9 @@ final class InspectorViewController: NSViewController {
             textField.tag = index
             textField.target = self
             textField.action = #selector(rpathDidChange(_:))
-            textField.widthAnchor.constraint(equalToConstant: 220).isActive = true
+            textField.snp.makeConstraints { make in
+                make.width.equalTo(220)
+            }
 
             let removeButton = NSButton(title: L10n.inspectorRemoveAction, target: self, action: #selector(removeRPath(_:)))
             removeButton.tag = index
@@ -479,50 +475,36 @@ final class InspectorViewController: NSViewController {
 
     private func wrappedContentView(for content: NSView) -> NSView {
         let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        content.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(content)
 
-        NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
-            content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            content.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
-            content.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -12),
-        ])
+        content.snp.makeConstraints { make in
+            make.top.leading.equalToSuperview().inset(12)
+            make.trailing.bottom.lessThanOrEqualToSuperview().inset(12)
+        }
 
         return container
     }
 
     private func wrappedScrollingView(for content: NSView) -> NSView {
         let documentView = NSView()
-        documentView.translatesAutoresizingMaskIntoConstraints = false
-        content.translatesAutoresizingMaskIntoConstraints = false
         documentView.addSubview(content)
 
-        NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: documentView.topAnchor, constant: 12),
-            content.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: 12),
-            content.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -12),
-            content.bottomAnchor.constraint(equalTo: documentView.bottomAnchor, constant: -12),
-            content.widthAnchor.constraint(equalTo: documentView.widthAnchor, constant: -24),
-        ])
+        content.snp.makeConstraints { make in
+            make.edges.equalToSuperview().inset(12)
+            make.width.equalTo(documentView).offset(-24)
+        }
 
         let scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
         scrollView.documentView = documentView
 
         let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(scrollView)
 
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: container.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
+        scrollView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
 
         return container
     }

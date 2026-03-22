@@ -193,6 +193,65 @@ struct BrowserDocumentServiceTests {
         #expect(summaryRow.key == "Objective-C Category")
         #expect(summaryRow.value.contains("BrowserFixtureClass"))
     }
+
+    @Test("archive documents expose a container root, target nodes, and file-backed hex data")
+    func archiveDocumentsExposeContainerRootTargetNodesAndHexData() throws {
+        let fixtureURL = try BrowserFixtureFactory.makeFatArchiveFixture()
+        let service = BrowserDocumentService()
+
+        let document = try service.load(url: fixtureURL)
+
+        #expect(document.kind == .archive)
+        #expect(document.rootNodes.count == 1)
+        let rootNode = try #require(document.rootNodes.first)
+        #expect(rootNode.title == "Fat Archive")
+        #expect(rootNode.childCount == 2)
+
+        let targetTitles = Set(rootNode.children.map(\.title))
+        #expect(targetTitles.contains("Static Library (iphoneos_ARM64)"))
+        #expect(targetTitles.contains("Static Library (iphonesimulator_X86_64)"))
+
+        let arm64TargetNode = try #require(rootNode.children.first(where: { $0.title == "Static Library (iphoneos_ARM64)" }))
+        #expect(arm64TargetNode.detailRows.contains(where: { $0.key == "Architecture" && $0.value == "arm64" }))
+        #expect(arm64TargetNode.detailCount > 0)
+        let arm64ChildTitles = Set(arm64TargetNode.children.map(\.title))
+        #expect(arm64ChildTitles.contains("Start"))
+        #expect(arm64ChildTitles.contains("Symtab Header"))
+        #expect(arm64ChildTitles.contains("Symbol Table"))
+        #expect(arm64ChildTitles.contains("String Table"))
+
+        let objectNode = try #require(arm64TargetNode.children.first(where: { $0.title.hasSuffix(".o") }))
+        let objectChildTitles = objectNode.children.map(\.title)
+        #expect(objectChildTitles.contains("Object Header"))
+
+        guard case let .file(url, size) = document.hexSource else {
+            Issue.record("Expected archive documents to expose a file-backed hex source.")
+            return
+        }
+
+        #expect(url == fixtureURL)
+        #expect(size > 0)
+    }
+
+    @Test("dynamic libraries expose a container root and per-target child nodes")
+    func dynamicLibrariesExposeContainerRootAndTargetNodes() throws {
+        let fixtureURL = try BrowserFixtureFactory.makeDynamicLibraryFixture()
+        let service = BrowserDocumentService()
+
+        let document = try service.load(url: fixtureURL)
+
+        #expect(document.kind == .machOFile)
+        #expect(document.rootNodes.count == 1)
+
+        let rootNode = try #require(document.rootNodes.first)
+        #expect(rootNode.title == "Dynamic Link Library")
+        #expect(rootNode.childCount == 1)
+
+        let targetNode = rootNode.child(at: 0)
+        #expect(targetNode.title == "Dynamic Link Library (macos_X86_64)")
+        #expect(targetNode.detailRows.contains(where: { $0.key == "File Type" && $0.value.contains("MH_DYLIB") }))
+        #expect(targetNode.children.contains(where: { $0.title == "Header" }))
+    }
 }
 
 private enum BrowserFixtureFactory {
@@ -330,6 +389,113 @@ private enum BrowserFixtureFactory {
         }
 
         return outputURL
+    }
+
+    static func makeFatArchiveFixture() throws -> URL {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+
+        let sourceURL = tempDirectory.appendingPathComponent("browser-archive-fixture.c")
+        let arm64ObjectURL = tempDirectory.appendingPathComponent("browser-archive-arm64.o")
+        let x86ObjectURL = tempDirectory.appendingPathComponent("browser-archive-x86_64.o")
+        let arm64ArchiveURL = tempDirectory.appendingPathComponent("libBrowserArchive-arm64.a")
+        let x86ArchiveURL = tempDirectory.appendingPathComponent("libBrowserArchive-x86_64.a")
+        let fatArchiveURL = tempDirectory.appendingPathComponent("libBrowserArchive-fat.a")
+
+        try "int browser_archive_fixture(void) { return 5; }\n".write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        try runTool(
+            launchPath: "/usr/bin/clang",
+            arguments: [
+                "-target", "arm64-apple-ios11.0",
+                "-c",
+                sourceURL.path,
+                "-o",
+                arm64ObjectURL.path,
+            ]
+        )
+
+        try runTool(
+            launchPath: "/usr/bin/clang",
+            arguments: [
+                "-target", "x86_64-apple-ios11.0-simulator",
+                "-c",
+                sourceURL.path,
+                "-o",
+                x86ObjectURL.path,
+            ]
+        )
+
+        try runTool(
+            launchPath: "/usr/bin/libtool",
+            arguments: [
+                "-static",
+                "-o",
+                arm64ArchiveURL.path,
+                arm64ObjectURL.path,
+            ]
+        )
+
+        try runTool(
+            launchPath: "/usr/bin/libtool",
+            arguments: [
+                "-static",
+                "-o",
+                x86ArchiveURL.path,
+                x86ObjectURL.path,
+            ]
+        )
+
+        try runTool(
+            launchPath: "/usr/bin/lipo",
+            arguments: [
+                "-create",
+                arm64ArchiveURL.path,
+                x86ArchiveURL.path,
+                "-output",
+                fatArchiveURL.path,
+            ]
+        )
+
+        return fatArchiveURL
+    }
+
+    static func makeDynamicLibraryFixture() throws -> URL {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+
+        let sourceURL = tempDirectory.appendingPathComponent("browser-dylib-fixture.c")
+        let outputURL = tempDirectory.appendingPathComponent("libBrowserFixture.dylib")
+
+        try "int browser_dylib_fixture(void) { return 9; }\n".write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        try runTool(
+            launchPath: "/usr/bin/clang",
+            arguments: [
+                "-target", "x86_64-apple-macos13.0",
+                "-dynamiclib",
+                sourceURL.path,
+                "-Wl,-install_name,@rpath/libBrowserFixture.dylib",
+                "-o",
+                outputURL.path,
+            ]
+        )
+
+        return outputURL
+    }
+
+    private static func runTool(launchPath: String, arguments: [String]) throws {
+        let process = Process()
+        process.executableURL = URL(filePath: launchPath)
+        process.arguments = arguments
+
+        try process.run()
+        process.waitUntilExit()
+        if process.terminationStatus != 0 {
+            throw BrowserFixtureError.compileFailed
+        }
     }
 }
 

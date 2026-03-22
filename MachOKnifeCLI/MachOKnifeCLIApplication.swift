@@ -23,6 +23,14 @@ enum MachOKnifeCLIApplication {
         let commandArguments = Array(arguments.dropFirst(2))
 
         switch command {
+        case SummaryCommand.name:
+            return try SummaryCommand.run(arguments: commandArguments)
+        case ContaminationCheckCommand.name:
+            return try ContaminationCheckCommand.run(arguments: commandArguments)
+        case MergeCommand.name:
+            return try MergeCommand.run(arguments: commandArguments)
+        case SplitCommand.name:
+            return try SplitCommand.run(arguments: commandArguments)
         case InfoCommand.name:
             return try InfoCommand.run(arguments: commandArguments)
         case ListDylibsCommand.name:
@@ -52,6 +60,10 @@ struct CLIError: Error {
     static let usage = CLIError(
         message: """
         usage:
+          machoe-cli summary <path>
+          machoe-cli check-contamination <path> --mode platform|architecture --target <value>
+          machoe-cli merge <input1> <input2> [<inputN> ...] --output <path>
+          machoe-cli split <path> --output-dir <path> [--arch <architecture>] [--arch <architecture> ...]
           machoe-cli info <path>
           machoe-cli list-dylibs <path>
           machoe-cli retag-platform <path> --platform macos|ios|iossim|maccatalyst --min <version> --sdk <version> --output <path>

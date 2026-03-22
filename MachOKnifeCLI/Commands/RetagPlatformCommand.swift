@@ -3,7 +3,7 @@ import RetagEngine
 
 struct RetagPlatformCommand {
     static let name = "retag-platform"
-    static let usage = "machoe-cli retag-platform <path> --platform macos|ios|iossim|maccatalyst --min <version> --sdk <version> --output <path>"
+    static let usage = "machoe-cli retag-platform <path> --platform macos|ios|iossim|maccatalyst --min <version> --sdk <version> --output <path> [--arch <architecture>]"
 
     static func run(arguments: [String]) throws -> String {
         let inputURL = try CLICommandSupport.requiredPath(arguments, usage: usage)
@@ -20,13 +20,15 @@ struct RetagPlatformCommand {
             usage: usage
         )
         let outputURL = URL(filePath: try CLICommandSupport.requiredOption("--output", in: arguments, usage: usage))
+        let architecture = CLICommandSupport.optionalOption("--arch", in: arguments)
 
         let result = try RetagEngine().retagPlatform(
             inputURL: inputURL,
             outputURL: outputURL,
             platform: platform,
             minimumOS: minimumOS,
-            sdk: sdk
+            sdk: sdk,
+            architecture: architecture
         )
         return CLIReportRenderer.renderWrite(outputURL: result.outputURL, diff: result.diff)
     }

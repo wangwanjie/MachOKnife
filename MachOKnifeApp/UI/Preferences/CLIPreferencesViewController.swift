@@ -1,4 +1,5 @@
 import AppKit
+import SnapKit
 
 @MainActor
 final class CLIPreferencesViewController: NSViewController {
@@ -185,12 +186,13 @@ final class CLIPreferencesViewController: NSViewController {
 
         view.addSubview(stack)
 
-        NSLayoutConstraint.activate([
-            statusValueLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
-            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 24),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
-        ])
+        statusValueLabel.snp.makeConstraints { make in
+            make.width.greaterThanOrEqualTo(180)
+        }
+        stack.snp.makeConstraints { make in
+            make.top.leading.equalToSuperview().inset(24)
+            make.trailing.lessThanOrEqualToSuperview().inset(24)
+        }
 
         preferredContentSize = NSSize(width: 640, height: 300)
         applyLastActionText()
@@ -261,8 +263,10 @@ final class CLIPreferencesViewController: NSViewController {
             object: settings,
             queue: .main
         ) { [weak self] _ in
-            self?.refreshState()
-            self?.reloadLocalization()
+            Task { @MainActor [weak self] in
+                self?.refreshState()
+                self?.reloadLocalization()
+            }
         }
     }
 

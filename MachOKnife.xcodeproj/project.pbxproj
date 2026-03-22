@@ -9,12 +9,16 @@
 /* Begin PBXBuildFile section */
 		1A2B3C4D5E6F708192A3B4C5 /* MachOKnifeDB in Frameworks */ = {isa = PBXBuildFile; productRef = 2B3C4D5E6F708192A3B4C5D6 /* MachOKnifeDB */; };
 		3C4D5E6F708192A3B4C5D6E7 /* CoreMachO in Frameworks */ = {isa = PBXBuildFile; productRef = 35400FDE63F69779F3E076E0 /* CoreMachO */; };
+		516ABF7E0C3F7E581E822AE6 /* Pods_MachOKnifeTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 73D06976477AC397A4A221F7 /* Pods_MachOKnifeTests.framework */; };
 		548B89A0768EF8F441797E9D /* CoreMachO in Frameworks */ = {isa = PBXBuildFile; productRef = 35400FDE63F69779F3E076E0 /* CoreMachO */; };
+		57ED7BA11A7371B7C4C13557 /* Pods_MachOKnife.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B589044BBCAC509BEE082A01 /* Pods_MachOKnife.framework */; };
 		6A0CE6CA3473B4B445467A70 /* MachOKnifeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */; };
 		A1B2C3D4E5F60718293A4B5C /* RetagEngine in Frameworks */ = {isa = PBXBuildFile; productRef = B1C2D3E4F5061728394A5B6C /* RetagEngine */; };
 		A7D1E1023B4C5D6E7F8091A2 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A7D1E1043B4C5D6E7F8091A2 /* Sparkle */; };
 		C8D7E6F5A4B3C2D1E0F10213 /* RetagEngine in Frameworks */ = {isa = PBXBuildFile; productRef = B1C2D3E4F5061728394A5B6C /* RetagEngine */; };
 		CFC205DCBBE06A55E5CE900D /* MachOKnifeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */; };
+		D4E5F60718293A4B5C6D7E8F /* SnapKit in Frameworks */ = {isa = PBXBuildFile; productRef = D4E5F60718293A4B5C6D7E91 /* SnapKit */; };
+		DA95C89D337CC350039F03BA /* Pods_MachOKnifeUITests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CFB0CB33F38F87E06EAB9C2D /* Pods_MachOKnifeUITests.framework */; };
 		E4F7A54A469BF6F1BC41D8B4 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D955F987017C05908960F1C /* Cocoa.framework */; };
 /* End PBXBuildFile section */
 
@@ -43,11 +47,20 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		126EB26C4663997BAAA6D1EA /* Pods-MachOKnifeUITests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MachOKnifeUITests.release.xcconfig"; path = "Target Support Files/Pods-MachOKnifeUITests/Pods-MachOKnifeUITests.release.xcconfig"; sourceTree = "<group>"; };
+		4880115AAA502F179D953E28 /* Pods-MachOKnife.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MachOKnife.release.xcconfig"; path = "Target Support Files/Pods-MachOKnife/Pods-MachOKnife.release.xcconfig"; sourceTree = "<group>"; };
+		73D06976477AC397A4A221F7 /* Pods_MachOKnifeTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_MachOKnifeTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		7D955F987017C05908960F1C /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		854D1F7005C2DDB50419DA80 /* Pods-MachOKnifeUITests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MachOKnifeUITests.debug.xcconfig"; path = "Target Support Files/Pods-MachOKnifeUITests/Pods-MachOKnifeUITests.debug.xcconfig"; sourceTree = "<group>"; };
 		9566B7C22F6DB9D0002773C3 /* MachOKnife.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MachOKnife.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9566B7D22F6DB9D2002773C3 /* MachOKnifeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MachOKnifeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9566B7DC2F6DB9D2002773C3 /* MachOKnifeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MachOKnifeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2391C65BDB6A51EF6A99953 /* Pods-MachOKnifeTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MachOKnifeTests.release.xcconfig"; path = "Target Support Files/Pods-MachOKnifeTests/Pods-MachOKnifeTests.release.xcconfig"; sourceTree = "<group>"; };
+		B589044BBCAC509BEE082A01 /* Pods_MachOKnife.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_MachOKnife.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		CFB0CB33F38F87E06EAB9C2D /* Pods_MachOKnifeUITests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_MachOKnifeUITests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		D3D2A7F30D8A4976950F7FAB /* Pods-MachOKnifeTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MachOKnifeTests.debug.xcconfig"; path = "Target Support Files/Pods-MachOKnifeTests/Pods-MachOKnifeTests.debug.xcconfig"; sourceTree = "<group>"; };
 		E753591758ED1B6B96B9140E /* machoe-cli */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = text; path = "machoe-cli"; sourceTree = BUILT_PRODUCTS_DIR; };
+		F6D0388DF4299474289A572C /* Pods-MachOKnife.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MachOKnife.debug.xcconfig"; path = "Target Support Files/Pods-MachOKnife/Pods-MachOKnife.debug.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -63,16 +76,22 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		38F0A8915015B2EA631B6E66 /* MachOKnifeCLI */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = MachOKnifeCLI;
 			sourceTree = "<group>";
 		};
 		6140F67013C40CF86963B41F /* MachOKnifeApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = MachOKnifeApp;
 			sourceTree = "<group>";
 		};
 		7B65E3B83D5F3B85A99E17CA /* Resources/Localization */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = Resources/Localization;
 			sourceTree = "<group>";
 		};
@@ -86,11 +105,15 @@
 		};
 		9566B7D52F6DB9D2002773C3 /* MachOKnifeTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = MachOKnifeTests;
 			sourceTree = "<group>";
 		};
 		9566B7DF2F6DB9D2002773C3 /* MachOKnifeUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = MachOKnifeUITests;
 			sourceTree = "<group>";
 		};
@@ -117,6 +140,8 @@
 				6A0CE6CA3473B4B445467A70 /* MachOKnifeKit in Frameworks */,
 				A7D1E1023B4C5D6E7F8091A2 /* Sparkle in Frameworks */,
 				C8D7E6F5A4B3C2D1E0F10213 /* RetagEngine in Frameworks */,
+				D4E5F60718293A4B5C6D7E8F /* SnapKit in Frameworks */,
+				57ED7BA11A7371B7C4C13557 /* Pods_MachOKnife.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -124,6 +149,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				516ABF7E0C3F7E581E822AE6 /* Pods_MachOKnifeTests.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -131,6 +157,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DA95C89D337CC350039F03BA /* Pods_MachOKnifeUITests.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -156,6 +183,7 @@
 				9566B7DF2F6DB9D2002773C3 /* MachOKnifeUITests */,
 				9566B7C32F6DB9D0002773C3 /* Products */,
 				ACB07F3F26DE312387235AED /* Frameworks */,
+				A01D7C8C3D8CDC4859205002 /* Pods */,
 			);
 			sourceTree = "<group>";
 		};
@@ -170,10 +198,27 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		A01D7C8C3D8CDC4859205002 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				F6D0388DF4299474289A572C /* Pods-MachOKnife.debug.xcconfig */,
+				4880115AAA502F179D953E28 /* Pods-MachOKnife.release.xcconfig */,
+				D3D2A7F30D8A4976950F7FAB /* Pods-MachOKnifeTests.debug.xcconfig */,
+				A2391C65BDB6A51EF6A99953 /* Pods-MachOKnifeTests.release.xcconfig */,
+				854D1F7005C2DDB50419DA80 /* Pods-MachOKnifeUITests.debug.xcconfig */,
+				126EB26C4663997BAAA6D1EA /* Pods-MachOKnifeUITests.release.xcconfig */,
+			);
+			name = Pods;
+			path = Pods;
+			sourceTree = "<group>";
+		};
 		ACB07F3F26DE312387235AED /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
 				5667EE2480AE33DE674A3A4E /* OS X */,
+				B589044BBCAC509BEE082A01 /* Pods_MachOKnife.framework */,
+				73D06976477AC397A4A221F7 /* Pods_MachOKnifeTests.framework */,
+				CFB0CB33F38F87E06EAB9C2D /* Pods_MachOKnifeUITests.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -209,6 +254,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 9566B7E62F6DB9D2002773C3 /* Build configuration list for PBXNativeTarget "MachOKnife" */;
 			buildPhases = (
+				DB862D885427B9AF1C74A82B /* [CP] Check Pods Manifest.lock */,
 				9566B7BE2F6DB9D0002773C3 /* Sources */,
 				9566B7BF2F6DB9D0002773C3 /* Frameworks */,
 				9566B7C02F6DB9D0002773C3 /* Resources */,
@@ -231,6 +277,7 @@
 				69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */,
 				A7D1E1043B4C5D6E7F8091A2 /* Sparkle */,
 				B1C2D3E4F5061728394A5B6C /* RetagEngine */,
+				D4E5F60718293A4B5C6D7E91 /* SnapKit */,
 			);
 			productName = MachOKnife;
 			productReference = 9566B7C22F6DB9D0002773C3 /* MachOKnife.app */;
@@ -240,6 +287,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 9566B7E92F6DB9D2002773C3 /* Build configuration list for PBXNativeTarget "MachOKnifeTests" */;
 			buildPhases = (
+				2C889136CCA782CD0584549A /* [CP] Check Pods Manifest.lock */,
 				9566B7CE2F6DB9D2002773C3 /* Sources */,
 				9566B7CF2F6DB9D2002773C3 /* Frameworks */,
 				9566B7D02F6DB9D2002773C3 /* Resources */,
@@ -262,6 +310,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 9566B7EC2F6DB9D2002773C3 /* Build configuration list for PBXNativeTarget "MachOKnifeUITests" */;
 			buildPhases = (
+				19A3A0E3EB6CFBD9188DF482 /* [CP] Check Pods Manifest.lock */,
 				9566B7D82F6DB9D2002773C3 /* Sources */,
 				9566B7D92F6DB9D2002773C3 /* Frameworks */,
 				9566B7DA2F6DB9D2002773C3 /* Resources */,
@@ -314,11 +363,12 @@
 			mainGroup = 9566B7B92F6DB9D0002773C3;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "Packages/CoreMachO" */,
-				0F1E2D3C4B5A69788796A5B4 /* XCLocalSwiftPackageReference "Packages/MachOKnifeDB" */,
-				F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "Packages/MachOKnifeKit" */,
-				D1E2F3A4B5C60718293A4B5C /* XCLocalSwiftPackageReference "Packages/RetagEngine" */,
+				9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "CoreMachO" */,
+				0F1E2D3C4B5A69788796A5B4 /* XCLocalSwiftPackageReference "MachOKnifeDB" */,
+				F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "MachOKnifeKit" */,
+				D1E2F3A4B5C60718293A4B5C /* XCLocalSwiftPackageReference "RetagEngine" */,
 				A7D1E1033B4C5D6E7F8091A2 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				D4E5F60718293A4B5C6D7E90 /* XCRemoteSwiftPackageReference "SnapKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 9566B7C32F6DB9D0002773C3 /* Products */;
@@ -358,6 +408,50 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		19A3A0E3EB6CFBD9188DF482 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-MachOKnifeUITests-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		2C889136CCA782CD0584549A /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-MachOKnifeTests-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
 		B84A4D0D1FCE4A91876A0B11 /* Embed machoe-cli */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -377,6 +471,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "set -euo pipefail\nCLI_SOURCE=\"${BUILT_PRODUCTS_DIR}/machoe-cli\"\nCLI_DEST_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/CLI\"\nCLI_DEST=\"${CLI_DEST_DIR}/machoe-cli\"\n\nif [ ! -f \"$CLI_SOURCE\" ]; then\n  echo \"error: machoe-cli not found at $CLI_SOURCE\" >&2\n  exit 1\nfi\n\nmkdir -p \"$CLI_DEST_DIR\"\ncp \"$CLI_SOURCE\" \"$CLI_DEST\"\nchmod 755 \"$CLI_DEST\"\n";
+		};
+		DB862D885427B9AF1C74A82B /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-MachOKnife-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -593,6 +709,7 @@
 		};
 		9566B7E72F6DB9D2002773C3 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = F6D0388DF4299474289A572C /* Pods-MachOKnife.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -627,6 +744,7 @@
 		};
 		9566B7E82F6DB9D2002773C3 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4880115AAA502F179D953E28 /* Pods-MachOKnife.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -661,6 +779,7 @@
 		};
 		9566B7EA2F6DB9D2002773C3 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = D3D2A7F30D8A4976950F7FAB /* Pods-MachOKnifeTests.debug.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -682,6 +801,7 @@
 		};
 		9566B7EB2F6DB9D2002773C3 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A2391C65BDB6A51EF6A99953 /* Pods-MachOKnifeTests.release.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -703,6 +823,7 @@
 		};
 		9566B7ED2F6DB9D2002773C3 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 854D1F7005C2DDB50419DA80 /* Pods-MachOKnifeUITests.debug.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
@@ -722,6 +843,7 @@
 		};
 		9566B7EE2F6DB9D2002773C3 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 126EB26C4663997BAAA6D1EA /* Pods-MachOKnifeUITests.release.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
@@ -790,19 +912,19 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		0F1E2D3C4B5A69788796A5B4 /* XCLocalSwiftPackageReference "Packages/MachOKnifeDB" */ = {
+		0F1E2D3C4B5A69788796A5B4 /* XCLocalSwiftPackageReference "MachOKnifeDB" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/MachOKnifeDB;
 		};
-		9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "Packages/CoreMachO" */ = {
+		9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "CoreMachO" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/CoreMachO;
 		};
-		D1E2F3A4B5C60718293A4B5C /* XCLocalSwiftPackageReference "Packages/RetagEngine" */ = {
+		D1E2F3A4B5C60718293A4B5C /* XCLocalSwiftPackageReference "RetagEngine" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/RetagEngine;
 		};
-		F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "Packages/MachOKnifeKit" */ = {
+		F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "MachOKnifeKit" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/MachOKnifeKit;
 		};
@@ -817,22 +939,30 @@
 				minimumVersion = 2.8.0;
 			};
 		};
+		D4E5F60718293A4B5C6D7E90 /* XCRemoteSwiftPackageReference "SnapKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/SnapKit/SnapKit.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.7.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		2B3C4D5E6F708192A3B4C5D6 /* MachOKnifeDB */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 0F1E2D3C4B5A69788796A5B4 /* XCLocalSwiftPackageReference "Packages/MachOKnifeDB" */;
+			package = 0F1E2D3C4B5A69788796A5B4 /* XCLocalSwiftPackageReference "MachOKnifeDB" */;
 			productName = MachOKnifeDB;
 		};
 		35400FDE63F69779F3E076E0 /* CoreMachO */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "Packages/CoreMachO" */;
+			package = 9E1E01AD71B45407E954E666 /* XCLocalSwiftPackageReference "CoreMachO" */;
 			productName = CoreMachO;
 		};
 		69C12ADE5F8FFA0DF2912F6D /* MachOKnifeKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "Packages/MachOKnifeKit" */;
+			package = F4916D216A356443416E2C2E /* XCLocalSwiftPackageReference "MachOKnifeKit" */;
 			productName = MachOKnifeKit;
 		};
 		A7D1E1043B4C5D6E7F8091A2 /* Sparkle */ = {
@@ -842,8 +972,13 @@
 		};
 		B1C2D3E4F5061728394A5B6C /* RetagEngine */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = D1E2F3A4B5C60718293A4B5C /* XCLocalSwiftPackageReference "Packages/RetagEngine" */;
+			package = D1E2F3A4B5C60718293A4B5C /* XCLocalSwiftPackageReference "RetagEngine" */;
 			productName = RetagEngine;
+		};
+		D4E5F60718293A4B5C6D7E91 /* SnapKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D4E5F60718293A4B5C6D7E90 /* XCRemoteSwiftPackageReference "SnapKit" */;
+			productName = SnapKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

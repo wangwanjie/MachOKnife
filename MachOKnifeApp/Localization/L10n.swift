@@ -18,12 +18,17 @@ enum L10n {
     static var menuTools: String { text("menu.tools", fallback: "Tools") }
     static var menuRetag: String { text("menu.retag", fallback: "Retag...") }
     static var menuBuildXCFramework: String { text("menu.buildXCFramework", fallback: "Build XCFramework...") }
+    static var menuMachOSummary: String { text("menu.machoSummary", fallback: "Mach-O Summary...") }
+    static var menuCheckBinaryContamination: String { text("menu.checkBinaryContamination", fallback: "Check Binary Contamination...") }
+    static var menuMergeSplitMachO: String { text("menu.mergeSplitMachO", fallback: "Merge / Split Mach-O...") }
     static var menuWindow: String { text("menu.window", fallback: "Window") }
     static var menuShowWorkspace: String { text("menu.showWorkspace", fallback: "Show Workspace") }
     static var menuHelp: String { text("menu.help", fallback: "Help") }
     static var menuGitHub: String { text("menu.github", fallback: "MachOKnife GitHub") }
     static var menuCopyNodeInfo: String { text("menu.copyNodeInfo", fallback: "Copy Node Info") }
     static var menuExportNodeInfo: String { text("menu.exportNodeInfo", fallback: "Export Node Info...") }
+    static var menuShowCurrentFileInFinder: String { text("menu.showCurrentFileInFinder", fallback: "Show Current File in Finder") }
+    static var menuCopyFilePath: String { text("menu.copyFilePath", fallback: "Copy File Path") }
 
     static func menuAbout(appName: String = appName) -> String {
         format("menu.about", fallback: "About %@", appName)
@@ -220,8 +225,9 @@ enum L10n {
     static var retagWindowTitle: String { text("retag.window.title", fallback: "Retag Tool") }
     static var retagInputTitle: String { text("retag.input.title", fallback: "Input Mach-O") }
     static var retagInputChoose: String { text("retag.input.choose", fallback: "Choose File") }
-    static var retagInputDropHint: String { text("retag.input.dropHint", fallback: "Drop a Mach-O, dylib, or framework binary here.") }
+    static var retagInputDropHint: String { text("retag.input.dropHint", fallback: "Drop a Mach-O, dylib, framework binary, or static archive here.") }
     static var retagInfoTitle: String { text("retag.info.title", fallback: "Detected Information") }
+    static var retagArchitectureLabel: String { text("retag.architecture.label", fallback: "Architecture") }
     static var retagTargetLabel: String { text("retag.target.label", fallback: "Target Platform") }
     static var retagMinimumOSLabel: String { text("retag.minimumOS.label", fallback: "Minimum OS") }
     static var retagSDKLabel: String { text("retag.sdk.label", fallback: "SDK") }
@@ -242,6 +248,8 @@ enum L10n {
     static var xcframeworkSourceLibraryLabel: String { text("xcframework.sourceLibrary", fallback: "Source Library") }
     static var xcframeworkDeviceLibraryLabel: String { text("xcframework.deviceLibrary", fallback: "iOS Device Library") }
     static var xcframeworkSimulatorLibraryLabel: String { text("xcframework.simulatorLibrary", fallback: "iOS Simulator Library") }
+    static var xcframeworkMacCatalystLibraryLabel: String { text("xcframework.maccatalystLibrary", fallback: "Mac Catalyst Library") }
+    static var xcframeworkMacCatalystOptionalHint: String { text("xcframework.maccatalyst.optionalHint", fallback: "Optional. Leave empty to build Mac Catalyst slices by retagging.") }
     static var xcframeworkHeadersLabel: String { text("xcframework.headers", fallback: "Headers Directory") }
     static var xcframeworkOutputDirectoryLabel: String { text("xcframework.outputDirectory", fallback: "Output Directory") }
     static var xcframeworkOutputLibraryNameLabel: String { text("xcframework.outputLibraryName", fallback: "Slice Library Name") }
@@ -255,6 +263,45 @@ enum L10n {
     static var xcframeworkChooseDirectory: String { text("xcframework.chooseDirectory", fallback: "Choose Directory…") }
     static var xcframeworkStart: String { text("xcframework.start", fallback: "Build XCFramework") }
     static var xcframeworkCancel: String { text("xcframework.cancel", fallback: "Cancel") }
+    static var summaryWindowTitle: String { text("summary.window.title", fallback: "Mach-O Summary") }
+    static var summaryInputLabel: String { text("summary.input.label", fallback: "Input Binary") }
+    static var summaryChooseInput: String { text("summary.input.choose", fallback: "Choose File") }
+    static var summaryDropHint: String { text("summary.input.dropHint", fallback: "Drop a Mach-O, static archive, framework, or package here.") }
+    static var summaryReportTitle: String { text("summary.report.title", fallback: "Summary Report") }
+    static var summaryIdleStatus: String { text("summary.status.idle", fallback: "Select an input binary to inspect.") }
+    static var summaryErrorTitle: String { text("summary.error.title", fallback: "Summary Failed") }
+    static var contaminationWindowTitle: String { text("contamination.window.title", fallback: "Binary Contamination Check") }
+    static var contaminationInputLabel: String { text("contamination.input.label", fallback: "Target Binary / Package") }
+    static var contaminationModeLabel: String { text("contamination.mode.label", fallback: "Check Mode") }
+    static var contaminationTargetLabel: String { text("contamination.target.label", fallback: "Expected Target") }
+    static var contaminationAnalyze: String { text("contamination.analyze", fallback: "Start Check") }
+    static var contaminationReportTitle: String { text("contamination.report.title", fallback: "Check Report") }
+    static var contaminationIdleStatus: String { text("contamination.status.idle", fallback: "Select a target and start the check.") }
+    static var contaminationModePlatform: String { text("contamination.mode.platform", fallback: "Platform") }
+    static var contaminationModeArchitecture: String { text("contamination.mode.architecture", fallback: "Architecture") }
+    static var contaminationErrorTitle: String { text("contamination.error.title", fallback: "Check Failed") }
+    static var mergeSplitWindowTitle: String { text("mergeSplit.window.title", fallback: "Merge / Split Mach-O") }
+    static var mergeSplitMergeTab: String { text("mergeSplit.tab.merge", fallback: "Merge") }
+    static var mergeSplitSplitTab: String { text("mergeSplit.tab.split", fallback: "Split") }
+    static var mergeSplitMergeInputsLabel: String { text("mergeSplit.merge.inputs", fallback: "Input Files") }
+    static var mergeSplitMergeDropHint: String { text("mergeSplit.merge.dropHint", fallback: "Drop Mach-O files or static libraries here to append them to the merge list.") }
+    static var mergeSplitMergeAddFiles: String { text("mergeSplit.merge.addFiles", fallback: "Add Files") }
+    static var mergeSplitMergeRemove: String { text("mergeSplit.merge.remove", fallback: "Remove Selected") }
+    static var mergeSplitMergeClear: String { text("mergeSplit.merge.clear", fallback: "Clear") }
+    static var mergeSplitMergeOutputLabel: String { text("mergeSplit.merge.output", fallback: "Output File") }
+    static var mergeSplitMergeChooseOutput: String { text("mergeSplit.merge.chooseOutput", fallback: "Choose Output…") }
+    static var mergeSplitMergeStart: String { text("mergeSplit.merge.start", fallback: "Merge") }
+    static var mergeSplitMergeIdleStatus: String { text("mergeSplit.merge.status.idle", fallback: "Add at least two input files to merge.") }
+    static var mergeSplitSplitInputLabel: String { text("mergeSplit.split.input", fallback: "Input Fat Binary") }
+    static var mergeSplitSplitChooseInput: String { text("mergeSplit.split.chooseInput", fallback: "Choose File") }
+    static var mergeSplitSplitDropHint: String { text("mergeSplit.split.dropHint", fallback: "Drop a fat Mach-O or fat static archive here.") }
+    static var mergeSplitSplitArchitecturesLabel: String { text("mergeSplit.split.architectures", fallback: "Detected Architectures") }
+    static var mergeSplitSplitOutputDirectoryLabel: String { text("mergeSplit.split.outputDirectory", fallback: "Output Directory") }
+    static var mergeSplitSplitChooseDirectory: String { text("mergeSplit.split.chooseDirectory", fallback: "Choose Directory…") }
+    static var mergeSplitSplitStart: String { text("mergeSplit.split.start", fallback: "Split") }
+    static var mergeSplitSplitIdleStatus: String { text("mergeSplit.split.status.idle", fallback: "Choose a fat binary to split.") }
+    static var mergeSplitCompletedStatus: String { text("mergeSplit.status.completed", fallback: "Operation completed.") }
+    static var mergeSplitErrorTitle: String { text("mergeSplit.error.title", fallback: "Merge / Split Failed") }
     static var xcframeworkIdleStatus: String { text("xcframework.status.idle", fallback: "Select a source library, headers, and output directory to begin.") }
     static var xcframeworkRunningStatus: String { text("xcframework.status.running", fallback: "Building XCFramework…") }
     static var xcframeworkCancelledStatus: String { text("xcframework.status.cancelled", fallback: "XCFramework build cancelled.") }

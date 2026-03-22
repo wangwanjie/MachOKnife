@@ -1,5 +1,5 @@
 {
-  "originHash" : "a2c40441a8048689804ead8defe63293862623d09d32e5fcfb07b93ee16cd49b",
+  "originHash" : "b67aa210178c0fe6b9be3a89e5612c3f3b0f7bb3c67e87241a57112225686ed5",
   "pins" : [
     {
       "identity" : "grdb.swift",
@@ -17,6 +17,15 @@
       "state" : {
         "branch" : "main",
         "revision" : "eb30537f9be1ea7ba5d6f85f952f3624348a8978"
+      }
+    },
+    {
+      "identity" : "snapkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/SnapKit/SnapKit.git",
+      "state" : {
+        "revision" : "2842e6e84e82eb9a8dac0100ca90d9444b0307f4",
+        "version" : "5.7.1"
       }
     },
     {

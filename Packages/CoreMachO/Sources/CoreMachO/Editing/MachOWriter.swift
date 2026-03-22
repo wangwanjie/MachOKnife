@@ -130,7 +130,20 @@ public struct MachOWriter: Sendable {
                 }
             case let .versionMin(info)?:
                 if let platformEdit = plan.platformEdit {
-                    rewrittenCommands.append(try serializeVersionMinCommand(info: info, edit: platformEdit, is64Bit: slice.is64Bit))
+                    if usesBuildVersionCommand(for: platformEdit.platform) {
+                        rewrittenCommands.append(
+                            serializeBuildVersionCommand(
+                                command: UInt32(LC_BUILD_VERSION),
+                                platform: platformEdit.platform,
+                                minimumOS: platformEdit.minimumOS,
+                                sdk: platformEdit.sdk,
+                                tools: [],
+                                is64Bit: slice.is64Bit
+                            )
+                        )
+                    } else {
+                        rewrittenCommands.append(try serializeVersionMinCommand(info: info, edit: platformEdit, is64Bit: slice.is64Bit))
+                    }
                     diffEntries.append(
                         DiffEntry(
                             sliceOffset: slice.offset,
@@ -460,6 +473,15 @@ public struct MachOWriter: Sendable {
             data.append(Data(count: totalSize - data.count))
         }
         return data
+    }
+
+    private func usesBuildVersionCommand(for platform: MachOPlatform) -> Bool {
+        switch platform {
+        case .macOS, .iOS, .tvOS, .watchOS:
+            return false
+        default:
+            return true
+        }
     }
 
     private func serializeSegmentCommand(original: Data, segment: SegmentInfo, edit: SegmentProtectionEdit) -> Data {

@@ -1,4 +1,5 @@
 import AppKit
+import SnapKit
 
 @MainActor
 final class XCFrameworkBuildWindowController: NSWindowController {
@@ -12,8 +13,10 @@ final class XCFrameworkBuildWindowController: NSWindowController {
 
     private init(viewController: XCFrameworkBuildViewController) {
         self.buildViewController = viewController
+        let defaultSize = NSSize(width: 820, height: 720)
+        let minimumSize = NSSize(width: 720, height: 620)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 820, height: 720),
+            contentRect: NSRect(origin: .zero, size: defaultSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -22,13 +25,13 @@ final class XCFrameworkBuildWindowController: NSWindowController {
         window.contentViewController = viewController
         super.init(window: window)
         self.window?.tabbingMode = .disallowed
-        self.window?.minSize = NSSize(width: 720, height: 620)
         self.window?.title = L10n.xcframeworkWindowTitle
         if let window = self.window {
-            if !window.setFrameUsingName(Self.autosaveName) {
-                window.center()
-            }
-            window.setFrameAutosaveName(Self.autosaveName)
+            window.restoreFrame(
+                autosaveName: Self.autosaveName,
+                defaultSize: defaultSize,
+                minSize: minimumSize
+            )
         }
         observeSettings()
     }
@@ -60,7 +63,9 @@ final class XCFrameworkBuildWindowController: NSWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.reloadLocalization()
+            Task { @MainActor [weak self] in
+                self?.reloadLocalization()
+            }
         }
     }
 }
@@ -70,19 +75,22 @@ private final class XCFrameworkBuildViewController: NSViewController {
     private let buildService = XCFrameworkBuildService()
 
     private let sourceLibraryLabel = makeSectionLabel("")
-    private let sourceLibraryField = NSTextField(wrappingLabelWithString: "")
+    private let sourceLibraryField = DropReceivingPathLabel()
     private let sourceLibraryButton = NSButton(title: "", target: nil, action: nil)
     private let deviceLibraryLabel = makeSectionLabel("")
-    private let deviceLibraryField = NSTextField(wrappingLabelWithString: "")
+    private let deviceLibraryField = DropReceivingPathLabel()
     private let deviceLibraryButton = NSButton(title: "", target: nil, action: nil)
     private let simulatorLibraryLabel = makeSectionLabel("")
-    private let simulatorLibraryField = NSTextField(wrappingLabelWithString: "")
+    private let simulatorLibraryField = DropReceivingPathLabel()
     private let simulatorLibraryButton = NSButton(title: "", target: nil, action: nil)
+    private let macCatalystLibraryLabel = makeSectionLabel("")
+    private let macCatalystLibraryField = DropReceivingPathLabel()
+    private let macCatalystLibraryButton = NSButton(title: "", target: nil, action: nil)
     private let headersLabel = makeSectionLabel("")
-    private let headersField = NSTextField(wrappingLabelWithString: "")
+    private let headersField = DropReceivingPathLabel()
     private let headersButton = NSButton(title: "", target: nil, action: nil)
     private let outputDirectoryLabel = makeSectionLabel("")
-    private let outputDirectoryField = NSTextField(wrappingLabelWithString: "")
+    private let outputDirectoryField = DropReceivingPathLabel()
     private let outputDirectoryButton = NSButton(title: "", target: nil, action: nil)
     private let outputLibraryNameLabel = makeSectionLabel("")
     private let outputLibraryNameField = NSTextField(string: "libSDK.a")
@@ -106,6 +114,7 @@ private final class XCFrameworkBuildViewController: NSViewController {
     private var sourceLibraryURL: URL?
     private var deviceLibraryURL: URL?
     private var simulatorLibraryURL: URL?
+    private var macCatalystLibraryURL: URL?
     private var headersDirectoryURL: URL?
     private var outputDirectoryURL: URL?
 
@@ -124,6 +133,7 @@ private final class XCFrameworkBuildViewController: NSViewController {
         sourceLibraryLabel.stringValue = L10n.xcframeworkSourceLibraryLabel
         deviceLibraryLabel.stringValue = L10n.xcframeworkDeviceLibraryLabel
         simulatorLibraryLabel.stringValue = L10n.xcframeworkSimulatorLibraryLabel
+        macCatalystLibraryLabel.stringValue = L10n.xcframeworkMacCatalystLibraryLabel
         headersLabel.stringValue = L10n.xcframeworkHeadersLabel
         outputDirectoryLabel.stringValue = L10n.xcframeworkOutputDirectoryLabel
         outputLibraryNameLabel.stringValue = L10n.xcframeworkOutputLibraryNameLabel
@@ -136,6 +146,7 @@ private final class XCFrameworkBuildViewController: NSViewController {
         sourceLibraryButton.title = L10n.xcframeworkChooseFile
         deviceLibraryButton.title = L10n.xcframeworkChooseFile
         simulatorLibraryButton.title = L10n.xcframeworkChooseFile
+        macCatalystLibraryButton.title = L10n.xcframeworkChooseFile
         headersButton.title = L10n.xcframeworkChooseDirectory
         outputDirectoryButton.title = L10n.xcframeworkChooseDirectory
         startButton.title = L10n.xcframeworkStart
@@ -147,46 +158,89 @@ private final class XCFrameworkBuildViewController: NSViewController {
 
     @objc private func chooseSourceLibrary(_ sender: Any?) {
         chooseFile { [weak self] url in
-            self?.sourceLibraryURL = url
-            self?.sourceLibraryField.stringValue = url.path
-            if self?.deviceLibraryURL == nil {
-                self?.deviceLibraryField.stringValue = L10n.xcframeworkUseSourceLibraryHint
-            }
-            if self?.simulatorLibraryURL == nil {
-                self?.simulatorLibraryField.stringValue = L10n.xcframeworkUseSourceLibraryHint
-            }
-            self?.updateStartAvailability()
+            self?.applySourceLibrary(url)
         }
     }
 
     @objc private func chooseDeviceLibrary(_ sender: Any?) {
         chooseFile { [weak self] url in
-            self?.deviceLibraryURL = url
-            self?.deviceLibraryField.stringValue = url.path
+            self?.applyDeviceLibrary(url)
         }
     }
 
     @objc private func chooseSimulatorLibrary(_ sender: Any?) {
         chooseFile { [weak self] url in
-            self?.simulatorLibraryURL = url
-            self?.simulatorLibraryField.stringValue = url.path
+            self?.applySimulatorLibrary(url)
+        }
+    }
+
+    @objc private func chooseMacCatalystLibrary(_ sender: Any?) {
+        chooseFile { [weak self] url in
+            self?.applyMacCatalystLibrary(url)
         }
     }
 
     @objc private func chooseHeadersDirectory(_ sender: Any?) {
         chooseDirectory { [weak self] url in
-            self?.headersDirectoryURL = url
-            self?.headersField.stringValue = url.path
-            self?.updateStartAvailability()
+            self?.applyHeadersDirectory(url)
         }
     }
 
     @objc private func chooseOutputDirectory(_ sender: Any?) {
         chooseDirectory { [weak self] url in
-            self?.outputDirectoryURL = url
-            self?.outputDirectoryField.stringValue = url.path
-            self?.updateStartAvailability()
+            self?.applyOutputDirectory(url)
         }
+    }
+
+    private func applySourceLibrary(_ url: URL) {
+        sourceLibraryURL = url
+        sourceLibraryField.stringValue = url.path
+        sourceLibraryField.showsPlaceholderText = false
+        if deviceLibraryURL == nil {
+            deviceLibraryField.stringValue = L10n.xcframeworkUseSourceLibraryHint
+            deviceLibraryField.showsPlaceholderText = true
+        }
+        if simulatorLibraryURL == nil {
+            simulatorLibraryField.stringValue = L10n.xcframeworkUseSourceLibraryHint
+            simulatorLibraryField.showsPlaceholderText = true
+        }
+        if macCatalystLibraryURL == nil {
+            macCatalystLibraryField.stringValue = L10n.xcframeworkMacCatalystOptionalHint
+            macCatalystLibraryField.showsPlaceholderText = true
+        }
+        updateStartAvailability()
+    }
+
+    private func applyDeviceLibrary(_ url: URL) {
+        deviceLibraryURL = url
+        deviceLibraryField.stringValue = url.path
+        deviceLibraryField.showsPlaceholderText = false
+    }
+
+    private func applySimulatorLibrary(_ url: URL) {
+        simulatorLibraryURL = url
+        simulatorLibraryField.stringValue = url.path
+        simulatorLibraryField.showsPlaceholderText = false
+    }
+
+    private func applyMacCatalystLibrary(_ url: URL) {
+        macCatalystLibraryURL = url
+        macCatalystLibraryField.stringValue = url.path
+        macCatalystLibraryField.showsPlaceholderText = false
+    }
+
+    private func applyHeadersDirectory(_ url: URL) {
+        headersDirectoryURL = url
+        headersField.stringValue = url.path
+        headersField.showsPlaceholderText = false
+        updateStartAvailability()
+    }
+
+    private func applyOutputDirectory(_ url: URL) {
+        outputDirectoryURL = url
+        outputDirectoryField.stringValue = url.path
+        outputDirectoryField.showsPlaceholderText = false
+        updateStartAvailability()
     }
 
     @objc private func startBuild(_ sender: Any?) {
@@ -198,6 +252,7 @@ private final class XCFrameworkBuildViewController: NSViewController {
             sourceLibraryURL: sourceLibraryURL,
             iosDeviceSourceLibraryURL: deviceLibraryURL,
             iosSimulatorSourceLibraryURL: simulatorLibraryURL,
+            macCatalystSourceLibraryURL: macCatalystLibraryURL,
             headersDirectoryURL: headersDirectoryURL,
             outputDirectoryURL: outputDirectoryURL,
             outputLibraryName: outputLibraryNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty(or: "libSDK.a"),
@@ -274,10 +329,31 @@ private final class XCFrameworkBuildViewController: NSViewController {
     }
 
     private func buildUI() {
-        [sourceLibraryField, deviceLibraryField, simulatorLibraryField, headersField, outputDirectoryField].forEach {
+        [
+            sourceLibraryField,
+            deviceLibraryField,
+            simulatorLibraryField,
+            macCatalystLibraryField,
+            headersField,
+            outputDirectoryField,
+        ].forEach {
             $0.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
             $0.textColor = .secondaryLabelColor
+            $0.lineBreakMode = .byTruncatingMiddle
         }
+
+        sourceLibraryField.acceptedContent = .file
+        sourceLibraryField.onURLDropped = { [weak self] in self?.applySourceLibrary($0) }
+        deviceLibraryField.acceptedContent = .file
+        deviceLibraryField.onURLDropped = { [weak self] in self?.applyDeviceLibrary($0) }
+        simulatorLibraryField.acceptedContent = .file
+        simulatorLibraryField.onURLDropped = { [weak self] in self?.applySimulatorLibrary($0) }
+        macCatalystLibraryField.acceptedContent = .file
+        macCatalystLibraryField.onURLDropped = { [weak self] in self?.applyMacCatalystLibrary($0) }
+        headersField.acceptedContent = .directory
+        headersField.onURLDropped = { [weak self] in self?.applyHeadersDirectory($0) }
+        outputDirectoryField.acceptedContent = .directory
+        outputDirectoryField.onURLDropped = { [weak self] in self?.applyOutputDirectory($0) }
 
         logTitleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
 
@@ -285,6 +361,7 @@ private final class XCFrameworkBuildViewController: NSViewController {
             makeRow(label: sourceLibraryLabel, control: makeChooserStack(field: sourceLibraryField, button: sourceLibraryButton, action: #selector(chooseSourceLibrary(_:)))),
             makeRow(label: deviceLibraryLabel, control: makeChooserStack(field: deviceLibraryField, button: deviceLibraryButton, action: #selector(chooseDeviceLibrary(_:)))),
             makeRow(label: simulatorLibraryLabel, control: makeChooserStack(field: simulatorLibraryField, button: simulatorLibraryButton, action: #selector(chooseSimulatorLibrary(_:)))),
+            makeRow(label: macCatalystLibraryLabel, control: makeChooserStack(field: macCatalystLibraryField, button: macCatalystLibraryButton, action: #selector(chooseMacCatalystLibrary(_:)))),
             makeRow(label: headersLabel, control: makeChooserStack(field: headersField, button: headersButton, action: #selector(chooseHeadersDirectory(_:)))),
             makeRow(label: outputDirectoryLabel, control: makeChooserStack(field: outputDirectoryField, button: outputDirectoryButton, action: #selector(chooseOutputDirectory(_:)))),
             makeRow(label: outputLibraryNameLabel, control: outputLibraryNameField),
@@ -337,43 +414,82 @@ private final class XCFrameworkBuildViewController: NSViewController {
         container.orientation = .vertical
         container.alignment = .leading
         container.spacing = 14
-        container.translatesAutoresizingMaskIntoConstraints = false
+        
+        let contentView = NSView()
+        contentView.addSubview(container)
 
-        view.addSubview(container)
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.documentView = contentView
+        view.addSubview(scrollView)
 
-        NSLayoutConstraint.activate([
-            outputLibraryNameField.widthAnchor.constraint(equalToConstant: 240),
-            xcframeworkNameField.widthAnchor.constraint(equalToConstant: 240),
-            moduleNameField.widthAnchor.constraint(equalToConstant: 240),
-            umbrellaHeaderField.widthAnchor.constraint(equalToConstant: 240),
-            minVersionField.widthAnchor.constraint(equalToConstant: 160),
-            sdkVersionField.widthAnchor.constraint(equalToConstant: 160),
-            logScrollView.heightAnchor.constraint(equalToConstant: 240),
-
-            container.topAnchor.constraint(equalTo: view.topAnchor, constant: 20),
-            container.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            container.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            container.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -20),
-        ])
+        [
+            outputLibraryNameField,
+            xcframeworkNameField,
+            moduleNameField,
+            umbrellaHeaderField,
+        ].forEach {
+            $0.snp.makeConstraints { make in
+                make.width.equalTo(240)
+            }
+        }
+        [minVersionField, sdkVersionField].forEach {
+            $0.snp.makeConstraints { make in
+                make.width.equalTo(160)
+            }
+        }
+        scrollView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        contentView.snp.makeConstraints { make in
+            make.top.equalTo(scrollView.contentView)
+            make.leading.equalTo(scrollView.contentView)
+            make.trailing.equalTo(scrollView.contentView)
+            make.bottom.equalTo(scrollView.contentView)
+            make.width.equalTo(scrollView.contentView)
+        }
+        container.snp.makeConstraints { make in
+            make.edges.equalToSuperview().inset(20)
+        }
+        logScrollView.snp.makeConstraints { make in
+            make.width.equalTo(container)
+            make.height.equalTo(240)
+        }
     }
 
     private func makeChooserStack(field: NSTextField, button: NSButton, action: Selector) -> NSStackView {
         button.target = self
         button.action = action
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
         let stack = NSStackView(views: [field, button])
         stack.orientation = .horizontal
-        stack.alignment = .top
+        stack.alignment = .centerY
         stack.spacing = 8
-        field.widthAnchor.constraint(greaterThanOrEqualToConstant: 420).isActive = true
+        field.snp.makeConstraints { make in
+            make.width.greaterThanOrEqualTo(420)
+            make.height.greaterThanOrEqualTo(DropReceivingPathLabelLayoutMetrics.minimumHeight)
+        }
+        button.snp.makeConstraints { make in
+            make.width.equalTo(96)
+        }
         return stack
     }
 
     private func applyIdleState() {
         sourceLibraryField.stringValue = L10n.xcframeworkNoSelection
+        sourceLibraryField.showsPlaceholderText = true
         deviceLibraryField.stringValue = L10n.xcframeworkUseSourceLibraryHint
+        deviceLibraryField.showsPlaceholderText = true
         simulatorLibraryField.stringValue = L10n.xcframeworkUseSourceLibraryHint
+        simulatorLibraryField.showsPlaceholderText = true
+        macCatalystLibraryField.stringValue = L10n.xcframeworkMacCatalystOptionalHint
+        macCatalystLibraryField.showsPlaceholderText = true
         headersField.stringValue = L10n.xcframeworkNoSelection
+        headersField.showsPlaceholderText = true
         outputDirectoryField.stringValue = L10n.xcframeworkNoSelection
+        outputDirectoryField.showsPlaceholderText = true
         statusLabel.stringValue = L10n.xcframeworkIdleStatus
         setRunning(false)
     }
@@ -383,7 +499,7 @@ private final class XCFrameworkBuildViewController: NSViewController {
     }
 
     private func setRunning(_ running: Bool) {
-        [sourceLibraryButton, deviceLibraryButton, simulatorLibraryButton, headersButton, outputDirectoryButton].forEach {
+        [sourceLibraryButton, deviceLibraryButton, simulatorLibraryButton, macCatalystLibraryButton, headersButton, outputDirectoryButton].forEach {
             $0.isEnabled = !running
         }
         [outputLibraryNameField, xcframeworkNameField, moduleNameField, umbrellaHeaderField, minVersionField, sdkVersionField].forEach {
@@ -418,5 +534,217 @@ private extension String {
 
     var nilIfEmpty: String? {
         trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
+    }
+}
+
+enum DropReceivingPathLabelColorToken: Equatable {
+    case accentBorder
+    case subtleAccentBorder
+    case separatorBorder
+    case accentFillLight
+    case accentFillDark
+    case subtleAccentFill
+    case elevatedSurfaceFill
+    case primaryText
+    case secondaryText
+}
+
+struct DropReceivingPathLabelResolvedStyle: Equatable {
+    let border: DropReceivingPathLabelColorToken
+    let background: DropReceivingPathLabelColorToken
+    let text: DropReceivingPathLabelColorToken
+}
+
+enum DropReceivingPathLabelLayoutMetrics {
+    static let contentInsets = NSEdgeInsets(top: 7, left: 10, bottom: 7, right: 10)
+    static let minimumHeight: CGFloat = 46
+}
+
+enum DropReceivingPathLabelStyleResolver {
+    static func resolve(isDark: Bool, highlighted: Bool, showsPlaceholderText: Bool) -> DropReceivingPathLabelResolvedStyle {
+        let border: DropReceivingPathLabelColorToken
+        let background: DropReceivingPathLabelColorToken
+
+        if highlighted {
+            border = .accentBorder
+            background = isDark ? .accentFillDark : .accentFillLight
+        } else {
+            border = isDark ? .separatorBorder : .subtleAccentBorder
+            background = isDark ? .elevatedSurfaceFill : .subtleAccentFill
+        }
+
+        return DropReceivingPathLabelResolvedStyle(
+            border: border,
+            background: background,
+            text: showsPlaceholderText ? .secondaryText : .primaryText
+        )
+    }
+
+    static func color(for token: DropReceivingPathLabelColorToken) -> NSColor {
+        switch token {
+        case .accentBorder:
+            return .controlAccentColor
+        case .subtleAccentBorder:
+            return .controlAccentColor.withAlphaComponent(0.35)
+        case .separatorBorder:
+            return .separatorColor
+        case .accentFillLight:
+            return .controlAccentColor.withAlphaComponent(0.12)
+        case .accentFillDark:
+            return .controlAccentColor.withAlphaComponent(0.18)
+        case .subtleAccentFill:
+            return .controlAccentColor.withAlphaComponent(0.08)
+        case .elevatedSurfaceFill:
+            return .controlBackgroundColor.withAlphaComponent(0.88)
+        case .primaryText:
+            return .labelColor
+        case .secondaryText:
+            return .secondaryLabelColor
+        }
+    }
+}
+
+@MainActor
+private final class DropReceivingPathLabel: NSTextField {
+    enum AcceptedContent {
+        case file
+        case directory
+    }
+
+    var acceptedContent: AcceptedContent = .file
+    var onURLDropped: ((URL) -> Void)?
+    var showsPlaceholderText = true {
+        didSet {
+            applyAppearance()
+        }
+    }
+
+    private var isDropTargetHighlighted = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        cell = PaddedTextFieldCell(textCell: "")
+        isEditable = false
+        isSelectable = true
+        isBordered = false
+        drawsBackground = false
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.borderWidth = 1
+        lineBreakMode = .byTruncatingMiddle
+        maximumNumberOfLines = 2
+        registerForDraggedTypes([.fileURL])
+        applyAppearance()
+    }
+
+    convenience init() {
+        self.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAppearance()
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard firstAcceptedURL(from: sender) != nil else { return [] }
+        isDropTargetHighlighted = true
+        applyAppearance()
+        return .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        isDropTargetHighlighted = false
+        applyAppearance()
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let url = firstAcceptedURL(from: sender) else { return false }
+        isDropTargetHighlighted = false
+        applyAppearance()
+        onURLDropped?(url)
+        return true
+    }
+
+    private func firstAcceptedURL(from sender: NSDraggingInfo) -> URL? {
+        guard
+            let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self]) as? [URL]
+        else {
+            return nil
+        }
+
+        return urls.first { url in
+            let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+            switch acceptedContent {
+            case .file:
+                return isDirectory == false
+            case .directory:
+                return isDirectory == true
+            }
+        }
+    }
+
+    private func applyAppearance() {
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let style = DropReceivingPathLabelStyleResolver.resolve(
+            isDark: isDark,
+            highlighted: isDropTargetHighlighted,
+            showsPlaceholderText: showsPlaceholderText
+        )
+        layer?.borderColor = DropReceivingPathLabelStyleResolver.color(for: style.border).cgColor
+        layer?.backgroundColor = DropReceivingPathLabelStyleResolver.color(for: style.background).cgColor
+        textColor = DropReceivingPathLabelStyleResolver.color(for: style.text)
+    }
+}
+
+private final class PaddedTextFieldCell: NSTextFieldCell {
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        insetRect(rect, by: DropReceivingPathLabelLayoutMetrics.contentInsets)
+    }
+
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        drawingRect(forBounds: rect)
+    }
+
+    override func edit(withFrame aRect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?) {
+        super.edit(
+            withFrame: drawingRect(forBounds: aRect),
+            in: controlView,
+            editor: textObj,
+            delegate: delegate,
+            event: event
+        )
+    }
+
+    override func select(withFrame aRect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, start selStart: Int, length selLength: Int) {
+        super.select(
+            withFrame: drawingRect(forBounds: aRect),
+            in: controlView,
+            editor: textObj,
+            delegate: delegate,
+            start: selStart,
+            length: selLength
+        )
+    }
+
+    override func cellSize(forBounds rect: NSRect) -> NSSize {
+        var size = super.cellSize(forBounds: drawingRect(forBounds: rect))
+        size.width += DropReceivingPathLabelLayoutMetrics.contentInsets.left + DropReceivingPathLabelLayoutMetrics.contentInsets.right
+        size.height += DropReceivingPathLabelLayoutMetrics.contentInsets.top + DropReceivingPathLabelLayoutMetrics.contentInsets.bottom
+        return size
+    }
+
+    private func insetRect(_ rect: NSRect, by insets: NSEdgeInsets) -> NSRect {
+        NSRect(
+            x: rect.origin.x + insets.left,
+            y: rect.origin.y + insets.bottom,
+            width: max(0, rect.size.width - insets.left - insets.right),
+            height: max(0, rect.size.height - insets.top - insets.bottom)
+        )
     }
 }

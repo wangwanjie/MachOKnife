@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import MachOKnifeKit
+import SnapKit
 
 @MainActor
 final class SourceListViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
@@ -62,18 +63,16 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
 
         if cell.textField == nil {
             let titleField = NSTextField(labelWithString: "")
-            titleField.translatesAutoresizingMaskIntoConstraints = false
             titleField.maximumNumberOfLines = 1
             titleField.usesSingleLineMode = true
             titleField.lineBreakMode = .byTruncatingMiddle
             titleField.font = NSFont.systemFont(ofSize: 12, weight: .regular)
             cell.addSubview(titleField)
 
-            NSLayoutConstraint.activate([
-                titleField.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-                titleField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
-                titleField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            ])
+            titleField.snp.makeConstraints { make in
+                make.leading.trailing.equalToSuperview().inset(6)
+                make.centerY.equalToSuperview()
+            }
             cell.textField = titleField
         }
 
@@ -170,29 +169,29 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
         view.addSubview(scrollView)
         view.addSubview(placeholderStack)
 
-        NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
-            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -14),
-
-            documentSummaryLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            documentSummaryLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 8),
-            documentSummaryLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
-
-            searchField.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 10),
-            searchField.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
-            searchField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-
-            scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
-            placeholderStack.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
-            placeholderStack.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
-            placeholderStack.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
-            placeholderStack.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
-        ])
+        titleLabel.snp.makeConstraints { make in
+            make.top.equalToSuperview().inset(12)
+            make.leading.equalToSuperview().inset(14)
+            make.trailing.lessThanOrEqualToSuperview().inset(14)
+        }
+        documentSummaryLabel.snp.makeConstraints { make in
+            make.centerY.equalTo(titleLabel)
+            make.leading.equalTo(titleLabel.snp.trailing).offset(8)
+            make.trailing.equalToSuperview().inset(14)
+        }
+        searchField.snp.makeConstraints { make in
+            make.top.equalTo(titleLabel.snp.bottom).offset(10)
+            make.leading.trailing.equalToSuperview().inset(12)
+        }
+        scrollView.snp.makeConstraints { make in
+            make.top.equalTo(searchField.snp.bottom).offset(8)
+            make.leading.trailing.bottom.equalToSuperview()
+        }
+        placeholderStack.snp.makeConstraints { make in
+            make.center.equalTo(scrollView)
+            make.leading.greaterThanOrEqualToSuperview().inset(20)
+            make.trailing.lessThanOrEqualToSuperview().inset(20)
+        }
 
         updatePlaceholder()
     }

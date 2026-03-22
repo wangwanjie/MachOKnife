@@ -1,5 +1,6 @@
 import AppKit
 import QuartzCore
+import SnapKit
 
 @MainActor
 final class PreferencesWindowController: NSWindowController {
@@ -75,7 +76,9 @@ final class PreferencesWindowController: NSWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.reloadLocalization()
+            Task { @MainActor [weak self] in
+                self?.reloadLocalization()
+            }
         }
     }
 }
@@ -212,7 +215,6 @@ private final class PreferencesScrollContainerViewController: NSViewController {
     let contentViewController: NSViewController
     private let scrollView = NSScrollView()
     private let documentView = NSView()
-    private var widthConstraint: NSLayoutConstraint?
 
     init(contentViewController: NSViewController) {
         self.contentViewController = contentViewController
@@ -226,47 +228,32 @@ private final class PreferencesScrollContainerViewController: NSViewController {
 
     override func loadView() {
         let rootView = NSView()
-        rootView.translatesAutoresizingMaskIntoConstraints = false
 
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
 
-        documentView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.documentView = documentView
 
         addChild(contentViewController)
         let contentView = contentViewController.view
-        contentView.translatesAutoresizingMaskIntoConstraints = false
         documentView.addSubview(contentView)
 
         rootView.addSubview(scrollView)
         view = rootView
 
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: rootView.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
-
-            contentView.topAnchor.constraint(equalTo: documentView.topAnchor),
-            contentView.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
-            contentView.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
-            contentView.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
-        ])
+        scrollView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        contentView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+            make.width.equalTo(scrollView.contentView.snp.width)
+        }
     }
 
     override func viewDidLayout() {
         super.viewDidLayout()
-
-        if let widthConstraint {
-            widthConstraint.isActive = false
-        }
-        widthConstraint = documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
-        widthConstraint?.priority = .required
-        widthConstraint?.isActive = true
 
         let fittingSize = contentViewController.view.fittingSize
         documentView.frame = NSRect(origin: .zero, size: fittingSize)
@@ -353,12 +340,13 @@ private final class GeneralPreferencesViewController: NSViewController, Preferen
 
         view.addSubview(stack)
 
-        NSLayoutConstraint.activate([
-            recentFilesField.widthAnchor.constraint(equalToConstant: 60),
-            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 24),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
-        ])
+        recentFilesField.snp.makeConstraints { make in
+            make.width.equalTo(60)
+        }
+        stack.snp.makeConstraints { make in
+            make.top.leading.equalToSuperview().inset(24)
+            make.trailing.lessThanOrEqualToSuperview().inset(24)
+        }
 
         preferredContentSize = NSSize(width: 640, height: 240)
         reloadLocalization()
@@ -424,11 +412,10 @@ private final class AppearancePreferencesViewController: NSViewController, Prefe
         let row = makeRow(label: themeLabel, control: themePopUpButton)
         view.addSubview(row)
 
-        NSLayoutConstraint.activate([
-            row.topAnchor.constraint(equalTo: view.topAnchor, constant: 24),
-            row.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            row.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
-        ])
+        row.snp.makeConstraints { make in
+            make.top.leading.equalToSuperview().inset(24)
+            make.trailing.lessThanOrEqualToSuperview().inset(24)
+        }
 
         preferredContentSize = NSSize(width: 640, height: 180)
         reloadLocalization()
@@ -483,11 +470,10 @@ private final class AdvancedPreferencesViewController: NSViewController, Prefere
 
         titleLabel.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
 
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -24),
-        ])
+        stack.snp.makeConstraints { make in
+            make.top.leading.equalToSuperview().inset(24)
+            make.trailing.lessThanOrEqualToSuperview().inset(24)
+        }
 
         view = container
         preferredContentSize = NSSize(width: 640, height: 220)
@@ -548,11 +534,10 @@ func makePlaceholderView(title: String?, message: String) -> NSView {
     stack.translatesAutoresizingMaskIntoConstraints = false
     container.addSubview(stack)
 
-    NSLayoutConstraint.activate([
-        stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
-        stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
-        stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -24),
-    ])
+    stack.snp.makeConstraints { make in
+        make.top.leading.equalToSuperview().inset(24)
+        make.trailing.lessThanOrEqualToSuperview().inset(24)
+    }
 
     return container
 }

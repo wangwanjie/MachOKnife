@@ -46,6 +46,7 @@ public final class BrowserNode {
     public let title: String
     public let subtitle: String?
     public let summaryStyle: BrowserNodeSummaryStyle
+    public let hexSource: BrowserHexSource?
     public let rawAddress: UInt64?
     public let rvaAddress: UInt64?
     public let dataRange: BrowserDataRange?
@@ -154,6 +155,7 @@ public final class BrowserNode {
         title: String,
         subtitle: String? = nil,
         summaryStyle: BrowserNodeSummaryStyle = .automatic,
+        hexSource: BrowserHexSource? = nil,
         detailRows: [BrowserDetailRow] = [],
         detailCount: Int? = nil,
         detailProvider: (() -> [BrowserDetailRow])? = nil,
@@ -170,6 +172,7 @@ public final class BrowserNode {
         self.title = title
         self.subtitle = subtitle
         self.summaryStyle = summaryStyle
+        self.hexSource = hexSource
         self.rawAddress = rawAddress
         self.rvaAddress = rvaAddress
         self.dataRange = dataRange
@@ -209,6 +212,7 @@ public struct BrowserDocument {
     public enum Kind: String {
         case machOFile
         case fatFile
+        case archive
         case dyldCache
         case fullDyldCache
         case memoryImage

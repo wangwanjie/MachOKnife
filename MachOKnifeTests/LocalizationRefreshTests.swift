@@ -327,14 +327,36 @@ struct LocalizationRefreshTests {
         pumpRunLoop(for: 0.2)
 
         let localizedRecentMenu = try #require(currentRecentFilesMenu())
-        let fileMenu = try #require(topLevelMenu(title: "文件"))
+        let localizedFileMenu = try #require(topLevelMenu(title: "文件"))
         let toolsMenu = try #require(topLevelMenu(title: "工具"))
         let helpMenu = try #require(topLevelMenu(title: "帮助"))
 
         #expect(darkRecentMenu !== localizedRecentMenu)
-        #expect(fileMenu.title == "文件")
+        #expect(localizedFileMenu.title == "文件")
         #expect(toolsMenu.title == "工具")
         #expect(helpMenu.title == "帮助")
+    }
+
+    @Test("file menu exposes Finder and path actions for the current document")
+    func fileMenuExposesFinderAndPathActionsForCurrentDocument() throws {
+        let controller = MainWindowController()
+        let fixtureURL = try makeEditableFixtureCopy()
+
+        #expect(controller.openDocument(at: fixtureURL))
+
+        let updateManager = UpdateManager(
+            configurationProvider: {
+                UpdateConfiguration(feedURLString: "", publicEDKey: "")
+            },
+            clientProvider: { nil }
+        )
+        let appDelegate = AppDelegate(settings: .shared, updateManager: updateManager)
+        appDelegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        pumpRunLoop(for: 0.2)
+
+        let currentFileMenu = try #require(fileMenu())
+        #expect(currentFileMenu.items.contains(where: { $0.title == L10n.menuShowCurrentFileInFinder }))
+        #expect(currentFileMenu.items.contains(where: { $0.title == L10n.menuCopyFilePath }))
     }
 
     private func pumpRunLoop(for duration: TimeInterval) {

@@ -3,6 +3,7 @@ import CoreMachO
 import MachOKnifeKit
 import MachO
 import RetagEngine
+import SnapKit
 
 @MainActor
 final class RetagWindowController: NSWindowController {
@@ -63,7 +64,9 @@ final class RetagWindowController: NSWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.reloadLocalization()
+            Task { @MainActor [weak self] in
+                self?.reloadLocalization()
+            }
         }
     }
 }
@@ -71,6 +74,7 @@ final class RetagWindowController: NSWindowController {
 @MainActor
 private final class RetagViewController: NSViewController {
     private let analysisService = DocumentAnalysisService()
+    private let archiveInspector = ArchiveInspector()
     private let retagEngine = RetagEngine()
     private let supportedPlatforms: [MachOPlatform] = [
         .macOS,
@@ -95,6 +99,8 @@ private final class RetagViewController: NSViewController {
     private let inputDropView = RetagDropZoneView()
     private let infoTitleLabel = NSTextField(labelWithString: "")
     private let infoTextView = NSTextView()
+    private let architectureLabel = makeSectionLabel("")
+    private let architecturePopUpButton = NSPopUpButton()
     private let targetLabel = makeSectionLabel("")
     private let targetPopUpButton = NSPopUpButton()
     private let minimumOSLabel = makeSectionLabel("")
@@ -113,8 +119,17 @@ private final class RetagViewController: NSViewController {
 
     private var inputURL: URL?
     private var outputDirectoryURL: URL?
+    private var activeInputSecurityScopedURL: URL?
+    private var activeOutputSecurityScopedURL: URL?
     private var analysis: DocumentAnalysis?
+    private var archiveInspection: ArchiveInspection?
+    private var architectureRow: NSStackView?
     private var retagTask: Task<Void, Never>?
+
+    deinit {
+        Self.stopAccessingSecurityScope(activeInputSecurityScopedURL)
+        Self.stopAccessingSecurityScope(activeOutputSecurityScopedURL)
+    }
 
     override func loadView() {
         view = AdaptiveBackgroundView(backgroundColor: .windowBackgroundColor)
@@ -148,9 +163,13 @@ private final class RetagViewController: NSViewController {
         panel.directoryURL = outputDirectoryURL ?? inputURL?.deletingLastPathComponent()
         panel.beginSheetModal(for: view.window ?? NSApp.mainWindow ?? NSWindow()) { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
-            self?.outputDirectoryURL = url
+            self?.adoptOutputDirectoryURL(url)
             self?.refreshOutputFields()
         }
+    }
+
+    @objc private func archiveArchitectureChanged(_ sender: Any?) {
+        refreshDetectedSummary()
     }
 
     @objc private func startRetag(_ sender: Any?) {
@@ -185,7 +204,8 @@ private final class RetagViewController: NSViewController {
                         outputURL: outputURL,
                         platform: platform,
                         minimumOS: minimumOS,
-                        sdk: sdk
+                        sdk: sdk,
+                        architecture: selectedArchiveArchitecture()
                     )
                     try Task.checkCancellation()
 
@@ -256,6 +276,9 @@ private final class RetagViewController: NSViewController {
         infoScrollView.hasVerticalScroller = true
         infoScrollView.documentView = infoTextView
 
+        architecturePopUpButton.target = self
+        architecturePopUpButton.action = #selector(archiveArchitectureChanged(_:))
+
         supportedPlatforms.forEach { targetPopUpButton.addItem(withTitle: platformName($0)) }
 
         chooseOutputDirectoryButton.target = self
@@ -279,6 +302,9 @@ private final class RetagViewController: NSViewController {
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.maximumNumberOfLines = 0
 
+        let architectureRow = makeRow(label: architectureLabel, control: architecturePopUpButton)
+        architectureRow.isHidden = true
+        self.architectureRow = architectureRow
         let targetRow = makeRow(label: targetLabel, control: targetPopUpButton)
         let minimumOSRow = makeRow(label: minimumOSLabel, control: minimumOSTextField)
         let sdkRow = makeRow(label: sdkLabel, control: sdkTextField)
@@ -307,6 +333,7 @@ private final class RetagViewController: NSViewController {
             inputDropView,
             infoTitleLabel,
             infoScrollView,
+            architectureRow,
             targetRow,
             minimumOSRow,
             sdkRow,
@@ -322,20 +349,34 @@ private final class RetagViewController: NSViewController {
 
         view.addSubview(stack)
 
-        NSLayoutConstraint.activate([
-            inputDropView.heightAnchor.constraint(equalToConstant: 96),
-            infoScrollView.heightAnchor.constraint(equalToConstant: 180),
-            outputDirectoryField.widthAnchor.constraint(greaterThanOrEqualToConstant: 380),
-            targetPopUpButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 220),
-            minimumOSTextField.widthAnchor.constraint(equalToConstant: 180),
-            sdkTextField.widthAnchor.constraint(equalToConstant: 180),
-            outputNameField.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
-
-            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 20),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -20),
-        ])
+        inputDropView.snp.makeConstraints { make in
+            make.height.equalTo(96)
+        }
+        infoScrollView.snp.makeConstraints { make in
+            make.height.equalTo(180)
+        }
+        outputDirectoryField.snp.makeConstraints { make in
+            make.width.greaterThanOrEqualTo(380)
+        }
+        architecturePopUpButton.snp.makeConstraints { make in
+            make.width.greaterThanOrEqualTo(220)
+        }
+        targetPopUpButton.snp.makeConstraints { make in
+            make.width.greaterThanOrEqualTo(220)
+        }
+        minimumOSTextField.snp.makeConstraints { make in
+            make.width.equalTo(180)
+        }
+        sdkTextField.snp.makeConstraints { make in
+            make.width.equalTo(180)
+        }
+        outputNameField.snp.makeConstraints { make in
+            make.width.greaterThanOrEqualTo(260)
+        }
+        stack.snp.makeConstraints { make in
+            make.top.leading.equalToSuperview().inset(20)
+            make.trailing.bottom.lessThanOrEqualToSuperview().inset(20)
+        }
     }
 
     func reloadLocalization() {
@@ -344,6 +385,7 @@ private final class RetagViewController: NSViewController {
         chooseInputButton.title = L10n.retagInputChoose
         inputDropView.titleLabel.stringValue = L10n.retagInputDropHint
         infoTitleLabel.stringValue = L10n.retagInfoTitle
+        architectureLabel.stringValue = L10n.retagArchitectureLabel
         targetLabel.stringValue = L10n.retagTargetLabel
         minimumOSLabel.stringValue = L10n.retagMinimumOSLabel
         sdkLabel.stringValue = L10n.retagSDKLabel
@@ -353,22 +395,37 @@ private final class RetagViewController: NSViewController {
         startButton.title = L10n.retagStart
         cancelButton.title = L10n.retagCancel
         refreshOutputFields()
-        if infoTextView.string.isEmpty {
+        if inputURL != nil {
+            refreshDetectedSummary()
+        } else if infoTextView.string.isEmpty {
             infoTextView.string = L10n.retagNoInputInfo + "\n\n" + L10n.retagUnsupportedPlaceholder
         }
     }
 
     private func loadInput(_ url: URL) {
+        let previousInputURL = activeInputSecurityScopedURL
+        let reusesExistingScope = previousInputURL?.standardizedFileURL == url.standardizedFileURL
+        let didAccessInputScope = reusesExistingScope ? false : url.startAccessingSecurityScopedResource()
+
         do {
+            if let archiveInspection = try archiveInspector.inspect(url: url) {
+                adoptInputURL(url, reusesExistingScope: reusesExistingScope, didAccessSecurityScope: didAccessInputScope)
+                loadArchiveInput(url, inspection: archiveInspection)
+                return
+            }
+
             let analysis = try analysisService.analyze(url: url)
+            adoptInputURL(url, reusesExistingScope: reusesExistingScope, didAccessSecurityScope: didAccessInputScope)
             self.inputURL = url
             self.analysis = analysis
+            archiveInspection = nil
             if outputDirectoryURL == nil {
-                outputDirectoryURL = url.deletingLastPathComponent()
+                adoptOutputDirectoryURL(url.deletingLastPathComponent())
             }
 
             inputPathLabel.stringValue = url.path
             outputNameField.stringValue = suggestedOutputName(for: url)
+            configureArchitectureSelection(using: nil)
 
             let firstSlice = analysis.slices.first
             if let platform = firstSlice?.platform, let index = supportedPlatforms.firstIndex(of: platform) {
@@ -379,17 +436,24 @@ private final class RetagViewController: NSViewController {
 
             minimumOSTextField.stringValue = firstSlice?.minimumOS?.description ?? "0.0.0"
             sdkTextField.stringValue = firstSlice?.sdkVersion?.description ?? firstSlice?.minimumOS?.description ?? "0.0.0"
-            infoTextView.string = makeAnalysisSummary(url: url, analysis: analysis)
+            refreshDetectedSummary()
             statusLabel.stringValue = L10n.retagIdleStatus
             refreshOutputFields()
             setRunning(false)
         } catch {
+            if didAccessInputScope {
+                url.stopAccessingSecurityScopedResource()
+            }
             showErrorAlert(error)
         }
     }
 
     private func applyIdleState() {
+        inputURL = nil
+        analysis = nil
+        archiveInspection = nil
         targetPopUpButton.selectItem(at: 0)
+        configureArchitectureSelection(using: nil)
         inputPathLabel.stringValue = L10n.retagNoInputInfo
         outputDirectoryField.stringValue = L10n.retagNoInputInfo
         outputNameField.stringValue = L10n.retagOutputDefaultName
@@ -410,6 +474,7 @@ private final class RetagViewController: NSViewController {
         chooseOutputDirectoryButton.isEnabled = !running
         startButton.isEnabled = !running && inputURL != nil && outputDirectoryURL != nil
         cancelButton.isEnabled = running
+        architecturePopUpButton.isEnabled = !running && (archiveInspection?.architectures.count ?? 0) > 1
         targetPopUpButton.isEnabled = !running
         minimumOSTextField.isEnabled = !running
         sdkTextField.isEnabled = !running
@@ -419,6 +484,91 @@ private final class RetagViewController: NSViewController {
         } else {
             progressIndicator.stopAnimation(nil)
         }
+    }
+
+    private func loadArchiveInput(_ url: URL, inspection: ArchiveInspection) {
+        inputURL = url
+        analysis = nil
+        archiveInspection = inspection
+        if outputDirectoryURL == nil {
+            adoptOutputDirectoryURL(url.deletingLastPathComponent())
+        }
+
+        inputPathLabel.stringValue = url.path
+        outputNameField.stringValue = suggestedOutputName(for: url)
+        configureArchitectureSelection(using: inspection)
+        refreshDetectedSummary()
+        statusLabel.stringValue = L10n.retagIdleStatus
+        refreshOutputFields()
+        setRunning(false)
+    }
+
+    private func adoptInputURL(_ url: URL, reusesExistingScope: Bool, didAccessSecurityScope: Bool) {
+        guard reusesExistingScope == false else { return }
+        Self.stopAccessingSecurityScope(activeInputSecurityScopedURL)
+        activeInputSecurityScopedURL = didAccessSecurityScope ? url : nil
+    }
+
+    private func adoptOutputDirectoryURL(_ url: URL) {
+        let reusesExistingScope = activeOutputSecurityScopedURL?.standardizedFileURL == url.standardizedFileURL
+        let didAccessSecurityScope = reusesExistingScope ? false : url.startAccessingSecurityScopedResource()
+
+        if reusesExistingScope == false {
+            Self.stopAccessingSecurityScope(activeOutputSecurityScopedURL)
+            activeOutputSecurityScopedURL = didAccessSecurityScope ? url : nil
+        }
+
+        outputDirectoryURL = url
+    }
+
+    nonisolated private static func stopAccessingSecurityScope(_ url: URL?) {
+        url?.stopAccessingSecurityScopedResource()
+    }
+
+    private func configureArchitectureSelection(using inspection: ArchiveInspection?) {
+        architecturePopUpButton.removeAllItems()
+
+        guard let inspection else {
+            architectureRow?.isHidden = true
+            return
+        }
+
+        inspection.architectures.forEach { architecturePopUpButton.addItem(withTitle: $0) }
+        if architecturePopUpButton.numberOfItems > 0 {
+            architecturePopUpButton.selectItem(at: 0)
+        }
+        architecturePopUpButton.isEnabled = inspection.architectures.count > 1
+        architectureRow?.isHidden = false
+    }
+
+    private func selectedArchiveArchitecture() -> String? {
+        guard archiveInspection != nil, architecturePopUpButton.numberOfItems > 0 else {
+            return nil
+        }
+        return architecturePopUpButton.titleOfSelectedItem
+    }
+
+    private func refreshDetectedSummary() {
+        guard let inputURL else {
+            infoTextView.string = L10n.retagNoInputInfo + "\n\n" + L10n.retagUnsupportedPlaceholder
+            return
+        }
+
+        if let archiveInspection {
+            infoTextView.string = makeArchiveSummary(
+                url: inputURL,
+                inspection: archiveInspection,
+                selectedArchitecture: selectedArchiveArchitecture()
+            )
+            return
+        }
+
+        if let analysis {
+            infoTextView.string = makeAnalysisSummary(url: inputURL, analysis: analysis)
+            return
+        }
+
+        infoTextView.string = L10n.retagNoInputInfo + "\n\n" + L10n.retagUnsupportedPlaceholder
     }
 
     private func makeAnalysisSummary(url: URL, analysis: DocumentAnalysis) -> String {
@@ -441,6 +591,28 @@ private final class RetagViewController: NSViewController {
             lines.append("  Install Name: \(slice.installName ?? "(none)")")
         }
 
+        lines.append("")
+        lines.append(L10n.retagUnsupportedPlaceholder)
+        return lines.joined(separator: "\n")
+    }
+
+    private func makeArchiveSummary(
+        url: URL,
+        inspection: ArchiveInspection,
+        selectedArchitecture: String?
+    ) -> String {
+        var lines = [
+            "File: \(url.path)",
+            "Container: \(inspection.kind == .fatArchive ? "Fat Static Archive" : "Static Archive")",
+            "Architectures: \(inspection.architectures.joined(separator: ", "))",
+        ]
+
+        if let selectedArchitecture {
+            lines.append("Selected Architecture: \(selectedArchitecture)")
+        }
+
+        lines.append("")
+        lines.append("Retag rewrites object members inside the selected static-archive architecture only.")
         lines.append("")
         lines.append(L10n.retagUnsupportedPlaceholder)
         return lines.joined(separator: "\n")
@@ -592,7 +764,6 @@ private final class RetagDropZoneView: AdaptiveBackgroundView {
         layer?.borderWidth = 1.5
         layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.82).cgColor
 
-        iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.image = NSImage(systemSymbolName: "square.and.arrow.down.on.square.dashed", accessibilityDescription: nil)
         iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .medium)
         iconView.contentTintColor = .secondaryLabelColor
@@ -600,17 +771,18 @@ private final class RetagDropZoneView: AdaptiveBackgroundView {
         titleLabel.alignment = .center
         titleLabel.maximumNumberOfLines = 0
         titleLabel.textColor = .secondaryLabelColor
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(iconView)
         addSubview(titleLabel)
-        NSLayoutConstraint.activate([
-            iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
-            iconView.bottomAnchor.constraint(equalTo: titleLabel.topAnchor, constant: -8),
-            titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
-        ])
+        iconView.snp.makeConstraints { make in
+            make.centerX.equalToSuperview()
+            make.bottom.equalTo(titleLabel.snp.top).offset(-8)
+        }
+        titleLabel.snp.makeConstraints { make in
+            make.centerX.equalToSuperview()
+            make.centerY.equalToSuperview()
+            make.leading.greaterThanOrEqualToSuperview().inset(12)
+            make.trailing.lessThanOrEqualToSuperview().inset(12)
+        }
 
         registerForDraggedTypes([.fileURL])
         updateBorderAppearance()

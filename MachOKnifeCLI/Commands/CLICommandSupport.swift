@@ -16,6 +16,29 @@ enum CLICommandSupport {
         return arguments[index + 1]
     }
 
+    static func optionalOption(_ name: String, in arguments: [String]) -> String? {
+        guard let index = arguments.firstIndex(of: name), arguments.indices.contains(index + 1) else {
+            return nil
+        }
+        return arguments[index + 1]
+    }
+
+    static func repeatedOptions(_ name: String, in arguments: [String]) -> [String] {
+        arguments.enumerated().compactMap { index, argument in
+            guard argument == name, arguments.indices.contains(index + 1) else {
+                return nil
+            }
+            return arguments[index + 1]
+        }
+    }
+
+    static func requiredURLs(_ arguments: [String], usage: String) throws -> [URL] {
+        guard arguments.isEmpty == false else {
+            throw CLIError.invalidUsage(usage)
+        }
+        return arguments.map { URL(filePath: $0) }
+    }
+
     static func parseVersion(_ value: String, usage: String) throws -> MachOVersion {
         let parts = value.split(separator: ".").map(String.init)
         guard parts.count == 2 || parts.count == 3 else {

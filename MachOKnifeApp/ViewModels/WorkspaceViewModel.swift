@@ -74,7 +74,7 @@ final class WorkspaceViewModel {
     }
 
     var hasLoadedDocument: Bool {
-        analysis != nil
+        analysis != nil || browserDocument != nil
     }
 
     @discardableResult
@@ -88,8 +88,11 @@ final class WorkspaceViewModel {
     }
 
     func reloadPresentation() {
-        guard let analysis, let currentFileURL else { return }
-        outlineItems = makeOutlineItems(for: analysis, fileURL: currentFileURL)
+        if let analysis, let currentFileURL {
+            outlineItems = makeOutlineItems(for: analysis, fileURL: currentFileURL)
+        } else {
+            outlineItems = []
+        }
         updateDetailOutputs()
         updateBrowserPresentation()
     }
@@ -197,24 +200,31 @@ final class WorkspaceViewModel {
         let previousDraftsByIndex = editableSlicesByIndex
 
         do {
-            let analysis = try analysisService.analyze(url: url)
+            let browserDocument = try browserDocumentService.load(url: url)
+            let analysis = try? analysisService.analyze(url: url)
             currentFileURL = url
             self.analysis = analysis
-            browserDocument = try? browserDocumentService.load(url: url)
-            browserOutlineRootNodes = browserDocument?.rootNodes ?? []
+            self.browserDocument = browserDocument
+            browserOutlineRootNodes = browserDocument.rootNodes
             errorMessage = nil
-            outlineItems = makeOutlineItems(for: analysis, fileURL: url)
-            editableSlicesByIndex = makeEditableSlices(for: analysis)
+            outlineItems = analysis.map { makeOutlineItems(for: $0, fileURL: url) } ?? []
+            editableSlicesByIndex = analysis.map(makeEditableSlices) ?? [:]
             browserHexPageIndex = 0
 
-            if preservingDrafts, let previousAnalysis {
+            if preservingDrafts, let previousAnalysis, let analysis {
                 mergeDrafts(from: previousDraftsByIndex, previousAnalysis: previousAnalysis, newAnalysis: analysis)
             }
 
-            let fallbackSelection: Selection? = analysis.slices.isEmpty ? .document : .slice(0)
-            let restoredSelection = validatedSelection(preferredSelection ?? fallbackSelection, in: analysis)
+            let restoredSelection: Selection?
+            if let analysis {
+                let fallbackSelection: Selection? = analysis.slices.isEmpty ? .document : .slice(0)
+                restoredSelection = validatedSelection(preferredSelection ?? fallbackSelection, in: analysis)
+            } else {
+                restoredSelection = nil
+            }
+
             select(restoredSelection)
-            selectBrowserNode(browserDocument?.rootNodes.first)
+            selectBrowserNode(browserDocument.rootNodes.first)
             return true
         } catch {
             resetWorkspaceState(currentFileURL: url, errorMessage: error.localizedDescription)
@@ -608,7 +618,7 @@ final class WorkspaceViewModel {
             return
         }
 
-        switch browserDocument.hexSource {
+        switch effectiveHexSource(for: selectedNode, in: browserDocument) {
         case let .unavailable(reason):
             browserHexText = reason
             browserHexRows = []
@@ -628,7 +638,7 @@ final class WorkspaceViewModel {
         if browserSelectedNode?.dataRange != nil {
             return 1
         }
-        switch browserDocument.hexSource {
+        switch effectiveHexSource(for: browserSelectedNode, in: browserDocument) {
         case .unavailable:
             return 1
         case let .file(_, size):
@@ -651,7 +661,7 @@ final class WorkspaceViewModel {
             return
         }
 
-        switch browserDocument.hexSource {
+        switch effectiveHexSource(for: node, in: browserDocument) {
         case let .unavailable(reason):
             browserHexText = reason
             browserHexRows = []
@@ -746,6 +756,10 @@ final class WorkspaceViewModel {
         rows.map { row in
             "\(row.address)  \(row.lowBytes)  \(row.highBytes)  |\(row.ascii)|"
         }.joined(separator: "\n")
+    }
+
+    private func effectiveHexSource(for node: BrowserNode?, in document: BrowserDocument) -> BrowserHexSource {
+        node?.hexSource ?? document.hexSource
     }
 
     private func makeEditableSlices(for analysis: DocumentAnalysis) -> [Int: EditableSliceViewModel] {

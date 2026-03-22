@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var preferencesWindowController: PreferencesWindowController?
     private var retagWindowController: RetagWindowController?
     private var xcframeworkBuildWindowController: XCFrameworkBuildWindowController?
+    private var machoSummaryWindowController: MachOSummaryWindowController?
+    private var contaminationWindowController: BinaryContaminationWindowController?
+    private var mergeSplitWindowController: MachOMergeSplitWindowController?
     private var settingsObserver: NSObjectProtocol?
     private var recentFilesMenu = NSMenu(title: "")
 
@@ -123,12 +126,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.present(sender)
     }
 
+    @objc private func showMachOSummaryTool(_ sender: Any?) {
+        let controller = machoSummaryWindowController ?? MachOSummaryWindowController()
+        machoSummaryWindowController = controller
+        controller.present(sender)
+    }
+
+    @objc private func showContaminationTool(_ sender: Any?) {
+        let controller = contaminationWindowController ?? BinaryContaminationWindowController()
+        contaminationWindowController = controller
+        controller.present(sender)
+    }
+
+    @objc private func showMergeSplitTool(_ sender: Any?) {
+        let controller = mergeSplitWindowController ?? MachOMergeSplitWindowController()
+        mergeSplitWindowController = controller
+        controller.present(sender)
+    }
+
     @objc private func copySelectedNodeInfo(_ sender: Any?) {
         mainWindowController?.copySelectedNodeInfo()
     }
 
     @objc private func exportSelectedNodeInfo(_ sender: Any?) {
         mainWindowController?.exportSelectedNodeInfo()
+    }
+
+    @objc private func showCurrentFileInFinder(_ sender: Any?) {
+        mainWindowController?.showCurrentFileInFinder()
+    }
+
+    @objc private func copyCurrentFilePath(_ sender: Any?) {
+        mainWindowController?.copyCurrentFilePath()
     }
 
     private func buildMainMenu() {
@@ -163,6 +192,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         closeItem.target = self
         closeItem.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(closeItem)
+        let showCurrentFileItem = NSMenuItem(title: L10n.menuShowCurrentFileInFinder, action: #selector(showCurrentFileInFinder(_:)), keyEquivalent: "r")
+        showCurrentFileItem.target = self
+        showCurrentFileItem.keyEquivalentModifierMask = [.command, .shift]
+        fileMenu.addItem(showCurrentFileItem)
+        let copyFilePathItem = NSMenuItem(title: L10n.menuCopyFilePath, action: #selector(copyCurrentFilePath(_:)), keyEquivalent: "")
+        copyFilePathItem.target = self
+        fileMenu.addItem(copyFilePathItem)
         let exportNodeInfoItem = NSMenuItem(title: L10n.menuExportNodeInfo, action: #selector(exportSelectedNodeInfo(_:)), keyEquivalent: "e")
         exportNodeInfoItem.target = self
         exportNodeInfoItem.keyEquivalentModifierMask = [.command, .shift]
@@ -191,6 +227,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         xcframeworkItem.keyEquivalentModifierMask = [.command, .option]
         xcframeworkItem.target = self
         toolsMenu.addItem(xcframeworkItem)
+        let summaryItem = NSMenuItem(title: L10n.menuMachOSummary, action: #selector(showMachOSummaryTool(_:)), keyEquivalent: "i")
+        summaryItem.keyEquivalentModifierMask = [.command, .option]
+        summaryItem.target = self
+        toolsMenu.addItem(summaryItem)
+        let contaminationItem = NSMenuItem(title: L10n.menuCheckBinaryContamination, action: #selector(showContaminationTool(_:)), keyEquivalent: "k")
+        contaminationItem.keyEquivalentModifierMask = [.command, .option]
+        contaminationItem.target = self
+        toolsMenu.addItem(contaminationItem)
+        let mergeSplitItem = NSMenuItem(title: L10n.menuMergeSplitMachO, action: #selector(showMergeSplitTool(_:)), keyEquivalent: "m")
+        mergeSplitItem.keyEquivalentModifierMask = [.command, .option]
+        mergeSplitItem.target = self
+        toolsMenu.addItem(mergeSplitItem)
         toolsItem.submenu = toolsMenu
         mainMenu.addItem(toolsItem)
 
@@ -211,7 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         helpItem.title = L10n.menuHelp
         mainMenu.addItem(helpItem)
 
-        NSApp.mainMenu = mainMenu
+        replaceMainMenu(with: mainMenu)
     }
 
     private func applyAppearance() {
@@ -223,21 +271,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: AppSettings.didChangeNotification,
             object: nil,
             queue: .main
-        ) { [weak self] notification in
-            let changedSettings = notification.object as AnyObject?
-            guard let self else { return }
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
 
-            if let changedSettings, changedSettings !== self.settings {
-                return
+                self.applyAppearance()
+                self.buildMainMenu()
+                self.mainWindowController?.reloadLocalization()
+                self.preferencesWindowController?.reloadLocalization()
+                self.retagWindowController?.reloadLocalization()
+                self.xcframeworkBuildWindowController?.reloadLocalization()
+                self.machoSummaryWindowController?.reloadLocalization()
+                self.contaminationWindowController?.reloadLocalization()
+                self.mergeSplitWindowController?.reloadLocalization()
+                self.refreshRecentFilesMenu()
             }
-
-            self.applyAppearance()
-            self.buildMainMenu()
-            self.mainWindowController?.reloadLocalization()
-            self.preferencesWindowController?.reloadLocalization()
-            self.retagWindowController?.reloadLocalization()
-            self.xcframeworkBuildWindowController?.reloadLocalization()
-            self.refreshRecentFilesMenu()
         }
     }
 
@@ -265,6 +313,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             recentFilesMenu.addItem(item)
         }
     }
+
+    private func replaceMainMenu(with menu: NSMenu) {
+        if let existingMainMenu = NSApp.mainMenu {
+            detachMenuTree(existingMainMenu)
+            NSApp.mainMenu = nil
+        }
+        NSApp.mainMenu = menu
+    }
+
+    private func detachMenuTree(_ menu: NSMenu) {
+        for item in menu.items {
+            if let submenu = item.submenu {
+                detachMenuTree(submenu)
+                item.submenu = nil
+            }
+        }
+    }
 }
 
 extension AppDelegate: NSMenuItemValidation {
@@ -275,6 +340,15 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(closeDocument(_:)):
             guard
                 mainWindowController?.viewModel.hasLoadedDocument == true,
+                let mainWindow = mainWindowController?.window
+            else {
+                return false
+            }
+
+            return NSApp.keyWindow === mainWindow || NSApp.mainWindow === mainWindow
+        case #selector(showCurrentFileInFinder(_:)), #selector(copyCurrentFilePath(_:)):
+            guard
+                mainWindowController?.hasCurrentFileURL == true,
                 let mainWindow = mainWindowController?.window
             else {
                 return false

@@ -4,6 +4,7 @@ struct XCFrameworkBuildConfiguration {
     let sourceLibraryURL: URL
     let iosDeviceSourceLibraryURL: URL?
     let iosSimulatorSourceLibraryURL: URL?
+    let macCatalystSourceLibraryURL: URL?
     let headersDirectoryURL: URL
     let outputDirectoryURL: URL
     let outputLibraryName: String
@@ -17,9 +18,11 @@ struct XCFrameworkBuildConfiguration {
 final class XCFrameworkBuildService {
     private var process: Process?
     private let fileManager: FileManager
+    private let toolLocator: XCFrameworkDeveloperToolLocator
 
-    init(fileManager: FileManager = .default) {
+    init(fileManager: FileManager = .default, toolLocator: XCFrameworkDeveloperToolLocator = .init()) {
         self.fileManager = fileManager
+        self.toolLocator = toolLocator
     }
 
     func cancel() {
@@ -41,6 +44,7 @@ final class XCFrameworkBuildService {
 
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         process.arguments = makeArguments(scriptURL: scriptURL, configuration: configuration)
+        process.environment = try makeEnvironment()
         process.standardOutput = stdout
         process.standardError = stderr
 
@@ -113,6 +117,9 @@ final class XCFrameworkBuildService {
         if let iosSimulatorSourceLibraryURL = configuration.iosSimulatorSourceLibraryURL {
             arguments += ["--ios-simulator-source-library", iosSimulatorSourceLibraryURL.path]
         }
+        if let macCatalystSourceLibraryURL = configuration.macCatalystSourceLibraryURL {
+            arguments += ["--maccatalyst-source-library", macCatalystSourceLibraryURL.path]
+        }
         arguments += ["--headers-dir", configuration.headersDirectoryURL.path]
         arguments += ["--output-dir", configuration.outputDirectoryURL.path]
         arguments += ["--output-library-name", configuration.outputLibraryName]
@@ -128,6 +135,18 @@ final class XCFrameworkBuildService {
         return arguments
     }
 
+    private func makeEnvironment() throws -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        environment["MACHOKNIFE_LIPO"] = try toolLocator.path(named: "lipo")
+        environment["MACHOKNIFE_LIBTOOL"] = try toolLocator.path(named: "libtool")
+        environment["MACHOKNIFE_AR"] = try toolLocator.path(named: "ar")
+        environment["MACHOKNIFE_XCODEBUILD"] = try toolLocator.path(named: "xcodebuild")
+        if let developerDirectory = try? toolLocator.selectedDeveloperDirectory() {
+            environment["DEVELOPER_DIR"] = developerDirectory.path
+        }
+        return environment
+    }
+
     private func writeScript() throws -> URL {
         let directory = fileManager.temporaryDirectory.appendingPathComponent("machoknife-xcframework-builder", isDirectory: true)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -141,6 +160,7 @@ final class XCFrameworkBuildService {
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import struct
 import subprocess
@@ -159,6 +179,10 @@ LINKEDIT_DATA_COMMANDS = {0x1D, 0x1E, 0x26, 0x29, 0x2B, 0x2E, 0x34, 0x35}
 PLATFORM_IOSSIMULATOR = 7
 PLATFORM_MACCATALYST = 6
 TOOL_LD = 3
+LIPO = os.environ.get("MACHOKNIFE_LIPO", "lipo")
+LIBTOOL = os.environ.get("MACHOKNIFE_LIBTOOL", "libtool")
+AR = os.environ.get("MACHOKNIFE_AR", "ar")
+XCODEBUILD = os.environ.get("MACHOKNIFE_XCODEBUILD", "xcodebuild")
 
 def run(cmd: list[str], *, cwd: Path | None = None) -> None:
     subprocess.run(cmd, cwd=cwd, check=True)
@@ -167,7 +191,7 @@ def capture(cmd: list[str], *, cwd: Path | None = None) -> str:
     return subprocess.check_output(cmd, cwd=cwd, text=True)
 
 def list_arches(library: Path) -> list[str]:
-    return capture(["lipo", "-archs", str(library)]).strip().split()
+    return capture([LIPO, "-archs", str(library)]).strip().split()
 
 def encode_version(version: str) -> int:
     parts = [int(part) for part in version.split(".")]
@@ -268,7 +292,7 @@ def thin_archive(source_library: Path, arch: str, output_library: Path) -> None:
     if len(arches) == 1 and arches[0] == arch:
         shutil.copy2(source_library, output_library)
         return
-    run(["lipo", str(source_library), "-thin", arch, "-output", str(output_library)])
+    run([LIPO, str(source_library), "-thin", arch, "-output", str(output_library)])
 
 def combine_libraries(input_libraries: list[Path], output_library: Path) -> bool:
     if not input_libraries:
@@ -279,7 +303,7 @@ def combine_libraries(input_libraries: list[Path], output_library: Path) -> bool
     if len(input_libraries) == 1:
         shutil.copy2(input_libraries[0], output_library)
     else:
-        run(["lipo", "-create", *[str(path) for path in input_libraries], "-output", str(output_library)])
+        run([LIPO, "-create", *[str(path) for path in input_libraries], "-output", str(output_library)])
     return True
 
 def build_library_from_arches(source_library: Path, arches: list[str], output_library: Path) -> bool:
@@ -304,8 +328,8 @@ def build_patched_archive(source_library: Path, arch: str, output_library: Path,
         extracted_dir.mkdir()
         patched_dir.mkdir()
         thin_archive(source_library, arch, thin_library)
-        run(["ar", "-x", str(thin_library)], cwd=extracted_dir)
-        members = [member for member in capture(["ar", "-t", str(thin_library)]).splitlines() if member and not member.startswith("__.SYMDEF")]
+        run([AR, "-x", str(thin_library)], cwd=extracted_dir)
+        members = [member for member in capture([AR, "-t", str(thin_library)]).splitlines() if member and not member.startswith("__.SYMDEF")]
         patched_members: list[str] = []
         for member_name in members:
             source_member = extracted_dir / member_name
@@ -317,7 +341,7 @@ def build_patched_archive(source_library: Path, arch: str, output_library: Path,
             patched_members.append(member_name)
         if output_library.exists():
             output_library.unlink()
-        run(["libtool", "-static", "-o", str(output_library), *patched_members], cwd=patched_dir)
+        run([LIBTOOL, "-static", "-o", str(output_library), *patched_members], cwd=patched_dir)
 
 def prepare_headers(source_headers_dir: Path, output_headers_dir: Path, *, umbrella_header_name: str | None, module_name: str | None) -> None:
     if output_headers_dir.exists():
@@ -356,6 +380,7 @@ def detect_arches(source_library: Path, preferred_arches: list[str]) -> list[str
 def build_xcframework(args: argparse.Namespace) -> Path:
     ios_device_source_library = Path(args.ios_device_source_library or args.source_library).resolve()
     ios_simulator_source_library = Path(args.ios_simulator_source_library or args.source_library).resolve()
+    maccatalyst_source_library = Path(args.maccatalyst_source_library).resolve() if args.maccatalyst_source_library else None
     headers_dir = args.headers_dir.resolve()
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -391,23 +416,31 @@ def build_xcframework(args: argparse.Namespace) -> Path:
         ios_simulator_library = artifacts_dir / f"ios-{'_'.join(ordered_arches)}-simulator" / args.output_library_name
         combine_libraries([path for arch in ordered_arches for output_arch, path in ios_simulator_outputs if output_arch == arch], ios_simulator_library)
 
-    catalyst_outputs: list[Path] = []
-    for arch in catalyst_device_arches:
-        output_path = artifacts_dir / f"ios-{arch}-maccatalyst" / f"{arch}-{args.output_library_name}"
-        build_patched_archive(ios_device_source_library, arch, output_path, target_platform=PLATFORM_MACCATALYST, min_version=args.maccatalyst_min_version, sdk_version=args.maccatalyst_sdk_version)
-        catalyst_outputs.append(output_path)
-    for arch in catalyst_simulator_arches:
-        output_path = artifacts_dir / f"ios-{arch}-simulator-maccatalyst" / f"{arch}-{args.output_library_name}"
-        build_patched_archive(ios_simulator_source_library, arch, output_path, target_platform=PLATFORM_MACCATALYST, min_version=args.maccatalyst_min_version, sdk_version=args.maccatalyst_sdk_version)
-        catalyst_outputs.append(output_path)
+    catalyst_library = None
+    if maccatalyst_source_library:
+        catalyst_arches = detect_arches(maccatalyst_source_library, ["arm64", "arm64e", "x86_64"])
+        if catalyst_arches:
+            catalyst_library = artifacts_dir / f"ios-{'_'.join(catalyst_arches)}-maccatalyst" / args.output_library_name
+            build_library_from_arches(maccatalyst_source_library, catalyst_arches, catalyst_library)
+    else:
+        catalyst_outputs: list[Path] = []
+        for arch in catalyst_device_arches:
+            output_path = artifacts_dir / f"ios-{arch}-maccatalyst" / f"{arch}-{args.output_library_name}"
+            build_patched_archive(ios_device_source_library, arch, output_path, target_platform=PLATFORM_MACCATALYST, min_version=args.maccatalyst_min_version, sdk_version=args.maccatalyst_sdk_version)
+            catalyst_outputs.append(output_path)
+        for arch in catalyst_simulator_arches:
+            output_path = artifacts_dir / f"ios-{arch}-simulator-maccatalyst" / f"{arch}-{args.output_library_name}"
+            build_patched_archive(ios_simulator_source_library, arch, output_path, target_platform=PLATFORM_MACCATALYST, min_version=args.maccatalyst_min_version, sdk_version=args.maccatalyst_sdk_version)
+            catalyst_outputs.append(output_path)
 
-    catalyst_library = artifacts_dir / "ios-arm64_x86_64-maccatalyst" / args.output_library_name
-    combine_libraries(catalyst_outputs, catalyst_library)
+        if catalyst_outputs:
+            catalyst_library = artifacts_dir / "ios-arm64_x86_64-maccatalyst" / args.output_library_name
+            combine_libraries(catalyst_outputs, catalyst_library)
     prepare_headers(headers_dir, prepared_headers_dir, umbrella_header_name=args.umbrella_header, module_name=args.module_name)
 
     if xcframework_dir.exists():
         shutil.rmtree(xcframework_dir)
-    command = ["xcodebuild", "-create-xcframework"]
+    command = [XCODEBUILD, "-create-xcframework"]
     if ios_device_library.exists():
         command.extend(["-library", str(ios_device_library), "-headers", str(prepared_headers_dir)])
     if ios_simulator_library and ios_simulator_library.exists():
@@ -423,6 +456,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-library", type=Path, required=True)
     parser.add_argument("--ios-device-source-library", type=Path, default=None)
     parser.add_argument("--ios-simulator-source-library", type=Path, default=None)
+    parser.add_argument("--maccatalyst-source-library", type=Path, default=None)
     parser.add_argument("--headers-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--output-library-name", default="libSDK.a")
@@ -441,6 +475,9 @@ def main() -> int:
     if not args.headers_dir.exists():
         print(f"headers dir not found: {args.headers_dir}", file=sys.stderr)
         return 1
+    if args.maccatalyst_source_library and not Path(args.maccatalyst_source_library).exists():
+        print(f"mac catalyst source library not found: {args.maccatalyst_source_library}", file=sys.stderr)
+        return 1
     xcframework_dir = build_xcframework(args)
     print(xcframework_dir)
     return 0
@@ -452,18 +489,99 @@ if __name__ == "__main__":
 
 private final class OutputCollector: @unchecked Sendable {
     private let lock = NSLock()
-    private var storage = ""
+    nonisolated(unsafe) private var storage = ""
 
-    func append(_ text: String) {
+    nonisolated func append(_ text: String) {
         lock.lock()
         storage += text
         lock.unlock()
     }
 
-    var value: String {
+    nonisolated var value: String {
         lock.lock()
         let value = storage
         lock.unlock()
         return value
+    }
+}
+
+struct XCFrameworkDeveloperToolLocator {
+    func path(named tool: String) throws -> String {
+        let candidates = candidatePaths(for: tool)
+        if let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            return path
+        }
+        throw NSError(
+            domain: "MachOKnife.XCFrameworkBuild",
+            code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "Unable to locate developer tool: \(tool)"]
+        )
+    }
+
+    func selectedDeveloperDirectory() throws -> URL {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+        process.arguments = ["-p"]
+
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = Pipe()
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            throw NSError(
+                domain: "MachOKnife.XCFrameworkBuild",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Unable to determine active developer directory."]
+            )
+        }
+
+        let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard output.isEmpty == false else {
+            throw NSError(
+                domain: "MachOKnife.XCFrameworkBuild",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "Unable to determine active developer directory."]
+            )
+        }
+        return URL(fileURLWithPath: output, isDirectory: true)
+    }
+
+    private func candidatePaths(for tool: String) -> [String] {
+        let developerRoots = preferredDeveloperRoots()
+        let toolchainRelativePath = "Toolchains/XcodeDefault.xctoolchain/usr/bin/\(tool)"
+        let developerRelativePath = "usr/bin/\(tool)"
+
+        return developerRoots.flatMap { root in
+            [
+                root.appendingPathComponent(toolchainRelativePath).path,
+                root.appendingPathComponent(developerRelativePath).path,
+            ]
+        } + ["/usr/bin/\(tool)", "/bin/\(tool)"]
+    }
+
+    private func preferredDeveloperRoots() -> [URL] {
+        var roots = [URL]()
+        if
+            let developerDir = ProcessInfo.processInfo.environment["DEVELOPER_DIR"],
+            developerDir.isEmpty == false
+        {
+            roots.append(URL(fileURLWithPath: developerDir, isDirectory: true))
+        }
+        if let selected = try? selectedDeveloperDirectory() {
+            roots.append(selected)
+        }
+        roots.append(URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer", isDirectory: true))
+        roots.append(URL(fileURLWithPath: "/Applications/XCode.app/Contents/Developer", isDirectory: true))
+
+        return roots.reduce(into: [URL]()) { result, root in
+            guard FileManager.default.fileExists(atPath: root.path) else { return }
+            if result.contains(root) == false {
+                result.append(root)
+            }
+        }
     }
 }
