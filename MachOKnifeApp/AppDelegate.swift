@@ -1,5 +1,7 @@
 import AppKit
+#if canImport(ViewScopeServer)
 import ViewScopeServer
+#endif
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {

@@ -10,7 +10,7 @@ target 'MachOKnife' do
   use_frameworks! :linkage => :static
 
   # pod 'ViewScopeServer', :path => '/Users/VanJay/Documents/Work/Private/ViewScope'
-  pod 'ViewScopeServer', :podspec => 'ThirdParty/ViewScopeServer.podspec.json', :configurations => ['Debug']
+  pod 'ViewScopeServer', :git => 'https://github.com/wangwanjie/ViewScope.git', :branch => 'main', :configurations => ['Debug']
 
   target 'MachOKnifeTests' do
     inherit! :search_paths
