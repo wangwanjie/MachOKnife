@@ -386,7 +386,7 @@ mkdir -p "$DMG_OUTPUT_DIR"
 
 echo "building $APP_NAME $VERSION"
 xcodebuild \
-    -project "$APP_PROJECT" \
+    "${XCODE_APP_CONTAINER_ARGS[@]}" \
     -scheme "$SCHEME" \
     -configuration "$CONFIGURATION" \
     -derivedDataPath "$DERIVED_DATA" \

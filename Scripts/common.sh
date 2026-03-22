@@ -5,11 +5,18 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_NAME="MachOKnife"
 SCHEME="MachOKnife"
 APP_PROJECT="$PROJECT_DIR/MachOKnife.xcodeproj"
+APP_WORKSPACE="$PROJECT_DIR/MachOKnife.xcworkspace"
 PBXPROJ="$APP_PROJECT/project.pbxproj"
 SPARKLE_DERIVED_DATA="$PROJECT_DIR/build/SparkleTools"
 DEFAULT_REPO="VanJay/MachOKnife"
 DEFAULT_SPARKLE_ACCOUNT="cn.vanjay.MachOKnife.sparkle"
 DEFAULT_NOTARY_PROFILE="vanjay_mac_stapler"
+
+if [[ -d "$APP_WORKSPACE" ]]; then
+    XCODE_APP_CONTAINER_ARGS=(-workspace "$APP_WORKSPACE")
+else
+    XCODE_APP_CONTAINER_ARGS=(-project "$APP_PROJECT")
+fi
 
 require_command() {
     local command_name="$1"
@@ -97,7 +104,7 @@ detect_repo() {
 
 resolve_package_dependencies() {
     require_command xcodebuild
-    xcodebuild -resolvePackageDependencies -project "$APP_PROJECT" >/dev/null
+    xcodebuild "${XCODE_APP_CONTAINER_ARGS[@]}" -resolvePackageDependencies >/dev/null
 }
 
 find_sparkle_checkout_dir() {

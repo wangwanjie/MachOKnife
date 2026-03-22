@@ -1,0 +1,16 @@
+PODS:
+  - ViewScopeServer (1.2.1)
+
+DEPENDENCIES:
+  - ViewScopeServer (from `https://raw.githubusercontent.com/wangwanjie/ViewScope/v1.2.1/ViewScopeServer/ViewScopeServer.podspec`)
+
+EXTERNAL SOURCES:
+  ViewScopeServer:
+    :podspec: https://raw.githubusercontent.com/wangwanjie/ViewScope/v1.2.1/ViewScopeServer/ViewScopeServer.podspec
+
+SPEC CHECKSUMS:
+  ViewScopeServer: 540f4c7be4ac808c3ba5d990d4c24a7fea97bda1
+
+PODFILE CHECKSUM: c8abd109b8e8f04aeeb7bde1232f7f082cd54346
+
+COCOAPODS: 1.16.2
