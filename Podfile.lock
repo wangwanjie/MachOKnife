@@ -2,21 +2,15 @@ PODS:
   - ViewScopeServer (1.2.1)
 
 DEPENDENCIES:
-  - ViewScopeServer (from `https://github.com/wangwanjie/ViewScope.git`, branch `main`)
+  - ViewScopeServer (from `ThirdParty/ViewScopeServer.podspec.json`)
 
 EXTERNAL SOURCES:
   ViewScopeServer:
-    :branch: main
-    :git: https://github.com/wangwanjie/ViewScope.git
-
-CHECKOUT OPTIONS:
-  ViewScopeServer:
-    :commit: 4982af30fbb7b1ca78d9bfccd77c60046a8d742e
-    :git: https://github.com/wangwanjie/ViewScope.git
+    :podspec: ThirdParty/ViewScopeServer.podspec.json
 
 SPEC CHECKSUMS:
   ViewScopeServer: 007a370de0021642dd7d4b6b598c73e85a3a6cc1
 
-PODFILE CHECKSUM: e427953c85f61d00bb69e7feb6915fed8573cc02
+PODFILE CHECKSUM: e6804e1aca6b34124e0291fd36c94429155300fc
 
 COCOAPODS: 1.16.2

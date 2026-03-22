@@ -1,0 +1,37 @@
+{
+  "name": "ViewScopeServer",
+  "version": "1.2.1",
+  "summary": "AppKit UI inspection bridge for the ViewScope macOS client.",
+  "description": "Embed ViewScopeServer into a debug build to inspect native macOS windows and views from ViewScope.",
+  "homepage": "https://github.com/wangwanjie/ViewScope",
+  "license": {
+    "type": "MIT",
+    "file": "LICENSE"
+  },
+  "authors": {
+    "VanJay": "vanjay.dev@gmail.com"
+  },
+  "source": {
+    "git": "https://github.com/wangwanjie/ViewScope.git",
+    "tag": "v1.2.1"
+  },
+  "platforms": {
+    "osx": "11.0"
+  },
+  "swift_versions": "6.0",
+  "requires_arc": true,
+  "source_files": [
+    "ViewScopeServer/Sources/ViewScopeServer/**/*.swift",
+    "ViewScopeServer/Sources/ViewScopeServerBootstrap/*.{h,m}"
+  ],
+  "public_header_files": "ViewScopeServer/Sources/ViewScopeServerBootstrap/*.h",
+  "user_target_xcconfig": {
+    "OTHER_LDFLAGS": "$(inherited) -Wl,-u,_ViewScopeServerBootstrapAnchor"
+  },
+  "frameworks": [
+    "AppKit",
+    "Foundation",
+    "Network"
+  ],
+  "swift_version": "6.0"
+}

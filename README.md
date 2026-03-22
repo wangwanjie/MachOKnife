@@ -8,8 +8,8 @@ MachOKnife is a native macOS Mach-O browser and utility suite with an AppKit GUI
 - searchable workspace with RAW/RVA address modes, `Detail` and `Data` panes, and node-level copy/export actions
 - inspection support for thin and fat Mach-O binaries, load commands, sections, symbols, string tables, Objective-C metadata, and related grouped summaries
 - localized Preferences for General, CLI, Appearance, and Updates, including immediate language refresh and adaptive window sizing
-- Tools menu windows for `Retag` and `Build XCFramework`
-- `machoe-cli` commands for inspection, validation, install-name editing, rpath rewriting, retagging, and dyld-cache-style dylib repair
+- Tools menu windows for `Retag`, `Build XCFramework`, `Mach-O Summary`, `Check Binary Contamination`, and `Merge / Split Mach-O`
+- `machoe-cli` commands for inspection, summary, contamination checks, merge/split, install-name editing, rpath rewriting, retagging, XCFramework packaging, and dyld-cache-style dylib repair
 - GRDB-backed recent files with security-scoped bookmark restoration after relaunch
 - Sparkle update runtime plus scripted DMG, GitHub Release, and appcast generation
 
@@ -37,11 +37,11 @@ MachOKnife is a native macOS Mach-O browser and utility suite with an AppKit GUI
 
 ## Build And Run
 
-Open `MachOKnife.xcodeproj` in Xcode and run the `MachOKnife` scheme, or build from Terminal:
+Open `MachOKnife.xcworkspace` in Xcode and run the `MachOKnife` scheme, or build from Terminal:
 
 ```bash
 xcodebuild build \
-  -project MachOKnife.xcodeproj \
+  -workspace MachOKnife.xcworkspace \
   -scheme MachOKnife \
   -destination 'platform=macOS,arch=x86_64'
 ```
@@ -74,7 +74,10 @@ xcodebuild build \
 ### Tools
 
 - `Retag…`: open a dedicated window for platform metadata retagging with drag and drop, target selection, output configuration, progress, and cancellation
-- `Build XCFramework…`: open a dedicated window for packaging supported inputs into an XCFramework
+- `Build XCFramework…`: package iOS device/simulator/static-library inputs into an XCFramework, with optional automatic Mac Catalyst retagging
+- `Mach-O Summary…`: generate a summary report for Mach-O files and archives
+- `Check Binary Contamination…`: inspect binaries or archives for platform / architecture contamination
+- `Merge / Split Mach-O…`: merge multiple slices into one output or split fat inputs by architecture
 
 ## CLI Usage
 
@@ -82,11 +85,16 @@ Build the `machoe-cli` target from Xcode or through the `MachOKnife` scheme, the
 
 ```bash
 machoe-cli info /path/to/binary
+machoe-cli summary /path/to/binary
 machoe-cli list-dylibs /path/to/binary
+machoe-cli check-contamination /path/to/binary --mode architecture --target arm64
+machoe-cli merge /path/to/arm64.a /path/to/x86_64.a --output /tmp/Merged.a
+machoe-cli split /path/to/FatBinary --output-dir /tmp/SplitOutputs
 machoe-cli validate /path/to/binary
 machoe-cli set-id /path/to/libExample.dylib --install-name @rpath/libExample.dylib --output /tmp/libExample.dylib
 machoe-cli rewrite-rpath /path/to/libExample.dylib --from /old/path --to @loader_path/Frameworks --output /tmp/libExample.dylib
 machoe-cli retag-platform /path/to/libExample.dylib --platform macos --min 13.0 --sdk 14.0 --output /tmp/libExample.dylib
+machoe-cli build-xcframework --source-library /path/to/libSDK.a --ios-simulator-source-library /path/to/libSDK-sim.a --headers-dir /path/to/Headers --output /tmp/SDK.xcframework
 machoe-cli fix-dyld-cache-dylib /path/to/libCacheStyle.dylib --output /tmp/libCacheStyle.fixed.dylib
 ```
 
@@ -108,8 +116,8 @@ Build, notarize, publish, and refresh the feed with the included scripts:
 
 ```bash
 bash Scripts/build_dmg.sh
-bash Scripts/generate_appcast.sh --archive build/dmg/MachOKnife_V_1.1.dmg
-bash Scripts/publish_github_release.sh --dmg build/dmg/MachOKnife_V_1.1.dmg
+bash Scripts/generate_appcast.sh --archive build/dmg/MachOKnife_V_1.3.0.dmg
+bash Scripts/publish_github_release.sh --dmg build/dmg/MachOKnife_V_1.3.0.dmg
 ```
 
 - `build_dmg.sh` builds the app, re-signs it for distribution, creates the DMG, and can notarize it
@@ -118,21 +126,23 @@ bash Scripts/publish_github_release.sh --dmg build/dmg/MachOKnife_V_1.1.dmg
 
 ## Verification
 
-Run the full project test suite:
+Build the app and CLI from the workspace:
 
 ```bash
-xcodebuild test \
-  -project MachOKnife.xcodeproj \
+xcodebuild build \
+  -workspace MachOKnife.xcworkspace \
   -scheme MachOKnife \
+  -destination 'platform=macOS,arch=x86_64'
+
+xcodebuild build \
+  -workspace MachOKnife.xcworkspace \
+  -scheme machoe-cli \
   -destination 'platform=macOS,arch=x86_64'
 ```
 
-Generate README screenshots through the snapshot test:
+Run package tests for the shared parsing and tooling layers:
 
 ```bash
-xcodebuild test \
-  -project MachOKnife.xcodeproj \
-  -scheme MachOKnife \
-  -destination 'platform=macOS,arch=x86_64' \
-  -only-testing:MachOKnifeTests/ReadmeAssetsTests
+swift test --package-path Packages/CoreMachO
+swift test --package-path Packages/MachOKnifeKit
 ```

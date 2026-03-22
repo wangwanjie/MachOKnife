@@ -3,8 +3,9 @@ Pods/
 build/
 default.profraw
 
-MachOKnife.xcodeproj/project.xcworkspace/xcuserdata/
-MachOKnife.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
 
 Packages/*/.build/
 Packages/*/.swiftpm/
