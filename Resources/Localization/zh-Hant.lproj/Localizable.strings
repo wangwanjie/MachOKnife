@@ -10,7 +10,7 @@
 "menu.openRecent.empty" = "沒有最近檔案";
 "menu.analyze" = "分析";
 "menu.tools" = "工具";
-"menu.retag" = "Retag…";
+"menu.retag" = "MachO Retag...";
 "menu.buildXCFramework" = "建構 XCFramework…";
 "menu.machoSummary" = "查看 Mach-O 摘要資訊…";
 "menu.checkBinaryContamination" = "檢查二進位產物污染…";
@@ -262,13 +262,15 @@
 "xcframework.chooseDirectory" = "選擇目錄…";
 "xcframework.start" = "開始建構";
 "xcframework.cancel" = "取消";
-"xcframework.status.idle" = "請選擇來源靜態庫、Headers 目錄與輸出目錄後開始。";
+"xcframework.help.title" = "使用說明";
+"xcframework.help.text" = "Source Library 是兜底輸入。如果 iOS Device Library 或 iOS Simulator Library 留空，就會回退使用這個檔案。若你已分別提供 iOS Device 與 iOS Simulator 的靜態庫，Source Library 可以留空。若 Mac Catalyst Library 留空，MachOKnife 會嘗試基於 iOS 輸入自動 retag 支援的 arm64 與 x86_64 slice，並一併打包進 XCFramework。";
+"xcframework.status.idle" = "請選擇 Headers 目錄與輸出目錄，然後提供 Source Library、iOS Device Library 或 iOS Simulator Library 後開始。";
 "xcframework.status.running" = "正在建構 XCFramework…";
 "xcframework.status.cancelled" = "XCFramework 建構已取消。";
 "xcframework.status.completedPath" = "XCFramework 建構完成：%@";
 "xcframework.error.title" = "XCFramework 建構失敗";
 "xcframework.noSelection" = "未選擇。";
-"xcframework.useSourceLibrary" = "預設使用來源靜態庫。";
+"xcframework.useSourceLibrary" = "可選。留空時回退使用 Source Library。";
 "summary.window.title" = "Mach-O 摘要資訊";
 "summary.input.label" = "輸入二進位";
 "summary.input.choose" = "選擇檔案";

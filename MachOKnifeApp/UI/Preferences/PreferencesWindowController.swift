@@ -309,25 +309,21 @@ private final class GeneralPreferencesViewController: NSViewController, Preferen
     private func buildUI() {
         languagePopUpButton.target = self
         languagePopUpButton.action = #selector(languageChanged(_:))
-        languagePopUpButton.translatesAutoresizingMaskIntoConstraints = false
 
         recentFilesField.alignment = .right
         recentFilesField.target = self
         recentFilesField.action = #selector(recentFilesFieldChanged(_:))
-        recentFilesField.translatesAutoresizingMaskIntoConstraints = false
 
         recentFilesStepper.minValue = 1
         recentFilesStepper.maxValue = 500
         recentFilesStepper.increment = 1
         recentFilesStepper.target = self
         recentFilesStepper.action = #selector(recentFilesStepperChanged(_:))
-        recentFilesStepper.translatesAutoresizingMaskIntoConstraints = false
 
         let recentFilesControls = NSStackView(views: [recentFilesField, recentFilesStepper])
         recentFilesControls.orientation = .horizontal
         recentFilesControls.alignment = .centerY
         recentFilesControls.spacing = 8
-        recentFilesControls.translatesAutoresizingMaskIntoConstraints = false
 
         let languageRow = makeRow(label: languageLabel, control: languagePopUpButton)
         let recentFilesRow = makeRow(label: recentFilesLabel, control: recentFilesControls)
@@ -336,7 +332,6 @@ private final class GeneralPreferencesViewController: NSViewController, Preferen
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 18
-        stack.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(stack)
 
@@ -407,7 +402,6 @@ private final class AppearancePreferencesViewController: NSViewController, Prefe
     private func buildUI() {
         themePopUpButton.target = self
         themePopUpButton.action = #selector(themeChanged(_:))
-        themePopUpButton.translatesAutoresizingMaskIntoConstraints = false
 
         let row = makeRow(label: themeLabel, control: themePopUpButton)
         view.addSubview(row)
@@ -465,7 +459,6 @@ private final class AdvancedPreferencesViewController: NSViewController, Prefere
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
-        stack.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(stack)
 
         titleLabel.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
@@ -490,7 +483,6 @@ private final class AdvancedPreferencesViewController: NSViewController, Prefere
 func makeSectionLabel(_ text: String) -> NSTextField {
     let label = NSTextField(labelWithString: text)
     label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
-    label.translatesAutoresizingMaskIntoConstraints = false
     return label
 }
 
@@ -499,7 +491,19 @@ func makeHintLabel(_ text: String) -> NSTextField {
     let label = NSTextField(wrappingLabelWithString: text)
     label.font = NSFont.systemFont(ofSize: 12)
     label.textColor = .secondaryLabelColor
-    label.translatesAutoresizingMaskIntoConstraints = false
+    return label
+}
+
+@MainActor
+func makeCopyablePathLabel(_ text: String = "", wraps: Bool = false) -> NSTextField {
+    let label = CopyableTextField(string: text, wraps: wraps)
+    label.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    label.textColor = .secondaryLabelColor
+    if wraps {
+        label.maximumNumberOfLines = 0
+    } else {
+        label.lineBreakMode = .byTruncatingMiddle
+    }
     return label
 }
 
@@ -509,8 +513,50 @@ func makeRow(label: NSTextField, control: NSView) -> NSStackView {
     row.orientation = .horizontal
     row.alignment = .centerY
     row.spacing = 16
-    row.translatesAutoresizingMaskIntoConstraints = false
     return row
+}
+
+@MainActor
+final class CopyableTextField: NSTextField {
+    init(string: String = "", wraps: Bool) {
+        super.init(frame: .zero)
+        stringValue = string
+        isEditable = false
+        isSelectable = true
+        isBordered = false
+        drawsBackground = false
+        usesSingleLineMode = wraps == false
+        lineBreakMode = wraps ? .byWordWrapping : .byTruncatingMiddle
+        maximumNumberOfLines = wraps ? 0 : 1
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    @objc func copy(_ sender: Any?) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(selectedString() ?? stringValue, forType: .string)
+    }
+
+    override func selectAll(_ sender: Any?) {
+        selectText(sender)
+    }
+
+    private func selectedString() -> String? {
+        guard
+            let editor = currentEditor(),
+            editor.selectedRange.length > 0
+        else {
+            return nil
+        }
+        return (stringValue as NSString).substring(with: editor.selectedRange)
+    }
 }
 
 @MainActor
@@ -531,7 +577,6 @@ func makePlaceholderView(title: String?, message: String) -> NSView {
     stack.orientation = .vertical
     stack.alignment = .leading
     stack.spacing = 12
-    stack.translatesAutoresizingMaskIntoConstraints = false
     container.addSubview(stack)
 
     stack.snp.makeConstraints { make in

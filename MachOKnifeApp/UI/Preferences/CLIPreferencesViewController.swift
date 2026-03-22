@@ -146,22 +146,18 @@ final class CLIPreferencesViewController: NSViewController {
         )
 
         statusValueLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        statusValueLabel.translatesAutoresizingMaskIntoConstraints = false
 
         [directoryValueLabel, executableValueLabel].forEach { label in
             label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
             label.lineBreakMode = .byTruncatingMiddle
             label.textColor = .secondaryLabelColor
-            label.translatesAutoresizingMaskIntoConstraints = false
         }
 
         lastActionValueLabel.font = NSFont.systemFont(ofSize: 12)
         lastActionValueLabel.textColor = .secondaryLabelColor
-        lastActionValueLabel.translatesAutoresizingMaskIntoConstraints = false
 
         pathHelpLabel.font = NSFont.systemFont(ofSize: 12)
         pathHelpLabel.textColor = .secondaryLabelColor
-        pathHelpLabel.translatesAutoresizingMaskIntoConstraints = false
 
         chooseDirectoryButton.target = self
         chooseDirectoryButton.action = #selector(chooseDirectory(_:))
@@ -176,13 +172,11 @@ final class CLIPreferencesViewController: NSViewController {
         buttonsRow.orientation = .horizontal
         buttonsRow.alignment = .centerY
         buttonsRow.spacing = 8
-        buttonsRow.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView(views: [statusRow, directoryRow, executableRow, lastActionRow, buttonsRow, pathHelpLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 18
-        stack.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(stack)
 

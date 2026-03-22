@@ -246,6 +246,13 @@ enum L10n {
     static var retagOutputDefaultName: String { text("retag.output.defaultName", fallback: "Retagged") }
     static var xcframeworkWindowTitle: String { text("xcframework.window.title", fallback: "Build XCFramework") }
     static var xcframeworkSourceLibraryLabel: String { text("xcframework.sourceLibrary", fallback: "Source Library") }
+    static var xcframeworkHelpTitle: String { text("xcframework.help.title", fallback: "Build Guidance") }
+    static var xcframeworkHelpText: String {
+        text(
+            "xcframework.help.text",
+            fallback: "Source Library is a fallback input. If iOS Device Library or iOS Simulator Library is empty, this file will be used instead. When both iOS Device and iOS Simulator libraries are already provided, Source Library can be left empty. If Mac Catalyst Library is empty, MachOKnife will retag supported arm64 and x86_64 slices from the iOS inputs and package them into the XCFramework automatically."
+        )
+    }
     static var xcframeworkDeviceLibraryLabel: String { text("xcframework.deviceLibrary", fallback: "iOS Device Library") }
     static var xcframeworkSimulatorLibraryLabel: String { text("xcframework.simulatorLibrary", fallback: "iOS Simulator Library") }
     static var xcframeworkMacCatalystLibraryLabel: String { text("xcframework.maccatalystLibrary", fallback: "Mac Catalyst Library") }
@@ -302,12 +309,12 @@ enum L10n {
     static var mergeSplitSplitIdleStatus: String { text("mergeSplit.split.status.idle", fallback: "Choose a fat binary to split.") }
     static var mergeSplitCompletedStatus: String { text("mergeSplit.status.completed", fallback: "Operation completed.") }
     static var mergeSplitErrorTitle: String { text("mergeSplit.error.title", fallback: "Merge / Split Failed") }
-    static var xcframeworkIdleStatus: String { text("xcframework.status.idle", fallback: "Select a source library, headers, and output directory to begin.") }
+    static var xcframeworkIdleStatus: String { text("xcframework.status.idle", fallback: "Select headers and output directory, then provide Source Library or iOS Device Library to begin.") }
     static var xcframeworkRunningStatus: String { text("xcframework.status.running", fallback: "Building XCFramework…") }
     static var xcframeworkCancelledStatus: String { text("xcframework.status.cancelled", fallback: "XCFramework build cancelled.") }
     static var xcframeworkErrorTitle: String { text("xcframework.error.title", fallback: "XCFramework Build Failed") }
     static var xcframeworkNoSelection: String { text("xcframework.noSelection", fallback: "No selection.") }
-    static var xcframeworkUseSourceLibraryHint: String { text("xcframework.useSourceLibrary", fallback: "Use source library by default.") }
+    static var xcframeworkUseSourceLibraryHint: String { text("xcframework.useSourceLibrary", fallback: "Optional. Falls back to Source Library when empty.") }
 
     static func preferencesCLIPathHelp(directoryPath: String) -> String {
         format("preferences.cli.pathHelp.path", fallback: "Add %@ to PATH to run machoe-cli from Terminal.", directoryPath)

@@ -78,7 +78,8 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
 
     private let inputLabel = makeSectionLabel("")
     private let chooseButton = NSButton(title: "", target: nil, action: nil)
-    private let inputPathLabel = NSTextField(wrappingLabelWithString: "")
+    private let clearButton = NSButton(title: "", target: nil, action: nil)
+    private let inputPathLabel = makeCopyablePathLabel()
     private let dropView = ToolDropZoneView()
     private let modeLabel = makeSectionLabel("")
     private let modePopUpButton = NSPopUpButton()
@@ -103,6 +104,7 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
     func reloadLocalization() {
         inputLabel.stringValue = L10n.contaminationInputLabel
         chooseButton.title = L10n.summaryChooseInput
+        clearButton.title = L10n.mergeSplitMergeClear
         modeLabel.stringValue = L10n.contaminationModeLabel
         targetLabel.stringValue = L10n.contaminationTargetLabel
         analyzeButton.title = L10n.contaminationAnalyze
@@ -126,6 +128,14 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
             guard response == .OK, let url = panel.url else { return }
             self?.loadInput(url)
         }
+    }
+
+    @objc private func clearInput(_ sender: Any?) {
+        inputURL = nil
+        inputPathLabel.stringValue = L10n.xcframeworkNoSelection
+        reportTextView.string = L10n.contaminationIdleStatus
+        refreshReportLayout()
+        clearButton.isEnabled = false
     }
 
     @objc private func modeChanged(_ sender: Any?) {
@@ -175,6 +185,8 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
     private func buildUI() {
         chooseButton.target = self
         chooseButton.action = #selector(chooseInput(_:))
+        clearButton.target = self
+        clearButton.action = #selector(clearInput(_:))
         analyzeButton.target = self
         analyzeButton.action = #selector(runCheck(_:))
         modePopUpButton.target = self
@@ -183,8 +195,7 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
         targetComboBox.action = #selector(targetChanged(_:))
         targetComboBox.delegate = self
 
-        inputPathLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        inputPathLabel.textColor = .secondaryLabelColor
+        clearButton.isEnabled = false
 
         dropView.onFileURLDropped = { [weak self] url in
             self?.loadInput(url)
@@ -209,7 +220,6 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
         reportTextView.textContainerInset = NSSize(width: 0, height: 6)
 
         let scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.documentView = reportTextView
 
@@ -217,9 +227,8 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
         controls.orientation = .vertical
         controls.alignment = .leading
         controls.spacing = 12
-        controls.translatesAutoresizingMaskIntoConstraints = false
 
-        let inputRow = NSStackView(views: [inputLabel, chooseButton])
+        let inputRow = NSStackView(views: [inputLabel, NSView(), chooseButton, clearButton])
         inputRow.orientation = .horizontal
         inputRow.alignment = .centerY
         inputRow.spacing = 12
@@ -237,7 +246,6 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
         controls.addArrangedSubview(scrollView)
         view.addSubview(controls)
 
-        dropView.translatesAutoresizingMaskIntoConstraints = false
         controls.snp.makeConstraints { make in
             make.edges.equalToSuperview().inset(20)
         }
@@ -278,6 +286,7 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
     private func loadInput(_ url: URL) {
         inputURL = url
         inputPathLabel.stringValue = url.path
+        clearButton.isEnabled = true
         runCheckIfPossible(presentingErrors: false)
     }
 

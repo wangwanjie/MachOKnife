@@ -110,7 +110,7 @@ private final class MergeMachOViewController: NSViewController, NSTableViewDataS
     private let removeButton = NSButton(title: "", target: nil, action: nil)
     private let clearButton = NSButton(title: "", target: nil, action: nil)
     private let outputLabel = makeSectionLabel("")
-    private let outputField = NSTextField(wrappingLabelWithString: "")
+    private let outputField = makeCopyablePathLabel()
     private let chooseOutputButton = NSButton(title: "", target: nil, action: nil)
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
     private let startButton = NSButton(title: "", target: nil, action: nil)
@@ -237,6 +237,8 @@ private final class MergeMachOViewController: NSViewController, NSTableViewDataS
         chooseOutputButton.action = #selector(chooseOutput(_:))
         startButton.target = self
         startButton.action = #selector(startMerge(_:))
+        statusLabel.lineBreakMode = .byTruncatingMiddle
+        statusLabel.maximumNumberOfLines = 2
 
         dropView.onFileURLsDropped = { [weak self] urls in
             self?.appendInputURLs(urls)
@@ -330,13 +332,15 @@ private final class SplitMachOViewController: NSViewController {
 
     private let inputLabel = makeSectionLabel("")
     private let chooseInputButton = NSButton(title: "", target: nil, action: nil)
-    private let inputPathLabel = NSTextField(wrappingLabelWithString: "")
+    private let clearInputButton = NSButton(title: "", target: nil, action: nil)
+    private let inputPathLabel = makeCopyablePathLabel()
     private let dropView = ToolDropZoneView()
     private let architecturesLabel = makeSectionLabel("")
-    private let architecturesValueLabel = NSTextField(wrappingLabelWithString: "")
+    private let architecturesValueLabel = makeCopyablePathLabel()
     private let outputDirectoryLabel = makeSectionLabel("")
-    private let outputDirectoryField = NSTextField(wrappingLabelWithString: "")
+    private let outputDirectoryField = makeCopyablePathLabel()
     private let chooseDirectoryButton = NSButton(title: "", target: nil, action: nil)
+    private let clearOutputDirectoryButton = NSButton(title: "", target: nil, action: nil)
     private let startButton = NSButton(title: "", target: nil, action: nil)
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
 
@@ -358,9 +362,11 @@ private final class SplitMachOViewController: NSViewController {
     func reloadLocalization() {
         inputLabel.stringValue = L10n.mergeSplitSplitInputLabel
         chooseInputButton.title = L10n.mergeSplitSplitChooseInput
+        clearInputButton.title = L10n.mergeSplitMergeClear
         architecturesLabel.stringValue = L10n.mergeSplitSplitArchitecturesLabel
         outputDirectoryLabel.stringValue = L10n.mergeSplitSplitOutputDirectoryLabel
         chooseDirectoryButton.title = L10n.mergeSplitSplitChooseDirectory
+        clearOutputDirectoryButton.title = L10n.mergeSplitMergeClear
         startButton.title = L10n.mergeSplitSplitStart
         dropView.titleLabel.stringValue = L10n.mergeSplitSplitDropHint
         inputPathLabel.stringValue = inputURL?.path ?? L10n.xcframeworkNoSelection
@@ -382,6 +388,12 @@ private final class SplitMachOViewController: NSViewController {
         }
     }
 
+    @objc private func clearInput(_ sender: Any?) {
+        inputURL = nil
+        architectures = []
+        refreshState()
+    }
+
     @objc private func chooseDirectory(_ sender: Any?) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -393,6 +405,11 @@ private final class SplitMachOViewController: NSViewController {
             self?.outputDirectoryURL = url
             self?.refreshState()
         }
+    }
+
+    @objc private func clearOutputDirectory(_ sender: Any?) {
+        outputDirectoryURL = nil
+        refreshState()
     }
 
     @objc private func startSplit(_ sender: Any?) {
@@ -413,15 +430,16 @@ private final class SplitMachOViewController: NSViewController {
     private func buildUI() {
         chooseInputButton.target = self
         chooseInputButton.action = #selector(chooseInput(_:))
+        clearInputButton.target = self
+        clearInputButton.action = #selector(clearInput(_:))
         chooseDirectoryButton.target = self
         chooseDirectoryButton.action = #selector(chooseDirectory(_:))
+        clearOutputDirectoryButton.target = self
+        clearOutputDirectoryButton.action = #selector(clearOutputDirectory(_:))
         startButton.target = self
         startButton.action = #selector(startSplit(_:))
-
-        inputPathLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        inputPathLabel.textColor = .secondaryLabelColor
-        outputDirectoryField.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        outputDirectoryField.textColor = .secondaryLabelColor
+        statusLabel.lineBreakMode = .byTruncatingMiddle
+        statusLabel.maximumNumberOfLines = 2
 
         dropView.onFileURLDropped = { [weak self] url in
             self?.loadInput(url)
@@ -432,12 +450,12 @@ private final class SplitMachOViewController: NSViewController {
         controls.alignment = .leading
         controls.spacing = 12
 
-        let inputRow = NSStackView(views: [inputLabel, NSView(), chooseInputButton])
+        let inputRow = NSStackView(views: [inputLabel, NSView(), chooseInputButton, clearInputButton])
         inputRow.orientation = .horizontal
         inputRow.alignment = .centerY
         inputRow.spacing = 8
 
-        let outputRow = NSStackView(views: [outputDirectoryLabel, NSView(), chooseDirectoryButton])
+        let outputRow = NSStackView(views: [outputDirectoryLabel, NSView(), chooseDirectoryButton, clearOutputDirectoryButton])
         outputRow.orientation = .horizontal
         outputRow.alignment = .centerY
         outputRow.spacing = 8
@@ -478,6 +496,8 @@ private final class SplitMachOViewController: NSViewController {
         inputPathLabel.stringValue = inputURL?.path ?? L10n.xcframeworkNoSelection
         outputDirectoryField.stringValue = outputDirectoryURL?.path ?? L10n.xcframeworkNoSelection
         architecturesValueLabel.stringValue = architectures.isEmpty ? L10n.xcframeworkNoSelection : architectures.joined(separator: ", ")
+        clearInputButton.isEnabled = inputURL != nil
+        clearOutputDirectoryButton.isEnabled = outputDirectoryURL != nil
         startButton.isEnabled = inputURL != nil && outputDirectoryURL != nil && architectures.isEmpty == false
         if inputURL == nil {
             statusLabel.stringValue = L10n.mergeSplitSplitIdleStatus

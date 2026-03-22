@@ -81,23 +81,18 @@ final class UpdatesPreferencesViewController: NSViewController {
         )
 
         statusValueLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        statusValueLabel.translatesAutoresizingMaskIntoConstraints = false
 
         detailLabel.font = NSFont.systemFont(ofSize: 12)
         detailLabel.textColor = .secondaryLabelColor
-        detailLabel.translatesAutoresizingMaskIntoConstraints = false
 
         strategyPopUpButton.target = self
         strategyPopUpButton.action = #selector(strategyChanged(_:))
-        strategyPopUpButton.translatesAutoresizingMaskIntoConstraints = false
 
         automaticDownloadsButton.target = self
         automaticDownloadsButton.action = #selector(automaticDownloadsChanged(_:))
-        automaticDownloadsButton.translatesAutoresizingMaskIntoConstraints = false
 
         automaticDownloadsHintLabel.font = NSFont.systemFont(ofSize: 12)
         automaticDownloadsHintLabel.textColor = .secondaryLabelColor
-        automaticDownloadsHintLabel.translatesAutoresizingMaskIntoConstraints = false
 
         checkForUpdatesButton.target = self
         checkForUpdatesButton.action = #selector(checkForUpdates(_:))
@@ -113,7 +108,6 @@ final class UpdatesPreferencesViewController: NSViewController {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 18
-        stack.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(stack)
 

@@ -15,7 +15,6 @@ final class ToolDropZoneView: AdaptiveBackgroundView {
         layer?.borderWidth = 1.5
         layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.9).cgColor
 
-        iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.image = NSImage(systemSymbolName: "square.and.arrow.down.on.square.dashed", accessibilityDescription: nil)
         iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .medium)
         iconView.contentTintColor = .secondaryLabelColor
@@ -23,7 +22,6 @@ final class ToolDropZoneView: AdaptiveBackgroundView {
         titleLabel.alignment = .center
         titleLabel.maximumNumberOfLines = 0
         titleLabel.textColor = .secondaryLabelColor
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(iconView)
         addSubview(titleLabel)

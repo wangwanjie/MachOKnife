@@ -10,7 +10,7 @@
 "menu.openRecent.empty" = "No Recent Files";
 "menu.analyze" = "Analyze";
 "menu.tools" = "Tools";
-"menu.retag" = "Retag...";
+"menu.retag" = "MachO Retag...";
 "menu.buildXCFramework" = "Build XCFramework...";
 "menu.machoSummary" = "Mach-O Summary...";
 "menu.checkBinaryContamination" = "Check Binary Contamination...";
@@ -262,13 +262,15 @@
 "xcframework.chooseDirectory" = "Choose Directory…";
 "xcframework.start" = "Build XCFramework";
 "xcframework.cancel" = "Cancel";
-"xcframework.status.idle" = "Select a source library, headers, and output directory to begin.";
+"xcframework.help.title" = "Build Guidance";
+"xcframework.help.text" = "Source Library is a fallback input. If iOS Device Library or iOS Simulator Library is empty, this file will be used instead. When both iOS Device and iOS Simulator libraries are already provided, Source Library can be left empty. If Mac Catalyst Library is empty, MachOKnife will retag supported arm64 and x86_64 slices from the iOS inputs and package them into the XCFramework automatically.";
+"xcframework.status.idle" = "Select headers and an output directory, then provide Source Library, iOS Device Library, or iOS Simulator Library to begin.";
 "xcframework.status.running" = "Building XCFramework…";
 "xcframework.status.cancelled" = "XCFramework build cancelled.";
 "xcframework.status.completedPath" = "XCFramework build completed: %@";
 "xcframework.error.title" = "XCFramework Build Failed";
 "xcframework.noSelection" = "No selection.";
-"xcframework.useSourceLibrary" = "Use source library by default.";
+"xcframework.useSourceLibrary" = "Optional. Falls back to Source Library when empty.";
 "summary.window.title" = "Mach-O Summary";
 "summary.input.label" = "Input Binary";
 "summary.input.choose" = "Choose File";

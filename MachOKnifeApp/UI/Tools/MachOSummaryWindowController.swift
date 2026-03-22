@@ -76,7 +76,8 @@ private final class MachOSummaryViewController: NSViewController {
 
     private let inputLabel = makeSectionLabel("")
     private let chooseButton = NSButton(title: "", target: nil, action: nil)
-    private let pathLabel = NSTextField(wrappingLabelWithString: "")
+    private let clearButton = NSButton(title: "", target: nil, action: nil)
+    private let pathLabel = makeCopyablePathLabel()
     private let dropView = ToolDropZoneView()
     private let reportLabel = NSTextField(labelWithString: "")
     private let reportTextView = NSTextView()
@@ -97,6 +98,7 @@ private final class MachOSummaryViewController: NSViewController {
     func reloadLocalization() {
         inputLabel.stringValue = L10n.summaryInputLabel
         chooseButton.title = L10n.summaryChooseInput
+        clearButton.title = L10n.mergeSplitMergeClear
         reportLabel.stringValue = L10n.summaryReportTitle
         dropView.titleLabel.stringValue = L10n.summaryDropHint
         pathLabel.stringValue = inputURL?.path ?? L10n.xcframeworkNoSelection
@@ -120,12 +122,22 @@ private final class MachOSummaryViewController: NSViewController {
         }
     }
 
+    @objc private func clearInput(_ sender: Any?) {
+        inputURL = nil
+        report = nil
+        pathLabel.stringValue = L10n.xcframeworkNoSelection
+        reportTextView.string = L10n.summaryIdleStatus
+        refreshReportLayout()
+        clearButton.isEnabled = false
+    }
+
     private func buildUI() {
         chooseButton.target = self
         chooseButton.action = #selector(chooseInput(_:))
+        clearButton.target = self
+        clearButton.action = #selector(clearInput(_:))
 
-        pathLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        pathLabel.textColor = .secondaryLabelColor
+        clearButton.isEnabled = false
 
         dropView.onFileURLDropped = { [weak self] url in
             self?.loadInput(url)
@@ -147,7 +159,6 @@ private final class MachOSummaryViewController: NSViewController {
         reportTextView.textContainerInset = NSSize(width: 0, height: 6)
 
         let scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.documentView = reportTextView
 
@@ -155,9 +166,8 @@ private final class MachOSummaryViewController: NSViewController {
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
         contentStack.spacing = 12
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
 
-        let inputRow = NSStackView(views: [inputLabel, chooseButton])
+        let inputRow = NSStackView(views: [inputLabel, NSView(), chooseButton, clearButton])
         inputRow.orientation = .horizontal
         inputRow.alignment = .centerY
         inputRow.spacing = 12
@@ -169,7 +179,6 @@ private final class MachOSummaryViewController: NSViewController {
         contentStack.addArrangedSubview(scrollView)
         view.addSubview(contentStack)
 
-        dropView.translatesAutoresizingMaskIntoConstraints = false
         contentStack.snp.makeConstraints { make in
             make.edges.equalToSuperview().inset(20)
         }
@@ -189,6 +198,7 @@ private final class MachOSummaryViewController: NSViewController {
     private func loadInput(_ url: URL) {
         inputURL = url
         pathLabel.stringValue = url.path
+        clearButton.isEnabled = true
         analyzeCurrentInput()
     }
 

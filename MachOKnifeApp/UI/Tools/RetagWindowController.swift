@@ -17,8 +17,10 @@ final class RetagWindowController: NSWindowController {
 
     private init(viewController: RetagViewController) {
         self.retagViewController = viewController
+        let defaultSize = NSSize(width: 760, height: 640)
+        let minimumSize = NSSize(width: 680, height: 520)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 640),
+            contentRect: NSRect(origin: .zero, size: defaultSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -26,14 +28,14 @@ final class RetagWindowController: NSWindowController {
         window.title = L10n.retagWindowTitle
         window.contentViewController = viewController
         window.tabbingMode = .disallowed
-        window.minSize = NSSize(width: 680, height: 520)
 
         super.init(window: window)
 
-        if !window.setFrameUsingName(Self.autosaveName) {
-            window.center()
-        }
-        window.setFrameAutosaveName(Self.autosaveName)
+        window.restoreFrame(
+            autosaveName: Self.autosaveName,
+            defaultSize: defaultSize,
+            minSize: minimumSize
+        )
         observeSettings()
     }
 
@@ -95,7 +97,8 @@ private final class RetagViewController: NSViewController {
 
     private let inputTitleLabel = NSTextField(labelWithString: "")
     private let chooseInputButton = NSButton(title: "", target: nil, action: nil)
-    private let inputPathLabel = NSTextField(wrappingLabelWithString: "")
+    private let clearInputButton = NSButton(title: "", target: nil, action: nil)
+    private let inputPathLabel = makeCopyablePathLabel()
     private let inputDropView = RetagDropZoneView()
     private let infoTitleLabel = NSTextField(labelWithString: "")
     private let infoTextView = NSTextView()
@@ -108,8 +111,9 @@ private final class RetagViewController: NSViewController {
     private let sdkLabel = makeSectionLabel("")
     private let sdkTextField = NSTextField(string: "")
     private let outputDirectoryLabel = makeSectionLabel("")
-    private let outputDirectoryField = NSTextField(wrappingLabelWithString: "")
+    private let outputDirectoryField = makeCopyablePathLabel()
     private let chooseOutputDirectoryButton = NSButton(title: "", target: nil, action: nil)
+    private let clearOutputDirectoryButton = NSButton(title: "", target: nil, action: nil)
     private let outputNameLabel = makeSectionLabel("")
     private let outputNameField = NSTextField(string: "")
     private let progressIndicator = NSProgressIndicator()
@@ -166,6 +170,25 @@ private final class RetagViewController: NSViewController {
             self?.adoptOutputDirectoryURL(url)
             self?.refreshOutputFields()
         }
+    }
+
+    @objc private func clearInput(_ sender: Any?) {
+        Self.stopAccessingSecurityScope(activeInputSecurityScopedURL)
+        activeInputSecurityScopedURL = nil
+        inputURL = nil
+        analysis = nil
+        archiveInspection = nil
+        architecturePopUpButton.removeAllItems()
+        architectureRow?.isHidden = true
+        applyIdleState()
+    }
+
+    @objc private func clearOutputDirectory(_ sender: Any?) {
+        Self.stopAccessingSecurityScope(activeOutputSecurityScopedURL)
+        activeOutputSecurityScopedURL = nil
+        outputDirectoryURL = nil
+        refreshOutputFields()
+        setRunning(false)
     }
 
     @objc private func archiveArchitectureChanged(_ sender: Any?) {
@@ -243,27 +266,27 @@ private final class RetagViewController: NSViewController {
 
     private func buildUI() {
         inputTitleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        inputTitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         chooseInputButton.target = self
         chooseInputButton.action = #selector(chooseInputFile(_:))
-
-        inputPathLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        inputPathLabel.textColor = .secondaryLabelColor
+        clearInputButton.target = self
+        clearInputButton.action = #selector(clearInput(_:))
 
         inputDropView.onFileURLDropped = { [weak self] url in
             self?.loadInput(url)
         }
-        inputDropView.translatesAutoresizingMaskIntoConstraints = false
 
-        let inputStack = NSStackView(views: [inputTitleLabel, chooseInputButton, inputPathLabel])
+        let inputActionRow = NSStackView(views: [inputTitleLabel, NSView(), chooseInputButton, clearInputButton])
+        inputActionRow.orientation = .horizontal
+        inputActionRow.alignment = .centerY
+        inputActionRow.spacing = 8
+
+        let inputStack = NSStackView(views: [inputActionRow, inputPathLabel])
         inputStack.orientation = .vertical
         inputStack.alignment = .leading
         inputStack.spacing = 8
-        inputStack.translatesAutoresizingMaskIntoConstraints = false
 
         infoTitleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        infoTitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         infoTextView.isEditable = false
         infoTextView.isSelectable = true
@@ -271,7 +294,6 @@ private final class RetagViewController: NSViewController {
         infoTextView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
 
         let infoScrollView = NSScrollView()
-        infoScrollView.translatesAutoresizingMaskIntoConstraints = false
         infoScrollView.drawsBackground = false
         infoScrollView.hasVerticalScroller = true
         infoScrollView.documentView = infoTextView
@@ -283,6 +305,8 @@ private final class RetagViewController: NSViewController {
 
         chooseOutputDirectoryButton.target = self
         chooseOutputDirectoryButton.action = #selector(chooseOutputDirectory(_:))
+        clearOutputDirectoryButton.target = self
+        clearOutputDirectoryButton.action = #selector(clearOutputDirectory(_:))
 
         startButton.target = self
         startButton.action = #selector(startRetag(_:))
@@ -296,11 +320,11 @@ private final class RetagViewController: NSViewController {
         progressIndicator.controlSize = .regular
         progressIndicator.isIndeterminate = true
         progressIndicator.isDisplayedWhenStopped = false
-        progressIndicator.translatesAutoresizingMaskIntoConstraints = false
 
         statusLabel.font = NSFont.systemFont(ofSize: 12)
         statusLabel.textColor = .secondaryLabelColor
-        statusLabel.maximumNumberOfLines = 0
+        statusLabel.maximumNumberOfLines = 2
+        statusLabel.lineBreakMode = .byTruncatingMiddle
 
         let architectureRow = makeRow(label: architectureLabel, control: architecturePopUpButton)
         architectureRow.isHidden = true
@@ -310,7 +334,7 @@ private final class RetagViewController: NSViewController {
         let sdkRow = makeRow(label: sdkLabel, control: sdkTextField)
         let outputNameRow = makeRow(label: outputNameLabel, control: outputNameField)
 
-        let outputDirectoryControls = NSStackView(views: [outputDirectoryField, chooseOutputDirectoryButton])
+        let outputDirectoryControls = NSStackView(views: [outputDirectoryField, chooseOutputDirectoryButton, clearOutputDirectoryButton])
         outputDirectoryControls.orientation = .horizontal
         outputDirectoryControls.alignment = .centerY
         outputDirectoryControls.spacing = 8
@@ -320,13 +344,11 @@ private final class RetagViewController: NSViewController {
         buttonRow.orientation = .horizontal
         buttonRow.alignment = .centerY
         buttonRow.spacing = 8
-        buttonRow.translatesAutoresizingMaskIntoConstraints = false
 
         let statusRow = NSStackView(views: [progressIndicator, statusLabel, NSView()])
         statusRow.orientation = .horizontal
         statusRow.alignment = .centerY
         statusRow.spacing = 8
-        statusRow.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView(views: [
             inputStack,
@@ -345,7 +367,6 @@ private final class RetagViewController: NSViewController {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
-        stack.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(stack)
 
@@ -357,6 +378,11 @@ private final class RetagViewController: NSViewController {
         }
         outputDirectoryField.snp.makeConstraints { make in
             make.width.greaterThanOrEqualTo(380)
+        }
+        [chooseInputButton, clearInputButton, chooseOutputDirectoryButton, clearOutputDirectoryButton].forEach {
+            $0.snp.makeConstraints { make in
+                make.width.equalTo(96)
+            }
         }
         architecturePopUpButton.snp.makeConstraints { make in
             make.width.greaterThanOrEqualTo(220)
@@ -383,6 +409,7 @@ private final class RetagViewController: NSViewController {
         view.window?.title = L10n.retagWindowTitle
         inputTitleLabel.stringValue = L10n.retagInputTitle
         chooseInputButton.title = L10n.retagInputChoose
+        clearInputButton.title = L10n.mergeSplitMergeClear
         inputDropView.titleLabel.stringValue = L10n.retagInputDropHint
         infoTitleLabel.stringValue = L10n.retagInfoTitle
         architectureLabel.stringValue = L10n.retagArchitectureLabel
@@ -392,6 +419,7 @@ private final class RetagViewController: NSViewController {
         outputDirectoryLabel.stringValue = L10n.retagOutputDirectoryLabel
         outputNameLabel.stringValue = L10n.retagOutputNameLabel
         chooseOutputDirectoryButton.title = L10n.retagChooseDirectory
+        clearOutputDirectoryButton.title = L10n.mergeSplitMergeClear
         startButton.title = L10n.retagStart
         cancelButton.title = L10n.retagCancel
         refreshOutputFields()
@@ -424,6 +452,7 @@ private final class RetagViewController: NSViewController {
             }
 
             inputPathLabel.stringValue = url.path
+            clearInputButton.isEnabled = true
             outputNameField.stringValue = suggestedOutputName(for: url)
             configureArchitectureSelection(using: nil)
 
@@ -455,15 +484,18 @@ private final class RetagViewController: NSViewController {
         targetPopUpButton.selectItem(at: 0)
         configureArchitectureSelection(using: nil)
         inputPathLabel.stringValue = L10n.retagNoInputInfo
-        outputDirectoryField.stringValue = L10n.retagNoInputInfo
+        outputDirectoryField.stringValue = outputDirectoryURL?.path ?? L10n.retagNoInputInfo
         outputNameField.stringValue = L10n.retagOutputDefaultName
         infoTextView.string = L10n.retagNoInputInfo + "\n\n" + L10n.retagUnsupportedPlaceholder
         statusLabel.stringValue = L10n.retagIdleStatus
+        clearInputButton.isEnabled = false
+        clearOutputDirectoryButton.isEnabled = outputDirectoryURL != nil
         setRunning(false)
     }
 
     private func refreshOutputFields() {
         outputDirectoryField.stringValue = outputDirectoryURL?.path ?? L10n.retagNoInputInfo
+        clearOutputDirectoryButton.isEnabled = outputDirectoryURL != nil
         if outputNameField.stringValue.isEmpty, let inputURL {
             outputNameField.stringValue = suggestedOutputName(for: inputURL)
         }
@@ -471,7 +503,9 @@ private final class RetagViewController: NSViewController {
 
     private func setRunning(_ running: Bool) {
         chooseInputButton.isEnabled = !running
+        clearInputButton.isEnabled = !running && inputURL != nil
         chooseOutputDirectoryButton.isEnabled = !running
+        clearOutputDirectoryButton.isEnabled = !running && outputDirectoryURL != nil
         startButton.isEnabled = !running && inputURL != nil && outputDirectoryURL != nil
         cancelButton.isEnabled = running
         architecturePopUpButton.isEnabled = !running && (archiveInspection?.architectures.count ?? 0) > 1
@@ -495,6 +529,7 @@ private final class RetagViewController: NSViewController {
         }
 
         inputPathLabel.stringValue = url.path
+        clearInputButton.isEnabled = true
         outputNameField.stringValue = suggestedOutputName(for: url)
         configureArchitectureSelection(using: inspection)
         refreshDetectedSummary()

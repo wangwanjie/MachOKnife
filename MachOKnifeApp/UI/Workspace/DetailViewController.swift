@@ -161,35 +161,29 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
         emptyStack.orientation = .vertical
         emptyStack.alignment = .centerX
         emptyStack.spacing = 14
-        emptyStack.translatesAutoresizingMaskIntoConstraints = false
         emptyStack.identifier = NSUserInterfaceItemIdentifier("workspace.empty.stack")
 
         addressModeSelector.selectedSegment = 0
         addressModeSelector.target = self
         addressModeSelector.action = #selector(addressModeChanged(_:))
-        addressModeSelector.translatesAutoresizingMaskIntoConstraints = false
 
         displayModeSelector.selectedSegment = 0
         displayModeSelector.target = self
         displayModeSelector.action = #selector(displayModeChanged(_:))
-        displayModeSelector.translatesAutoresizingMaskIntoConstraints = false
 
         hexNavigationControls.orientation = .horizontal
         hexNavigationControls.alignment = .centerY
         hexNavigationControls.spacing = 8
-        hexNavigationControls.translatesAutoresizingMaskIntoConstraints = false
         hexNavigationControls.isHidden = true
 
         let topControls = NSStackView(views: [addressModeSelector, displayModeSelector, NSView(), hexNavigationControls])
         topControls.orientation = .horizontal
         topControls.alignment = .centerY
         topControls.spacing = 8
-        topControls.translatesAutoresizingMaskIntoConstraints = false
 
         configureDetailTable()
         configureDataTable()
 
-        contentContainer.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.isHidden = true
         contentContainer.addSubview(topControls)
         contentContainer.addSubview(detailContainer)
@@ -247,7 +241,6 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
             self?.prepareDetailContextMenu(forRow: row)
         }
 
-        detailTableScrollView.translatesAutoresizingMaskIntoConstraints = false
         detailTableScrollView.drawsBackground = false
         detailTableScrollView.hasVerticalScroller = true
         detailTableScrollView.documentView = detailTableView
@@ -255,9 +248,7 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
         detailEmptyLabel.textColor = .tertiaryLabelColor
         detailEmptyLabel.alignment = .center
         detailEmptyLabel.maximumNumberOfLines = 0
-        detailEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        detailContainer.translatesAutoresizingMaskIntoConstraints = false
         detailContainer.addSubview(detailTableScrollView)
         detailContainer.addSubview(detailEmptyLabel)
 
@@ -296,7 +287,6 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
             self?.prepareDataContextMenu(forRow: row)
         }
 
-        dataTableScrollView.translatesAutoresizingMaskIntoConstraints = false
         dataTableScrollView.drawsBackground = false
         dataTableScrollView.hasVerticalScroller = true
         dataTableScrollView.documentView = dataTableView
@@ -304,9 +294,7 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
         dataEmptyLabel.textColor = .tertiaryLabelColor
         dataEmptyLabel.alignment = .center
         dataEmptyLabel.maximumNumberOfLines = 0
-        dataEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        dataContainer.translatesAutoresizingMaskIntoConstraints = false
         dataContainer.addSubview(dataTableScrollView)
         dataContainer.addSubview(dataEmptyLabel)
 

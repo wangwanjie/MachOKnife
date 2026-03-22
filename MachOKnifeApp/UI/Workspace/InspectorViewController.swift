@@ -97,9 +97,7 @@ final class InspectorViewController: NSViewController {
         titleLabel.stringValue = L10n.inspectorTitle
         titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         titleLabel.textColor = .secondaryLabelColor
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        tabView.translatesAutoresizingMaskIntoConstraints = false
         tabView.tabViewType = .topTabsBezelBorder
         tabView.addTabViewItem(makeTab(label: L10n.inspectorTabOverview, view: makeOverviewTab()))
         tabView.addTabViewItem(makeTab(label: L10n.inspectorTabDylibs, view: makeDylibsTab()))

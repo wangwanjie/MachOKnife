@@ -109,19 +109,16 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
         titleLabel.stringValue = L10n.sourceListTitle
         titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         titleLabel.textColor = .secondaryLabelColor
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         documentSummaryLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         documentSummaryLabel.textColor = .tertiaryLabelColor
         documentSummaryLabel.lineBreakMode = .byTruncatingMiddle
         documentSummaryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        documentSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
 
         searchField.placeholderString = L10n.sourceListSearchPlaceholder
         searchField.sendsSearchStringImmediately = true
         searchField.target = self
         searchField.action = #selector(searchDidChange(_:))
-        searchField.translatesAutoresizingMaskIntoConstraints = false
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SourceColumn"))
         outlineView.addTableColumn(column)
@@ -139,7 +136,6 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
         }
 
         let scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
@@ -148,19 +144,16 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
         placeholderTitleLabel.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
         placeholderTitleLabel.alignment = .center
         placeholderTitleLabel.textColor = .secondaryLabelColor
-        placeholderTitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         placeholderSubtitleLabel.alignment = .center
         placeholderSubtitleLabel.textColor = .tertiaryLabelColor
         placeholderSubtitleLabel.maximumNumberOfLines = 0
         placeholderSubtitleLabel.lineBreakMode = .byWordWrapping
-        placeholderSubtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let placeholderStack = NSStackView(views: [placeholderTitleLabel, placeholderSubtitleLabel])
         placeholderStack.orientation = .vertical
         placeholderStack.alignment = .centerX
         placeholderStack.spacing = 8
-        placeholderStack.translatesAutoresizingMaskIntoConstraints = false
         placeholderStack.setAccessibilityIdentifier("workspace.sourceList.placeholder")
 
         view.addSubview(titleLabel)

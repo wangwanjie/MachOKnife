@@ -37,14 +37,18 @@ final class CLIInstallService: CLIInstallServicing {
 
     func status() throws -> CLIInstallStatus {
         let installDirectoryURL = try settings.cliInstallDirectoryURL()
-        let installedCLIURL = installDirectoryURL?.appendingPathComponent("machoe-cli", isDirectory: false)
-        let isInstalled = installedCLIURL.map { fileManager.isExecutableFile(atPath: $0.path) } ?? false
+        return try accessDirectory(installDirectoryURL) {
+            let installedCLIURL = installDirectoryURL?.appendingPathComponent("machoe-cli", isDirectory: false)
+            let isInstalled = installedCLIURL.map {
+                fileManager.fileExists(atPath: $0.path) && fileManager.isExecutableFile(atPath: $0.path)
+            } ?? false
 
-        return CLIInstallStatus(
-            installDirectoryURL: installDirectoryURL,
-            installedCLIURL: installedCLIURL,
-            isInstalled: isInstalled
-        )
+            return CLIInstallStatus(
+                installDirectoryURL: installDirectoryURL,
+                installedCLIURL: installedCLIURL,
+                isInstalled: isInstalled
+            )
+        }
     }
 
     @discardableResult
