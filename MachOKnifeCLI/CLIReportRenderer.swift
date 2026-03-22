@@ -28,6 +28,27 @@ enum CLIReportRenderer {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    static func renderInfo(_ analysis: ArchiveAnalysis) -> String {
+        var lines = [String]()
+        lines.append("File: \(analysis.fileURL.path)")
+        lines.append("Container: \(archiveContainerLabel(for: analysis.kind))")
+        lines.append("Architectures: \(analysis.architectures.map(\.architecture).joined(separator: ", "))")
+
+        for architecture in analysis.architectures {
+            lines.append("Architecture \(architecture.architecture):")
+            lines.append("  Members: \(architecture.memberCount)")
+            lines.append("  Parsed Members: \(architecture.parsedMemberCount)")
+            lines.append("  Platforms: \(joinedValues(architecture.platforms))")
+            lines.append("  Min OS: \(joinedValues(architecture.minimumOSVersions))")
+            lines.append("  SDK: \(joinedValues(architecture.sdkVersions))")
+            lines.append("  Install Names: \(architecture.installNames.count)")
+            lines.append("  Dylibs: \(architecture.dylibReferences.count)")
+            lines.append("  RPaths: \(architecture.rpaths.count)")
+        }
+
+        return lines.joined(separator: "\n") + "\n"
+    }
+
     static func renderDylibs(_ analysis: DocumentAnalysis) -> String {
         var lines = [String]()
         lines.append("File: \(analysis.fileURL.path)")
@@ -43,6 +64,37 @@ enum CLIReportRenderer {
             }
 
             for rpath in slice.rpaths {
+                lines.append("  RPATH \(rpath)")
+            }
+        }
+
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    static func renderDylibs(_ analysis: ArchiveAnalysis) -> String {
+        var lines = [String]()
+        lines.append("File: \(analysis.fileURL.path)")
+        lines.append("Container: \(archiveContainerLabel(for: analysis.kind))")
+
+        for architecture in analysis.architectures {
+            lines.append("Architecture \(architecture.architecture):")
+
+            if architecture.installNames.isEmpty == false {
+                for installName in architecture.installNames {
+                    lines.append("  ID: \(installName)")
+                }
+            }
+
+            if architecture.dylibReferences.isEmpty, architecture.rpaths.isEmpty {
+                lines.append("  No dylib or RPATH entries found.")
+                continue
+            }
+
+            for dylib in architecture.dylibReferences {
+                lines.append("  DYLIB \(dylib)")
+            }
+
+            for rpath in architecture.rpaths {
                 lines.append("  RPATH \(rpath)")
             }
         }
@@ -89,6 +141,15 @@ enum CLIReportRenderer {
         }
     }
 
+    private static func archiveContainerLabel(for kind: ArchiveContainerKind) -> String {
+        switch kind {
+        case .archive:
+            return "archive"
+        case .fatArchive:
+            return "fat archive"
+        }
+    }
+
     private static func platformLabel(_ platform: MachOPlatform?) -> String {
         guard let platform else { return "unknown" }
         switch platform {
@@ -127,6 +188,10 @@ enum CLIReportRenderer {
 
     private static func versionLabel(_ version: MachOVersion?) -> String {
         version?.description ?? "unknown"
+    }
+
+    private static func joinedValues(_ values: [String]) -> String {
+        values.isEmpty ? "unknown" : values.joined(separator: ", ")
     }
 
     private static func kindLabel(_ kind: DiffEntry.Kind) -> String {

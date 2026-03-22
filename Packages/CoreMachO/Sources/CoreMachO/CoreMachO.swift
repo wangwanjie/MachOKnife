@@ -132,7 +132,14 @@ struct MachOFileParser {
             cursor = commandEnd
         }
 
-        let symbols = try symbolTable.map { try parseSymbols(using: $0, is64Bit: parsedHeader.info.is64Bit, swapped: parsedHeader.swapped) } ?? []
+        let symbols = try symbolTable.map {
+            try parseSymbols(
+                using: $0,
+                sliceOffset: offset,
+                is64Bit: parsedHeader.info.is64Bit,
+                swapped: parsedHeader.swapped
+            )
+        } ?? []
 
         return MachOSlice(
             offset: offset,
@@ -390,16 +397,21 @@ struct MachOFileParser {
         )
     }
 
-    private func parseSymbols(using symbolTable: SymbolTableInfo, is64Bit: Bool, swapped: Bool) throws -> [SymbolInfo] {
+    private func parseSymbols(
+        using symbolTable: SymbolTableInfo,
+        sliceOffset: Int,
+        is64Bit: Bool,
+        swapped: Bool
+    ) throws -> [SymbolInfo] {
         let count = Int(symbolTable.symbolCount)
         let symbolEntrySize = is64Bit ? MemoryLayout<nlist_64>.size : MemoryLayout<nlist>.size
-        let symbolsStart = Int(symbolTable.symbolOffset)
+        let symbolsStart = sliceOffset + Int(symbolTable.symbolOffset)
         let symbolsSize = count * symbolEntrySize
         guard symbolsStart >= 0, symbolsStart + symbolsSize <= data.count else {
             throw MachOParseError.outOfBounds(offset: symbolsStart, size: symbolsSize)
         }
 
-        let stringTableStart = Int(symbolTable.stringTableOffset)
+        let stringTableStart = sliceOffset + Int(symbolTable.stringTableOffset)
         let stringTableSize = Int(symbolTable.stringTableSize)
         guard stringTableStart >= 0, stringTableStart + stringTableSize <= data.count else {
             throw MachOParseError.outOfBounds(offset: stringTableStart, size: stringTableSize)

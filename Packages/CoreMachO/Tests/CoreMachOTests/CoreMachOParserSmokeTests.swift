@@ -23,6 +23,17 @@ struct CoreMachOParserSmokeTests {
         #expect(container.slices.count == 2)
     }
 
+    @Test("parses a fat executable fixture with symbol tables")
+    func parsesFatExecutableFixtureWithSymbolTables() throws {
+        let fixtureURL = try MachOTestFixtureFactory.makeFatExecutableFixture()
+
+        let container = try MachOContainer.parse(at: fixtureURL)
+
+        #expect(container.kind == .fat)
+        #expect(container.slices.count == 2)
+        #expect(container.slices.allSatisfy { $0.symbols.isEmpty == false })
+    }
+
     @Test("enumerates load commands from a fixture")
     func enumeratesLoadCommandsFromFixture() throws {
         let fixtureURL = try MachOTestFixtureFactory.makeThinFixture()
@@ -82,6 +93,52 @@ private enum MachOTestFixtureFactory {
             arguments: [
                 "-target", "arm64-apple-macos13.0",
                 "-c",
+                sourceURL.path,
+                "-o",
+                armURL.path,
+            ]
+        )
+        try Shell.run(
+            launchPath: "/usr/bin/lipo",
+            arguments: [
+                "-create",
+                x86URL.path,
+                armURL.path,
+                "-output",
+                outputURL.path,
+            ]
+        )
+        return outputURL
+    }
+
+    static func makeFatExecutableFixture() throws -> URL {
+        let source = """
+        #include <stdio.h>
+        int main(void) {
+            puts("machoknife-fat-exec");
+            return 0;
+        }
+        """
+        let tempDirectory = try makeTemporaryDirectory()
+        let sourceURL = tempDirectory.appendingPathComponent("fat-exec.c")
+        let x86URL = tempDirectory.appendingPathComponent("fat-exec-x86_64")
+        let armURL = tempDirectory.appendingPathComponent("fat-exec-arm64")
+        let outputURL = tempDirectory.appendingPathComponent("fat-exec-universal")
+        try source.write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        try Shell.run(
+            launchPath: "/usr/bin/clang",
+            arguments: [
+                "-target", "x86_64-apple-macos13.0",
+                sourceURL.path,
+                "-o",
+                x86URL.path,
+            ]
+        )
+        try Shell.run(
+            launchPath: "/usr/bin/clang",
+            arguments: [
+                "-target", "arm64-apple-macos13.0",
                 sourceURL.path,
                 "-o",
                 armURL.path,

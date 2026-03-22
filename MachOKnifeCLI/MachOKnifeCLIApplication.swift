@@ -37,6 +37,8 @@ enum MachOKnifeCLIApplication {
             return try ListDylibsCommand.run(arguments: commandArguments)
         case RetagPlatformCommand.name:
             return try RetagPlatformCommand.run(arguments: commandArguments)
+        case BuildXCFrameworkCommand.name:
+            return try BuildXCFrameworkCommand.run(arguments: commandArguments)
         case RewriteRPathCommand.name:
             return try RewriteRPathCommand.run(arguments: commandArguments)
         case FixDyldCacheDylibCommand.name:
@@ -67,6 +69,8 @@ struct CLIError: Error {
           machoe-cli info <path>
           machoe-cli list-dylibs <path>
           machoe-cli retag-platform <path> --platform macos|ios|iossim|maccatalyst --min <version> --sdk <version> --output <path>
+          machoe-cli build-xcframework --library <path> [--library <path> ...] --headers <path> [--headers <path> ...] --output <path>
+          machoe-cli build-xcframework --source-library <path> [--ios-device-source-library <path>] [--ios-simulator-source-library <path>] [--maccatalyst-source-library <path>] --headers-dir <path> (--output <path> | --output-dir <path> [--xcframework-name <name>]) [--output-library-name <name>] [--module-name <name>] [--umbrella-header <name>] [--maccatalyst-min-version <version>] [--maccatalyst-sdk-version <version>]
           machoe-cli rewrite-rpath <path> --from <path> --to <path> --output <path>
           machoe-cli fix-dyld-cache-dylib <path> --output <path>
           machoe-cli set-id <path> --install-name <path> --output <path>

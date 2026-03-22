@@ -11,6 +11,9 @@ struct ListDylibsCommand {
         }
 
         let url = try CLICommandSupport.requiredPath(arguments, usage: usage)
+        if let archiveAnalysis = try ArchiveAnalysisService().analyze(url: url) {
+            return CLIReportRenderer.renderDylibs(archiveAnalysis)
+        }
         let analysis = try DocumentAnalysisService().analyze(url: url)
         return CLIReportRenderer.renderDylibs(analysis)
     }
