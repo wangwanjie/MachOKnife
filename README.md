@@ -23,6 +23,10 @@ MachOKnife is a native macOS Mach-O browser and utility suite with an AppKit GUI
 
 ![MachOKnife snapshot 4](snapshots/4.png)
 
+![MachOKnife snapshot 4](snapshots/5.png)
+
+![MachOKnife snapshot 4](snapshots/6.png)
+
 ## Repository Layout
 
 - `Packages/CoreMachO`: low-level parsing and rewrite helpers shared by the app and CLI
