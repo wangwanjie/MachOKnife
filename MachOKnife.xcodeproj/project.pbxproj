@@ -68,6 +68,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				MachOKnife.png,
 			);
 			target = 9566B7C12F6DB9D0002773C3 /* MachOKnife */;
 		};
