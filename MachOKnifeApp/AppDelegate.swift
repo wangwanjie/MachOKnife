@@ -4,8 +4,9 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings: AppSettings
     private let updateManager: UpdateManager
+    private let mainWindowControllerFactory: () -> MainWindowControlling
     private lazy var recentFilesController = try? RecentFilesController(settings: settings)
-    private var mainWindowController: MainWindowController?
+    private var mainWindowController: MainWindowControlling?
     private var preferencesWindowController: PreferencesWindowController?
     private var retagWindowController: RetagWindowController?
     private var xcframeworkBuildWindowController: XCFrameworkBuildWindowController?
@@ -18,12 +19,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     override init() {
         self.settings = .shared
         self.updateManager = UpdateManager()
+        self.mainWindowControllerFactory = { MainWindowController() }
         super.init()
     }
 
-    init(settings: AppSettings, updateManager: UpdateManager) {
+    init(
+        settings: AppSettings,
+        updateManager: UpdateManager,
+        mainWindowControllerFactory: (() -> MainWindowControlling)? = nil
+    ) {
         self.settings = settings
         self.updateManager = updateManager
+        self.mainWindowControllerFactory = mainWindowControllerFactory ?? { MainWindowController() }
         super.init()
     }
 
@@ -32,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyAppearance()
         observeSettings()
 
-        let mainWindowController = MainWindowController()
+        let mainWindowController = mainWindowControllerFactory()
         mainWindowController.onDocumentOpened = { [weak self] url in
             self?.recordRecentFile(url)
         }
@@ -50,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard !flag else { return true }
-        openDocument(nil)
+        showMainWindow(nil)
         return true
     }
 
@@ -339,7 +346,7 @@ extension AppDelegate: NSMenuItemValidation {
             return updateManager.status().canCheckForUpdates
         case #selector(closeDocument(_:)):
             guard
-                mainWindowController?.viewModel.hasLoadedDocument == true,
+                mainWindowController?.hasLoadedDocument == true,
                 let mainWindow = mainWindowController?.window
             else {
                 return false

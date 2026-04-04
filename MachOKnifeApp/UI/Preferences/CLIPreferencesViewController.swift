@@ -186,9 +186,10 @@ final class CLIPreferencesViewController: NSViewController {
         stack.snp.makeConstraints { make in
             make.top.leading.equalToSuperview().inset(24)
             make.trailing.lessThanOrEqualToSuperview().inset(24)
+            make.bottom.equalToSuperview().inset(24)
         }
 
-        preferredContentSize = NSSize(width: 640, height: 300)
+        preferredContentSize = NSSize(width: 640, height: 0)
         applyLastActionText()
         reloadLocalization()
     }

@@ -4,6 +4,25 @@ import MachOKnifeKit
 import UniformTypeIdentifiers
 
 @MainActor
+protocol MainWindowControlling: AnyObject {
+    var onDocumentOpened: ((URL) -> Void)? { get set }
+    var window: NSWindow? { get }
+    var hasLoadedDocument: Bool { get }
+    var canCopyOrExportSelectedNodeInfo: Bool { get }
+    var hasCurrentFileURL: Bool { get }
+
+    func present(_ sender: Any?)
+    func promptForDocument(_ sender: Any?)
+    func openDocument(at url: URL) -> Bool
+    func closeCurrentDocument()
+    func reloadLocalization()
+    func showCurrentFileInFinder()
+    func copyCurrentFilePath()
+    func copySelectedNodeInfo()
+    func exportSelectedNodeInfo()
+}
+
+@MainActor
 final class MainWindowController: NSWindowController {
     private static let autosaveName = NSWindow.FrameAutosaveName("MachOKnifeMainWindowFrame")
 
@@ -139,6 +158,10 @@ final class MainWindowController: NSWindowController {
 
     var canCopyOrExportSelectedNodeInfo: Bool {
         viewModel.browserSelectedNode != nil
+    }
+
+    var hasLoadedDocument: Bool {
+        viewModel.hasLoadedDocument
     }
 
     var hasCurrentFileURL: Bool {
@@ -354,6 +377,8 @@ final class MainWindowController: NSWindowController {
         activeSecurityScopedURL = nil
     }
 }
+
+extension MainWindowController: MainWindowControlling {}
 
 private struct NodeInfoDocument {
     let text: String

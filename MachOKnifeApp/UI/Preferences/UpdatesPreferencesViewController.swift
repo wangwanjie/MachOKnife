@@ -3,6 +3,8 @@ import SnapKit
 
 @MainActor
 final class UpdatesPreferencesViewController: NSViewController {
+    private static let preferredWidth: CGFloat = 640
+    private static let verticalInset: CGFloat = 48
     private let viewModel: UpdatesPreferencesViewModel
     private let strategyOptions = UpdateCheckStrategy.allCases
 
@@ -14,6 +16,7 @@ final class UpdatesPreferencesViewController: NSViewController {
     private let automaticDownloadsButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let automaticDownloadsHintLabel = NSTextField(wrappingLabelWithString: "")
     private let checkForUpdatesButton = NSButton(title: "", target: nil, action: nil)
+    private let contentStack = NSStackView()
 
     init(updateManager: UpdateManager) {
         self.viewModel = UpdatesPreferencesViewModel(updateManager: updateManager)
@@ -33,6 +36,11 @@ final class UpdatesPreferencesViewController: NSViewController {
         super.viewDidLoad()
         buildUI()
         refreshState()
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        updatePreferredContentSize()
     }
 
     override func viewWillAppear() {
@@ -97,29 +105,30 @@ final class UpdatesPreferencesViewController: NSViewController {
         checkForUpdatesButton.target = self
         checkForUpdatesButton.action = #selector(checkForUpdates(_:))
 
-        let stack = NSStackView(views: [
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 18
+        [
             statusRow,
             detailLabel,
             strategyRow,
             automaticDownloadsButton,
             automaticDownloadsHintLabel,
             checkForUpdatesButton,
-        ])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 18
+        ].forEach(contentStack.addArrangedSubview)
 
-        view.addSubview(stack)
+        view.addSubview(contentStack)
 
         statusValueLabel.snp.makeConstraints { make in
             make.width.greaterThanOrEqualTo(180)
         }
-        stack.snp.makeConstraints { make in
+        contentStack.snp.makeConstraints { make in
             make.top.leading.equalToSuperview().inset(24)
             make.trailing.lessThanOrEqualToSuperview().inset(24)
+            make.bottom.equalToSuperview().inset(24)
         }
 
-        preferredContentSize = NSSize(width: 640, height: 280)
+        preferredContentSize = NSSize(width: Self.preferredWidth, height: 0)
         reloadLocalization()
     }
 
@@ -149,5 +158,14 @@ final class UpdatesPreferencesViewController: NSViewController {
         automaticDownloadsButton.isEnabled = state.isAutomaticDownloadsEnabled
         automaticDownloadsButton.state = state.automaticallyDownloadsUpdates ? .on : .off
         checkForUpdatesButton.isEnabled = state.isCheckNowEnabled
+        updatePreferredContentSize()
+    }
+
+    private func updatePreferredContentSize() {
+        view.layoutSubtreeIfNeeded()
+        preferredContentSize = NSSize(
+            width: Self.preferredWidth,
+            height: ceil(contentStack.fittingSize.height + Self.verticalInset)
+        )
     }
 }

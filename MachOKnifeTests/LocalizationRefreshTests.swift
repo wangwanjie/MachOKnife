@@ -99,19 +99,63 @@ struct LocalizationRefreshTests {
         #expect(tabController.tabViewItems.allSatisfy { $0.image != nil })
         #expect(controller.window?.toolbarStyle == .preference)
 
+        let originalWidth = try #require(controller.window?.frame.width)
         let originalHeight = try #require(controller.window?.frame.height)
+        controller.window?.setFrame(
+            NSRect(x: 0, y: 0, width: originalWidth + 120, height: originalHeight),
+            display: true
+        )
+        pumpRunLoop(for: 0.2)
+        let widenedWidth = try #require(controller.window?.frame.width)
         controller.selectTab(at: 2)
         pumpRunLoop(for: 0.3)
+        let appearanceWidth = try #require(controller.window?.frame.width)
         let appearanceHeight = try #require(controller.window?.frame.height)
 
         controller.selectTab(at: 0)
         pumpRunLoop(for: 0.3)
+        let generalWidth = try #require(controller.window?.frame.width)
         let generalHeight = try #require(controller.window?.frame.height)
+        let generalContentHeight = try #require(controller.window?.contentRect(forFrameRect: controller.window!.frame).height)
 
+        #expect(widenedWidth > originalWidth)
+        #expect(widenedWidth == appearanceWidth)
+        #expect(widenedWidth == generalWidth)
         #expect(appearanceHeight != generalHeight)
         #expect(originalHeight != appearanceHeight || originalHeight != generalHeight)
+        #expect(generalContentHeight < 150)
+
+        controller.selectTab(at: 2)
+        pumpRunLoop(for: 0.3)
+        let appearanceContentHeight = try #require(controller.window?.contentRect(forFrameRect: controller.window!.frame).height)
+
+        #expect(appearanceContentHeight < 100)
 
         defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    @Test("dock reopen shows the main window without prompting for a file")
+    func dockReopenShowsMainWindowWithoutPromptingForAFile() throws {
+        let updateManager = UpdateManager(
+            configurationProvider: {
+                UpdateConfiguration(feedURLString: "", publicEDKey: "")
+            },
+            clientProvider: { nil }
+        )
+        let mainWindowController = SpyMainWindowController()
+        let appDelegate = AppDelegate(
+            settings: .shared,
+            updateManager: updateManager,
+            mainWindowControllerFactory: { mainWindowController }
+        )
+
+        appDelegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        mainWindowController.resetCounts()
+
+        _ = appDelegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
+
+        #expect(mainWindowController.presentCallCount == 1)
+        #expect(mainWindowController.promptCallCount == 0)
     }
 
     @Test("CLI preferences refresh the last action text after language changes")
@@ -428,5 +472,37 @@ private final class StubLocalizedCLIInstallService: CLIInstallServicing {
 
     func uninstall() throws -> CLIInstallStatus {
         currentStatus
+    }
+}
+
+@MainActor
+private final class SpyMainWindowController: MainWindowControlling {
+    var onDocumentOpened: ((URL) -> Void)?
+    var window: NSWindow?
+    var hasLoadedDocument = false
+    var canCopyOrExportSelectedNodeInfo = false
+    var hasCurrentFileURL = false
+    private(set) var presentCallCount = 0
+    private(set) var promptCallCount = 0
+
+    func present(_ sender: Any?) {
+        presentCallCount += 1
+    }
+
+    func promptForDocument(_ sender: Any?) {
+        promptCallCount += 1
+    }
+
+    func openDocument(at url: URL) -> Bool { false }
+    func closeCurrentDocument() {}
+    func reloadLocalization() {}
+    func showCurrentFileInFinder() {}
+    func copyCurrentFilePath() {}
+    func copySelectedNodeInfo() {}
+    func exportSelectedNodeInfo() {}
+
+    func resetCounts() {
+        presentCallCount = 0
+        promptCallCount = 0
     }
 }

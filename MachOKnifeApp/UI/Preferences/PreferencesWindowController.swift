@@ -5,6 +5,8 @@ import SnapKit
 @MainActor
 final class PreferencesWindowController: NSWindowController {
     private static let autosaveName = NSWindow.FrameAutosaveName("MachOKnifePreferencesWindowFrame")
+    fileprivate static let minimumContentWidthFloor: CGFloat = 500
+    fileprivate static let minimumContentHeight: CGFloat = 1
     private let preferencesViewController: PreferencesTabViewController
     private var settingsObserver: NSObjectProtocol?
 
@@ -15,8 +17,9 @@ final class PreferencesWindowController: NSWindowController {
     init(settings: AppSettings, updateManager: UpdateManager) {
         let tabViewController = PreferencesTabViewController(settings: settings, updateManager: updateManager)
         self.preferencesViewController = tabViewController
+        let initialContentWidth = tabViewController.minimumContentWidth()
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 460),
+            contentRect: NSRect(x: 0, y: 0, width: initialContentWidth, height: 460),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -26,13 +29,18 @@ final class PreferencesWindowController: NSWindowController {
         window.contentViewController = tabViewController
         window.tabbingMode = .disallowed
         window.toolbarStyle = .preference
-        window.minSize = NSSize(width: 560, height: 180)
+        let minimumFrameSize = window.frameRect(
+            forContentRect: NSRect(x: 0, y: 0, width: initialContentWidth, height: Self.minimumContentHeight)
+        ).size
+        window.contentMinSize = NSSize(width: initialContentWidth, height: Self.minimumContentHeight)
+        window.minSize = minimumFrameSize
 
         super.init(window: window)
 
         if !window.setFrameUsingName(Self.autosaveName) {
             window.center()
         }
+        applyMinimumWidth(to: window, animated: false)
         window.setFrameAutosaveName(Self.autosaveName)
         observeSettings()
     }
@@ -67,6 +75,9 @@ final class PreferencesWindowController: NSWindowController {
     func reloadLocalization() {
         window?.title = L10n.preferencesWindowTitle
         preferencesViewController.reloadLocalization()
+        if let window {
+            applyMinimumWidth(to: window, animated: true)
+        }
         preferencesViewController.applyPreferredContentSize(animated: true)
     }
 
@@ -81,6 +92,34 @@ final class PreferencesWindowController: NSWindowController {
             }
         }
     }
+
+    private func applyMinimumWidth(to window: NSWindow, animated: Bool) {
+        let minimumContentWidth = preferencesViewController.minimumContentWidth()
+        let minimumFrameSize = window.frameRect(
+            forContentRect: NSRect(x: 0, y: 0, width: minimumContentWidth, height: Self.minimumContentHeight)
+        ).size
+
+        window.contentMinSize = NSSize(width: minimumContentWidth, height: Self.minimumContentHeight)
+        window.minSize = minimumFrameSize
+
+        guard window.frame.width < minimumFrameSize.width else {
+            return
+        }
+
+        var frame = window.frame
+        frame.origin.x += (frame.width - minimumFrameSize.width) / 2
+        frame.size.width = minimumFrameSize.width
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                window.animator().setFrame(frame, display: true)
+            }
+        } else {
+            window.setFrame(frame, display: false)
+        }
+    }
 }
 
 @MainActor
@@ -90,6 +129,10 @@ private protocol PreferencesLocalizable: AnyObject {
 
 @MainActor
 private final class PreferencesTabViewController: NSTabViewController, PreferencesLocalizable {
+    private static let toolbarItemPadding: CGFloat = 38
+    private static let toolbarIconAllowance: CGFloat = 18
+    private static let toolbarInteritemSpacing: CGFloat = 12
+    private static let toolbarOuterPadding: CGFloat = 36
     private let generalViewController: GeneralPreferencesViewController
     private let cliViewController: CLIPreferencesViewController
     private let appearanceViewController: AppearancePreferencesViewController
@@ -164,13 +207,34 @@ private final class PreferencesTabViewController: NSTabViewController, Preferenc
         advancedViewController.reloadLocalization()
     }
 
+    func minimumContentWidth() -> CGFloat {
+        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let itemWidths = tabViewItems.map { item -> CGFloat in
+            let labelWidth = (item.label as NSString).size(withAttributes: [.font: font]).width
+            let iconWidth: CGFloat = item.image == nil ? 0 : Self.toolbarIconAllowance
+            return ceil(labelWidth + iconWidth + Self.toolbarItemPadding)
+        }
+        let totalToolbarWidth = itemWidths.reduce(0, +)
+            + CGFloat(max(0, tabViewItems.count - 1)) * Self.toolbarInteritemSpacing
+            + Self.toolbarOuterPadding
+        return max(PreferencesWindowController.minimumContentWidthFloor, totalToolbarWidth)
+    }
+
     func applyPreferredContentSize(animated: Bool) {
         guard let window = view.window, let selected = selectedContentViewController else { return }
 
-        let preferred = selected.preferredContentSize == .zero ? selected.view.fittingSize : selected.preferredContentSize
-        let targetWidth = max(560, preferred.width)
+        selected.view.layoutSubtreeIfNeeded()
+
+        let targetWidth = max(minimumContentWidth(), window.contentRect(forFrameRect: window.frame).width)
+        selected.view.frame.size.width = targetWidth
+        selected.view.layoutSubtreeIfNeeded()
+
+        let fittedHeight = ceil(max(
+            PreferencesWindowController.minimumContentHeight,
+            selected.preferredContentSize.height > 0 ? selected.preferredContentSize.height : selected.view.fittingSize.height
+        ))
         let visibleHeight = window.screen?.visibleFrame.height ?? 900
-        let targetHeight = min(max(180, preferred.height), visibleHeight - 120)
+        let targetHeight = min(fittedHeight, visibleHeight - 120)
         let targetContentRect = NSRect(origin: .zero, size: NSSize(width: targetWidth, height: targetHeight))
         let targetFrame = window.frameRect(forContentRect: targetContentRect)
         var newFrame = window.frame
@@ -228,6 +292,7 @@ private final class PreferencesScrollContainerViewController: NSViewController {
 
     override func loadView() {
         let rootView = NSView()
+        let contentView = contentViewController.view
 
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
@@ -237,7 +302,11 @@ private final class PreferencesScrollContainerViewController: NSViewController {
         scrollView.documentView = documentView
 
         addChild(contentViewController)
-        let contentView = contentViewController.view
+        contentView.translatesAutoresizingMaskIntoConstraints = true
+        contentView.autoresizingMask = [.width]
+        let initialSize = initialContentSize(for: contentView)
+        contentView.frame = NSRect(origin: .zero, size: initialSize)
+        documentView.frame = NSRect(origin: .zero, size: initialSize)
         documentView.addSubview(contentView)
 
         rootView.addSubview(scrollView)
@@ -246,22 +315,32 @@ private final class PreferencesScrollContainerViewController: NSViewController {
         scrollView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
-        contentView.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
-            make.width.equalTo(scrollView.contentView.snp.width)
-        }
     }
 
     override func viewDidLayout() {
         super.viewDidLayout()
 
+        let contentWidth = max(PreferencesWindowController.minimumContentWidthFloor, scrollView.contentView.bounds.width)
         let fittingSize = contentViewController.view.fittingSize
-        documentView.frame = NSRect(origin: .zero, size: fittingSize)
+        let contentSize = NSSize(width: contentWidth, height: fittingSize.height)
+
+        contentViewController.view.frame = NSRect(origin: .zero, size: contentSize)
+        documentView.frame = NSRect(origin: .zero, size: contentSize)
+    }
+
+    private func initialContentSize(for contentView: NSView) -> NSSize {
+        let width = PreferencesWindowController.minimumContentWidthFloor
+        contentView.frame.size.width = width
+        contentView.layoutSubtreeIfNeeded()
+        let height = max(1, contentView.fittingSize.height)
+        return NSSize(width: width, height: height)
     }
 }
 
 @MainActor
 private final class GeneralPreferencesViewController: NSViewController, PreferencesLocalizable {
+    private static let preferredWidth: CGFloat = 640
+    private static let verticalInset: CGFloat = 48
     private let settings: AppSettings
     private let languageLabel = makeSectionLabel("")
     private let recentFilesLabel = makeSectionLabel("")
@@ -269,6 +348,7 @@ private final class GeneralPreferencesViewController: NSViewController, Preferen
     private let languagePopUpButton = NSPopUpButton(frame: .zero, pullsDown: false)
     private let recentFilesField = NSTextField(string: "")
     private let recentFilesStepper = NSStepper()
+    private let contentStack = NSStackView()
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -288,6 +368,11 @@ private final class GeneralPreferencesViewController: NSViewController, Preferen
         super.viewDidLoad()
         buildUI()
         reloadControls()
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        updatePreferredContentSize()
     }
 
     @objc private func languageChanged(_ sender: NSPopUpButton) {
@@ -328,22 +413,23 @@ private final class GeneralPreferencesViewController: NSViewController, Preferen
         let languageRow = makeRow(label: languageLabel, control: languagePopUpButton)
         let recentFilesRow = makeRow(label: recentFilesLabel, control: recentFilesControls)
 
-        let stack = NSStackView(views: [languageRow, recentFilesRow, recentFilesHint])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 18
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 18
+        [languageRow, recentFilesRow, recentFilesHint].forEach(contentStack.addArrangedSubview)
 
-        view.addSubview(stack)
+        view.addSubview(contentStack)
 
         recentFilesField.snp.makeConstraints { make in
             make.width.equalTo(60)
         }
-        stack.snp.makeConstraints { make in
+        contentStack.snp.makeConstraints { make in
             make.top.leading.equalToSuperview().inset(24)
             make.trailing.lessThanOrEqualToSuperview().inset(24)
+            make.bottom.equalToSuperview().inset(24)
         }
 
-        preferredContentSize = NSSize(width: 640, height: 240)
+        preferredContentSize = NSSize(width: Self.preferredWidth, height: 0)
         reloadLocalization()
     }
 
@@ -364,14 +450,26 @@ private final class GeneralPreferencesViewController: NSViewController, Preferen
         languagePopUpButton.removeAllItems()
         languagePopUpButton.addItems(withTitles: AppLanguage.allCases.map(L10n.languageName(_:)))
         reloadControls()
+        updatePreferredContentSize()
+    }
+
+    private func updatePreferredContentSize() {
+        view.layoutSubtreeIfNeeded()
+        preferredContentSize = NSSize(
+            width: Self.preferredWidth,
+            height: ceil(contentStack.fittingSize.height + Self.verticalInset)
+        )
     }
 }
 
 @MainActor
 private final class AppearancePreferencesViewController: NSViewController, PreferencesLocalizable {
+    private static let preferredWidth: CGFloat = 640
+    private static let verticalInset: CGFloat = 48
     private let settings: AppSettings
     private let themeLabel = makeSectionLabel("")
     private let themePopUpButton = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let contentStack = NSStackView()
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -393,6 +491,11 @@ private final class AppearancePreferencesViewController: NSViewController, Prefe
         reloadControls()
     }
 
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        updatePreferredContentSize()
+    }
+
     @objc private func themeChanged(_ sender: NSPopUpButton) {
         let themes = AppTheme.allCases
         guard themes.indices.contains(sender.indexOfSelectedItem) else { return }
@@ -404,14 +507,18 @@ private final class AppearancePreferencesViewController: NSViewController, Prefe
         themePopUpButton.action = #selector(themeChanged(_:))
 
         let row = makeRow(label: themeLabel, control: themePopUpButton)
-        view.addSubview(row)
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.addArrangedSubview(row)
+        view.addSubview(contentStack)
 
-        row.snp.makeConstraints { make in
+        contentStack.snp.makeConstraints { make in
             make.top.leading.equalToSuperview().inset(24)
             make.trailing.lessThanOrEqualToSuperview().inset(24)
+            make.bottom.equalToSuperview().inset(24)
         }
 
-        preferredContentSize = NSSize(width: 640, height: 180)
+        preferredContentSize = NSSize(width: Self.preferredWidth, height: 0)
         reloadLocalization()
     }
 
@@ -426,6 +533,15 @@ private final class AppearancePreferencesViewController: NSViewController, Prefe
         themePopUpButton.removeAllItems()
         themePopUpButton.addItems(withTitles: AppTheme.allCases.map(L10n.themeName(_:)))
         reloadControls()
+        updatePreferredContentSize()
+    }
+
+    private func updatePreferredContentSize() {
+        view.layoutSubtreeIfNeeded()
+        preferredContentSize = NSSize(
+            width: Self.preferredWidth,
+            height: ceil(contentStack.fittingSize.height + Self.verticalInset)
+        )
     }
 }
 
@@ -450,32 +566,50 @@ private final class PlaceholderPreferencesViewController: NSViewController {
 
 @MainActor
 private final class AdvancedPreferencesViewController: NSViewController, PreferencesLocalizable {
+    private static let preferredWidth: CGFloat = 640
+    private static let verticalInset: CGFloat = 48
     private let titleLabel = NSTextField(labelWithString: "")
     private let messageLabel = makeHintLabel("")
+    private let contentStack = NSStackView()
 
     override func loadView() {
         let container = NSView()
-        let stack = NSStackView(views: [titleLabel, messageLabel])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 12
-        container.addSubview(stack)
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 12
+        [titleLabel, messageLabel].forEach(contentStack.addArrangedSubview)
+        container.addSubview(contentStack)
 
         titleLabel.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
 
-        stack.snp.makeConstraints { make in
+        contentStack.snp.makeConstraints { make in
             make.top.leading.equalToSuperview().inset(24)
             make.trailing.lessThanOrEqualToSuperview().inset(24)
+            make.bottom.equalToSuperview().inset(24)
         }
 
         view = container
-        preferredContentSize = NSSize(width: 640, height: 220)
+        preferredContentSize = NSSize(width: Self.preferredWidth, height: 0)
         reloadLocalization()
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        updatePreferredContentSize()
     }
 
     func reloadLocalization() {
         titleLabel.stringValue = L10n.preferencesAdvancedTitle
         messageLabel.stringValue = L10n.preferencesAdvancedSubtitle
+        updatePreferredContentSize()
+    }
+
+    private func updatePreferredContentSize() {
+        view.layoutSubtreeIfNeeded()
+        preferredContentSize = NSSize(
+            width: Self.preferredWidth,
+            height: ceil(contentStack.fittingSize.height + Self.verticalInset)
+        )
     }
 }
 
