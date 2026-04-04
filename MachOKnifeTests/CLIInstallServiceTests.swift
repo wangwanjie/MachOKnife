@@ -41,6 +41,32 @@ struct CLIInstallServiceTests {
         #expect(FileManager.default.fileExists(atPath: status.installedCLIURL!.path) == false)
     }
 
+    @Test("status falls back to sandbox probe when direct filesystem checks cannot confirm the CLI")
+    func statusFallsBackToSandboxProbeWhenDirectChecksCannotConfirmCLI() throws {
+        let environment = try makeEnvironment()
+        let settings = AppSettings(defaults: environment.defaults)
+        try settings.setCLIInstallDirectory(environment.installDirectory)
+
+        let installedCLIURL = environment.installDirectory.appendingPathComponent("machoe-cli")
+        try FileManager.default.copyItem(at: environment.bundledCLIURL, to: installedCLIURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installedCLIURL.path)
+
+        let fileManager = RestrictedCLIFileManager(restrictedPath: installedCLIURL.path)
+        let service = CLIInstallService(
+            settings: settings,
+            fileManager: fileManager,
+            fallbackExecutableProbe: { url in
+                url == installedCLIURL
+            },
+            bundledCLIURLProvider: { environment.bundledCLIURL }
+        )
+
+        let status = try service.status()
+
+        #expect(status.isInstalled)
+        #expect(status.installedCLIURL == installedCLIURL)
+    }
+
     private func makeEnvironment(fileID: String = #fileID, line: Int = #line) throws -> TestEnvironment {
         let suiteName = "MachOKnifeTests.CLIInstallServiceTests.\(fileID).\(line).\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -68,4 +94,27 @@ private struct TestEnvironment {
     let defaults: UserDefaults
     let bundledCLIURL: URL
     let installDirectory: URL
+}
+
+private final class RestrictedCLIFileManager: FileManager {
+    private let restrictedPath: String
+
+    init(restrictedPath: String) {
+        self.restrictedPath = restrictedPath
+        super.init()
+    }
+
+    override func fileExists(atPath path: String) -> Bool {
+        guard path == restrictedPath else {
+            return super.fileExists(atPath: path)
+        }
+        return false
+    }
+
+    override func isExecutableFile(atPath path: String) -> Bool {
+        guard path == restrictedPath else {
+            return super.isExecutableFile(atPath: path)
+        }
+        return false
+    }
 }

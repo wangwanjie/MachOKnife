@@ -20,18 +20,22 @@ protocol CLIInstallServicing {
 
 final class CLIInstallService: CLIInstallServicing {
     typealias BundledCLIURLProvider = () throws -> URL?
+    typealias FallbackExecutableProbe = (URL) -> Bool
 
     private let settings: AppSettings
     private let fileManager: FileManager
+    private let fallbackExecutableProbe: FallbackExecutableProbe
     private let bundledCLIURLProvider: BundledCLIURLProvider
 
     init(
         settings: AppSettings = .shared,
         fileManager: FileManager = .default,
+        fallbackExecutableProbe: @escaping FallbackExecutableProbe = CLIInstallService.defaultFallbackExecutableProbe,
         bundledCLIURLProvider: @escaping BundledCLIURLProvider = CLIInstallService.defaultBundledCLIURL
     ) {
         self.settings = settings
         self.fileManager = fileManager
+        self.fallbackExecutableProbe = fallbackExecutableProbe
         self.bundledCLIURLProvider = bundledCLIURLProvider
     }
 
@@ -40,7 +44,7 @@ final class CLIInstallService: CLIInstallServicing {
         return try accessDirectory(installDirectoryURL) {
             let installedCLIURL = installDirectoryURL?.appendingPathComponent("machoe-cli", isDirectory: false)
             let isInstalled = installedCLIURL.map {
-                fileManager.fileExists(atPath: $0.path) && fileManager.isExecutableFile(atPath: $0.path)
+                isInstalledCLI(at: $0)
             } ?? false
 
             return CLIInstallStatus(
@@ -114,6 +118,16 @@ final class CLIInstallService: CLIInstallServicing {
         return try operation()
     }
 
+    private func isInstalledCLI(at url: URL) -> Bool {
+        if fileManager.fileExists(atPath: url.path), fileManager.isExecutableFile(atPath: url.path) {
+            return true
+        }
+
+        // Release builds run inside App Sandbox, so privileged installs to system bin directories
+        // may succeed while direct sandbox file probes still report the CLI as missing.
+        return fallbackExecutableProbe(url)
+    }
+
     nonisolated private static func defaultBundledCLIURL() throws -> URL? {
         let candidates = [
             Bundle.main.resourceURL?.appendingPathComponent("CLI/machoe-cli", isDirectory: false),
@@ -128,6 +142,20 @@ final class CLIInstallService: CLIInstallServicing {
         return candidates.compactMap { $0 }.first(where: { FileManager.default.fileExists(atPath: $0.path) })
     }
 
+    nonisolated private static func defaultFallbackExecutableProbe(_ url: URL) -> Bool {
+        let script = """
+        do shell script "if [ -x \(shellQuoted(url.path)) ]; then printf yes; fi"
+        """
+
+        var error: NSDictionary?
+        let result = NSAppleScript(source: script)?.executeAndReturnError(&error)
+        guard error == nil else {
+            return false
+        }
+
+        return result?.stringValue == "yes"
+    }
+
     private func requiresAdministratorPrivileges(_ error: Error) -> Bool {
         let nsError = error as NSError
         return nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileWriteNoPermissionError
@@ -135,14 +163,14 @@ final class CLIInstallService: CLIInstallServicing {
 
     private func installWithPrivileges(sourceURL: URL, destinationURL: URL) throws {
         let script = """
-        do shell script "mkdir -p \(shellQuoted(destinationURL.deletingLastPathComponent().path)) && /usr/bin/install -m 755 \(shellQuoted(sourceURL.path)) \(shellQuoted(destinationURL.path))" with administrator privileges
+        do shell script "mkdir -p \(Self.shellQuoted(destinationURL.deletingLastPathComponent().path)) && /usr/bin/install -m 755 \(Self.shellQuoted(sourceURL.path)) \(Self.shellQuoted(destinationURL.path))" with administrator privileges
         """
         try runPrivileged(script: script)
     }
 
     private func removeWithPrivileges(url: URL) throws {
         let script = """
-        do shell script "if [ -e \(shellQuoted(url.path)) ]; then /bin/rm -f \(shellQuoted(url.path)); fi" with administrator privileges
+        do shell script "if [ -e \(Self.shellQuoted(url.path)) ]; then /bin/rm -f \(Self.shellQuoted(url.path)); fi" with administrator privileges
         """
         try runPrivileged(script: script)
     }
@@ -157,7 +185,7 @@ final class CLIInstallService: CLIInstallServicing {
         }
     }
 
-    private func shellQuoted(_ value: String) -> String {
+    nonisolated private static func shellQuoted(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 }

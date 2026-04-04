@@ -3,6 +3,19 @@ import Testing
 
 @Suite(.serialized)
 struct CLISmokeTests {
+    @Test("help prints version, author, and command descriptions")
+    func helpPrintsVersionAuthorAndCommandDescriptions() throws {
+        let output = try runCLI(arguments: ["--help"])
+
+        #expect(output.contains("machoe-cli v1.3.0"))
+        #expect(output.contains("VanJay"))
+        #expect(output.contains("vanjay.dev@gmail.com"))
+        #expect(output.contains("summary"))
+        #expect(output.contains("Print a concise Mach-O or archive overview."))
+        #expect(output.contains("build-xcframework"))
+        #expect(output.contains("Package static libraries and headers into an XCFramework."))
+    }
+
     @Test("info prints slice summaries")
     func infoPrintsSliceSummaries() throws {
         let fixtureURL = try appDebugDylibURL()
