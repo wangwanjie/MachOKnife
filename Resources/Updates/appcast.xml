@@ -3,8 +3,24 @@
     <channel>
         <title>MachOKnife</title>
         <item>
+            <title>1.4.0</title>
+            <pubDate>Sun, 05 Apr 2026 03:24:14 +0800</pubDate>
+            <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.4.0</link>
+            <sparkle:version>5</sparkle:version>
+            <sparkle:shortVersionString>1.4.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown">## Highlights
+
+- 修复了 `machoe-cli` 的安装状态识别，在打包后的沙盒应用里也能正确显示已安装状态
+- 重写 CLI 顶部帮助信息，增加版本、作者、邮箱以及各子命令作用说明
+- 修正偏好设置窗口尺寸逻辑：各标签页高度按实际内容计算，窗口宽度支持按最小值约束自由拉宽
+- 修复关闭主窗口后从 Dock 重新打开时误弹文件选择器的问题
+</description>
+            <enclosure url="https://github.com/wangwanjie/MachOKnife/releases/download/v1.4.0/MachOKnife_V_1.4.0.dmg" length="13386351" type="application/octet-stream" sparkle:edSignature="sXDLzi1qZCmFdByp0ITPJ+LWqKmqfAdeFOJ/al/nYkM2io632kq9SvN00zlXy5EsohW82Xx2LVi8KcKkOfmbDg==" />
+        </item>
+        <item>
             <title>1.3.0</title>
-            <pubDate>Mon, 23 Mar 2026 00:15:39 +0800</pubDate>
+            <pubDate>Sun, 05 Apr 2026 03:24:14 +0800</pubDate>
             <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.3.0</link>
             <sparkle:version>4</sparkle:version>
             <sparkle:shortVersionString>1.3.0</sparkle:shortVersionString>
@@ -15,7 +31,7 @@
         </item>
         <item>
             <title>1.2.0</title>
-            <pubDate>Mon, 23 Mar 2026 00:15:39 +0800</pubDate>
+            <pubDate>Sun, 05 Apr 2026 03:24:14 +0800</pubDate>
             <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.2.0</link>
             <sparkle:version>3</sparkle:version>
             <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
@@ -29,26 +45,6 @@
 - adopted a CocoaPods workspace for Debug-only `ViewScopeServer` integration and updated release scripts to package from the workspace
 </description>
             <enclosure url="https://github.com/wangwanjie/MachOKnife/releases/download/v1.2.0/MachOKnife_V_1.2.0.dmg" length="17533289" type="application/octet-stream" sparkle:edSignature="02jhicQBQaWKFVW78JD7OKatrcVB0Z8RdqNc6Ev9pszVMK4uXMU1RpC0W54mKSXBUAxNWJeJU32eqxQv2GiOBw==" />
-        </item>
-        <item>
-            <title>1.1</title>
-            <pubDate>Mon, 23 Mar 2026 00:15:39 +0800</pubDate>
-            <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.1</link>
-            <sparkle:version>2</sparkle:version>
-            <sparkle:shortVersionString>1.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown">## Highlights
-
-- Rebuilt the main workspace around MachOKit with a MachO-Explorer-style tree browser, grouped summaries, lazy expansion, search, RAW/RVA switching, and richer Detail/Data panels.
-- Added dedicated `Retag` and `Build XCFramework` tools windows, improved Preferences behavior and localization refresh, fixed CLI install handling, refined light appearance, and added Help navigation to GitHub.
-- Restored recent-file reopening across relaunches with security-scoped bookmarks, refreshed the README to reflect the current product, and bundled updated screenshots for the new UI.
-
-## Verification
-
-- `xcodebuild test -project MachOKnife.xcodeproj -scheme MachOKnife -configuration Debug -derivedDataPath /tmp/MachOKnifeReleaseVerify -destination 'platform=macOS,arch=x86_64'`
-- `bash Scripts/build_dmg.sh`
-</description>
-            <enclosure url="https://github.com/wangwanjie/MachOKnife/releases/download/v1.1/MachOKnife_V_1.1.dmg" length="16291245" type="application/octet-stream" sparkle:edSignature="+UeMdZQLeRA1HxUg9cuVHEQsbD4b03+o4NOVl1v8Ulv1uQcrw/Yxs7rjo35mVinP1UOfNlC9YV4XuxcOgyrkDA==" />
         </item>
         <link>https://github.com/wangwanjie/MachOKnife</link>
         <description>MachOKnife release feed.</description>
