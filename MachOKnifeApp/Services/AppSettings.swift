@@ -12,6 +12,7 @@ final class AppSettings {
         static let recentFilesLimit = "app.recentFilesLimit"
         static let cliInstallDirectoryBookmark = "app.cliInstallDirectoryBookmark"
         static let cliInstallDirectoryPath = "app.cliInstallDirectoryPath"
+        static let cliInstalledExecutablePath = "app.cliInstalledExecutablePath"
     }
 
     private let defaults: UserDefaults
@@ -66,6 +67,21 @@ final class AppSettings {
         defaults.removeObject(forKey: Keys.cliInstallDirectoryBookmark)
         defaults.removeObject(forKey: Keys.cliInstallDirectoryPath)
         notifyDidChange()
+    }
+
+    func setLastKnownCLIExecutablePath(_ path: String) {
+        defaults.set(path, forKey: Keys.cliInstalledExecutablePath)
+        notifyDidChange()
+    }
+
+    func clearLastKnownCLIExecutablePath() {
+        defaults.removeObject(forKey: Keys.cliInstalledExecutablePath)
+        notifyDidChange()
+    }
+
+    func lastKnownCLIExecutablePath() -> String? {
+        let path = defaults.string(forKey: Keys.cliInstalledExecutablePath)
+        return path?.isEmpty == false ? path : nil
     }
 
     func cliInstallDirectoryURL() throws -> URL? {

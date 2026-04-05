@@ -82,6 +82,7 @@ final class CLIInstallService: CLIInstallServicing {
             try installWithPrivileges(sourceURL: bundledCLIURL, destinationURL: installedCLIURL)
         }
 
+        settings.setLastKnownCLIExecutablePath(installedCLIURL.path)
         return try status()
     }
 
@@ -105,6 +106,7 @@ final class CLIInstallService: CLIInstallServicing {
             try removeWithPrivileges(url: installedCLIURL)
         }
 
+        settings.clearLastKnownCLIExecutablePath()
         return try status()
     }
 
@@ -125,7 +127,11 @@ final class CLIInstallService: CLIInstallServicing {
 
         // Release builds run inside App Sandbox, so privileged installs to system bin directories
         // may succeed while direct sandbox file probes still report the CLI as missing.
-        return fallbackExecutableProbe(url)
+        if fallbackExecutableProbe(url) {
+            return true
+        }
+
+        return settings.lastKnownCLIExecutablePath() == url.path
     }
 
     nonisolated private static func defaultBundledCLIURL() throws -> URL? {
@@ -143,17 +149,18 @@ final class CLIInstallService: CLIInstallServicing {
     }
 
     nonisolated private static func defaultFallbackExecutableProbe(_ url: URL) -> Bool {
-        let script = """
-        do shell script "if [ -x \(shellQuoted(url.path)) ]; then printf yes; fi"
-        """
+        let process = Process()
+        process.executableURL = URL(filePath: "/bin/sh")
+        process.arguments = ["-c", "test -x \(shellQuoted(url.path))"]
 
-        var error: NSDictionary?
-        let result = NSAppleScript(source: script)?.executeAndReturnError(&error)
-        guard error == nil else {
+        do {
+            try process.run()
+        } catch {
             return false
         }
 
-        return result?.stringValue == "yes"
+        process.waitUntilExit()
+        return process.terminationStatus == 0
     }
 
     private func requiresAdministratorPrivileges(_ error: Error) -> Bool {

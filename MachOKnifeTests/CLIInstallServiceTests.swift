@@ -67,6 +67,27 @@ struct CLIInstallServiceTests {
         #expect(status.installedCLIURL == installedCLIURL)
     }
 
+    @Test("install remembers a successful CLI path when direct validation is unavailable")
+    func installRemembersSuccessfulCLIPathWhenDirectValidationIsUnavailable() throws {
+        let environment = try makeEnvironment()
+        let settings = AppSettings(defaults: environment.defaults)
+        try settings.setCLIInstallDirectory(environment.installDirectory)
+
+        let installedCLIURL = environment.installDirectory.appendingPathComponent("machoe-cli")
+        let fileManager = RestrictedCLIFileManager(restrictedPath: installedCLIURL.path)
+        let service = CLIInstallService(
+            settings: settings,
+            fileManager: fileManager,
+            fallbackExecutableProbe: { _ in false },
+            bundledCLIURLProvider: { environment.bundledCLIURL }
+        )
+
+        let status = try service.install()
+
+        #expect(status.isInstalled)
+        #expect(settings.lastKnownCLIExecutablePath() == installedCLIURL.path)
+    }
+
     private func makeEnvironment(fileID: String = #fileID, line: Int = #line) throws -> TestEnvironment {
         let suiteName = "MachOKnifeTests.CLIInstallServiceTests.\(fileID).\(line).\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
