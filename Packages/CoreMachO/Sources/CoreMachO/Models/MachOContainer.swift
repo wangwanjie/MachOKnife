@@ -14,6 +14,10 @@ public struct MachOContainer: Sendable {
         let parser = MachOFileParser(data: data)
         return try parser.parseContainer()
     }
+
+    public static func scan(at url: URL) throws -> MachOMetadataScan {
+        try MachOMetadataScanner.scan(at: url)
+    }
 }
 
 public struct MachOSlice: Sendable {
@@ -54,4 +58,24 @@ public struct MachOHeaderInfo: Sendable {
     public let sizeofCommands: UInt32
     public let flags: UInt32
     public let reserved: UInt32?
+
+    public init(
+        is64Bit: Bool,
+        cpuType: Int32,
+        cpuSubtype: Int32,
+        fileType: UInt32,
+        numberOfCommands: UInt32,
+        sizeofCommands: UInt32,
+        flags: UInt32,
+        reserved: UInt32?
+    ) {
+        self.is64Bit = is64Bit
+        self.cpuType = cpuType
+        self.cpuSubtype = cpuSubtype
+        self.fileType = fileType
+        self.numberOfCommands = numberOfCommands
+        self.sizeofCommands = sizeofCommands
+        self.flags = flags
+        self.reserved = reserved
+    }
 }

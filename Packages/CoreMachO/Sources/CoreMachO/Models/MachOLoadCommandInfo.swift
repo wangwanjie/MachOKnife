@@ -62,6 +62,22 @@ public struct SymbolTableInfo: Sendable {
     public let symbolCount: UInt32
     public let stringTableOffset: UInt32
     public let stringTableSize: UInt32
+
+    public init(
+        command: UInt32,
+        commandOffset: Int,
+        symbolOffset: UInt32,
+        symbolCount: UInt32,
+        stringTableOffset: UInt32,
+        stringTableSize: UInt32
+    ) {
+        self.command = command
+        self.commandOffset = commandOffset
+        self.symbolOffset = symbolOffset
+        self.symbolCount = symbolCount
+        self.stringTableOffset = stringTableOffset
+        self.stringTableSize = stringTableSize
+    }
 }
 
 public struct SymbolInfo: Sendable {

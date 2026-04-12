@@ -24,6 +24,24 @@ struct MachOFileParser {
         }
     }
 
+    func parseMetadataScan(fileURL: URL, fileSize: Int) throws -> MachOMetadataScan {
+        let magic = try read(UInt32.self, at: 0)
+
+        switch magic {
+        case FAT_MAGIC, FAT_CIGAM, FAT_MAGIC_64, FAT_CIGAM_64:
+            return try parseFatMetadataScan(fileURL: fileURL, fileSize: fileSize, magic: magic)
+        case MH_MAGIC, MH_CIGAM, MH_MAGIC_64, MH_CIGAM_64:
+            return MachOMetadataScan(
+                fileURL: fileURL,
+                fileSize: fileSize,
+                kind: .thin,
+                slices: [try scanSlice(at: 0, magic: magic)]
+            )
+        default:
+            throw MachOParseError.unsupportedMagic(magic)
+        }
+    }
+
     private func parseFatContainer(magic: UInt32) throws -> MachOContainer {
         let swapped = magic == FAT_CIGAM || magic == FAT_CIGAM_64
         let is64Bit = magic == FAT_MAGIC_64 || magic == FAT_CIGAM_64
@@ -49,7 +67,89 @@ struct MachOFileParser {
         return MachOContainer(kind: .fat, slices: slices)
     }
 
+    private func parseFatMetadataScan(fileURL: URL, fileSize: Int, magic: UInt32) throws -> MachOMetadataScan {
+        let swapped = magic == FAT_CIGAM || magic == FAT_CIGAM_64
+        let is64Bit = magic == FAT_MAGIC_64 || magic == FAT_CIGAM_64
+        let header = try read(fat_header.self, at: 0)
+        let architectureCount = normalize(header.nfat_arch, swapped: swapped)
+
+        let slices = try (0..<Int(architectureCount)).map { index in
+            if is64Bit {
+                let architectureOffset = MemoryLayout<fat_header>.size + index * MemoryLayout<fat_arch_64>.size
+                let architecture = try read(fat_arch_64.self, at: architectureOffset)
+                let sliceOffset = Int(normalize(architecture.offset, swapped: swapped))
+                let sliceMagic = try read(UInt32.self, at: sliceOffset)
+                return try scanSlice(at: sliceOffset, magic: sliceMagic)
+            } else {
+                let architectureOffset = MemoryLayout<fat_header>.size + index * MemoryLayout<fat_arch>.size
+                let architecture = try read(fat_arch.self, at: architectureOffset)
+                let sliceOffset = Int(normalize(architecture.offset, swapped: swapped))
+                let sliceMagic = try read(UInt32.self, at: sliceOffset)
+                return try scanSlice(at: sliceOffset, magic: sliceMagic)
+            }
+        }
+
+        return MachOMetadataScan(
+            fileURL: fileURL,
+            fileSize: fileSize,
+            kind: .fat,
+            slices: slices
+        )
+    }
+
     private func parseSlice(at offset: Int, magic: UInt32) throws -> MachOSlice {
+        let components = try parseSliceComponents(at: offset, magic: magic)
+
+        let symbols = try components.symbolTable.map {
+            try parseSymbols(
+                using: $0,
+                sliceOffset: offset,
+                is64Bit: components.header.is64Bit,
+                swapped: components.swapped
+            )
+        } ?? []
+
+        return MachOSlice(
+            offset: offset,
+            header: components.header,
+            loadCommands: components.loadCommands,
+            installNameInfo: components.installNameInfo,
+            dylibReferences: components.dylibReferences,
+            rpathCommands: components.rpathCommands,
+            buildVersion: components.buildVersion,
+            versionMin: components.versionMin,
+            segments: components.segments,
+            symbolTable: components.symbolTable,
+            symbols: symbols,
+            uuid: components.uuid,
+            codeSignature: components.codeSignature,
+            encryptionInfo: components.encryptionInfo
+        )
+    }
+
+    private func scanSlice(at offset: Int, magic: UInt32) throws -> MachOMetadataSlice {
+        let components = try parseSliceComponents(at: offset, magic: magic)
+
+        return MachOMetadataSlice(
+            offset: offset,
+            header: components.header,
+            loadCommands: components.loadCommands,
+            installNameInfo: components.installNameInfo,
+            dylibReferences: components.dylibReferences,
+            rpathCommands: components.rpathCommands,
+            buildVersion: components.buildVersion,
+            versionMin: components.versionMin,
+            segments: components.segments,
+            symbolTable: components.symbolTable,
+            uuid: components.uuid,
+            codeSignature: components.codeSignature,
+            encryptionInfo: components.encryptionInfo,
+            heavyCollectionEstimate: makeHeavyCollectionEstimate(from: components),
+            isByteSwapped: components.swapped
+        )
+    }
+
+    private func parseSliceComponents(at offset: Int, magic: UInt32) throws -> ParsedSliceComponents {
         let parsedHeader = try parseHeader(at: offset, magic: magic)
         let commandsStart = offset + parsedHeader.headerSize
         let commandsEnd = commandsStart + Int(parsedHeader.info.sizeofCommands)
@@ -132,17 +232,7 @@ struct MachOFileParser {
             cursor = commandEnd
         }
 
-        let symbols = try symbolTable.map {
-            try parseSymbols(
-                using: $0,
-                sliceOffset: offset,
-                is64Bit: parsedHeader.info.is64Bit,
-                swapped: parsedHeader.swapped
-            )
-        } ?? []
-
-        return MachOSlice(
-            offset: offset,
+        return ParsedSliceComponents(
             header: parsedHeader.info,
             loadCommands: loadCommands,
             installNameInfo: installNameInfo,
@@ -152,10 +242,30 @@ struct MachOFileParser {
             versionMin: versionMin,
             segments: segments,
             symbolTable: symbolTable,
-            symbols: symbols,
             uuid: uuid,
             codeSignature: codeSignature,
-            encryptionInfo: encryptionInfo
+            encryptionInfo: encryptionInfo,
+            swapped: parsedHeader.swapped
+        )
+    }
+
+    private func makeHeavyCollectionEstimate(from components: ParsedSliceComponents) -> MachOHeavyCollectionEstimate {
+        let sectionCount = components.segments.reduce(0) { $0 + $1.sections.count }
+        let symbolCount = Int(components.symbolTable?.symbolCount ?? 0)
+        let stringTableSize = Int(components.symbolTable?.stringTableSize ?? 0)
+        let estimatedNodeCount =
+            components.loadCommands.count
+            + components.dylibReferences.count
+            + components.rpathCommands.count
+            + components.segments.count
+            + sectionCount
+            + symbolCount
+            + 10
+
+        return MachOHeavyCollectionEstimate(
+            symbolCount: symbolCount,
+            stringTableSize: stringTableSize,
+            estimatedNodeCount: estimatedNodeCount
         )
     }
 
@@ -397,13 +507,103 @@ struct MachOFileParser {
         )
     }
 
+    func readSymbolPage(
+        slice: MachOMetadataSlice,
+        startIndex: Int,
+        maximumCount: Int
+    ) throws -> MachOSymbolTablePage {
+        guard maximumCount > 0 else {
+            throw MachOSymbolTableReaderError.invalidMaximumCount(maximumCount)
+        }
+        guard let symbolTable = slice.symbolTable else {
+            throw MachOSymbolTableReaderError.missingSymbolTable
+        }
+
+        let totalSymbolCount = Int(symbolTable.symbolCount)
+        guard startIndex >= 0, startIndex < totalSymbolCount else {
+            throw MachOSymbolTableReaderError.startIndexOutOfBounds(
+                startIndex: startIndex,
+                totalSymbolCount: totalSymbolCount
+            )
+        }
+
+        let endIndex = min(totalSymbolCount, startIndex + maximumCount)
+        let symbols = try parseSymbols(
+            using: symbolTable,
+            sliceOffset: slice.offset,
+            is64Bit: slice.header.is64Bit,
+            swapped: slice.isByteSwapped,
+            range: startIndex..<endIndex
+        )
+
+        return MachOSymbolTablePage(
+            startIndex: startIndex,
+            symbols: symbols,
+            totalSymbolCount: totalSymbolCount
+        )
+    }
+
+    func readStringTableBatch(
+        slice: MachOMetadataSlice,
+        startIndex: Int,
+        maximumCount: Int
+    ) throws -> MachOStringTableBatch {
+        guard maximumCount > 0 else {
+            throw MachOStringTableReaderError.invalidMaximumCount(maximumCount)
+        }
+        guard let symbolTable = slice.symbolTable else {
+            throw MachOStringTableReaderError.missingSymbolTable
+        }
+
+        let stringTableStart = slice.offset + Int(symbolTable.stringTableOffset)
+        let stringTableSize = Int(symbolTable.stringTableSize)
+        let stringTableEnd = stringTableStart + stringTableSize
+        guard stringTableStart >= 0, stringTableEnd <= data.count else {
+            throw MachOParseError.outOfBounds(offset: stringTableStart, size: stringTableSize)
+        }
+
+        var entries = [MachOStringTableEntry]()
+        entries.reserveCapacity(maximumCount)
+
+        var totalEntryCount = 0
+        var cursor = stringTableStart
+        while cursor < stringTableEnd {
+            let entryOffset = cursor - stringTableStart
+            let string = String(decoding: data[cursor..<stringTableEnd].prefix { $0 != 0 }, as: UTF8.self)
+            if totalEntryCount >= startIndex, entries.count < maximumCount {
+                entries.append(MachOStringTableEntry(stringTableIndex: entryOffset, string: string))
+            }
+            totalEntryCount += 1
+            cursor += max(string.utf8.count, 0) + 1
+        }
+
+        guard startIndex < totalEntryCount else {
+            throw MachOStringTableReaderError.startIndexOutOfBounds(
+                startIndex: startIndex,
+                totalEntryCount: totalEntryCount
+            )
+        }
+
+        return MachOStringTableBatch(
+            startIndex: startIndex,
+            entries: entries,
+            totalEntryCount: totalEntryCount,
+            totalStringTableSize: stringTableSize
+        )
+    }
+
     private func parseSymbols(
         using symbolTable: SymbolTableInfo,
         sliceOffset: Int,
         is64Bit: Bool,
-        swapped: Bool
+        swapped: Bool,
+        range: Range<Int>? = nil
     ) throws -> [SymbolInfo] {
         let count = Int(symbolTable.symbolCount)
+        let symbolRange = range ?? 0..<count
+        guard symbolRange.lowerBound >= 0, symbolRange.upperBound <= count else {
+            throw MachOParseError.outOfBounds(offset: symbolRange.lowerBound, size: symbolRange.count)
+        }
         let symbolEntrySize = is64Bit ? MemoryLayout<nlist_64>.size : MemoryLayout<nlist>.size
         let symbolsStart = sliceOffset + Int(symbolTable.symbolOffset)
         let symbolsSize = count * symbolEntrySize
@@ -417,7 +617,7 @@ struct MachOFileParser {
             throw MachOParseError.outOfBounds(offset: stringTableStart, size: stringTableSize)
         }
 
-        return try (0..<count).map { index in
+        return try symbolRange.map { index in
             let offset = symbolsStart + index * symbolEntrySize
             if is64Bit {
                 let symbol = try read(nlist_64.self, at: offset)
@@ -590,4 +790,20 @@ private struct ParsedHeader {
     let info: MachOHeaderInfo
     let swapped: Bool
     let headerSize: Int
+}
+
+private struct ParsedSliceComponents {
+    let header: MachOHeaderInfo
+    let loadCommands: [MachOLoadCommandInfo]
+    let installNameInfo: DylibCommandInfo?
+    let dylibReferences: [DylibCommandInfo]
+    let rpathCommands: [RPathCommandInfo]
+    let buildVersion: BuildVersionInfo?
+    let versionMin: VersionMinInfo?
+    let segments: [SegmentInfo]
+    let symbolTable: SymbolTableInfo?
+    let uuid: UUID?
+    let codeSignature: LinkEditDataInfo?
+    let encryptionInfo: EncryptionInfo?
+    let swapped: Bool
 }

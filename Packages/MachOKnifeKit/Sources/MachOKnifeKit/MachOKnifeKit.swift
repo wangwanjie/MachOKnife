@@ -20,6 +20,7 @@ public struct SliceSummary: Sendable {
     public let dylibReferences: [DylibSummary]
     public let rpaths: [String]
     public let segments: [SegmentSummary]
+    public let symbolCount: Int
     public let symbols: [SymbolSummary]
     public let uuid: UUID?
     public let hasCodeSignature: Bool
@@ -105,61 +106,126 @@ public struct DocumentAnalysisService: Sendable {
 
     public func analyze(url: URL) throws -> DocumentAnalysis {
         let container = try MachOContainer.parse(at: url)
-        let slices = container.slices.map { slice in
-            SliceSummary(
-                fileOffset: slice.offset,
-                is64Bit: slice.is64Bit,
-                header: HeaderSummary(
-                    cpuType: slice.header.cpuType,
-                    cpuSubtype: slice.header.cpuSubtype,
-                    fileType: slice.header.fileType,
-                    numberOfCommands: slice.header.numberOfCommands,
-                    sizeofCommands: slice.header.sizeofCommands,
-                    flags: slice.header.flags,
-                    reserved: slice.header.reserved
-                ),
-                loadCommandCount: slice.loadCommands.count,
-                loadCommands: slice.loadCommands.map(makeLoadCommandSummary),
-                platform: slice.buildVersion?.platform ?? slice.versionMin?.platform,
-                minimumOS: slice.buildVersion?.minimumOS ?? slice.versionMin?.minimumOS,
-                sdkVersion: slice.buildVersion?.sdk ?? slice.versionMin?.sdk,
-                installName: slice.installName,
-                dylibReferences: slice.dylibReferences.map { DylibSummary(command: $0.command, path: $0.path) },
-                rpaths: slice.rpaths,
-                segments: slice.segments.map(makeSegmentSummary),
-                symbols: slice.symbols.map {
-                    SymbolSummary(
-                        name: $0.name,
-                        type: $0.type,
-                        sectionNumber: $0.sectionNumber,
-                        description: $0.description,
-                        value: $0.value
-                    )
-                },
-                uuid: slice.uuid,
-                hasCodeSignature: slice.codeSignature != nil,
-                codeSignature: slice.codeSignature.map {
-                    LinkEditDataSummary(
-                        command: $0.command,
-                        dataOffset: $0.dataOffset,
-                        dataSize: $0.dataSize
-                    )
-                },
-                encryptionInfo: slice.encryptionInfo.map {
-                    EncryptionSummary(
-                        command: $0.command,
-                        cryptOffset: $0.cryptOffset,
-                        cryptSize: $0.cryptSize,
-                        cryptID: $0.cryptID
-                    )
-                }
-            )
-        }
-
-        return DocumentAnalysis(
+        return makeAnalysis(
             fileURL: url,
             containerKind: container.kind,
+            slices: container.slices.map(makeSliceSummary)
+        )
+    }
+
+    public func analyze(scan: MachOMetadataScan) throws -> DocumentAnalysis {
+        makeAnalysis(
+            fileURL: scan.fileURL,
+            containerKind: scan.kind,
+            slices: scan.slices.map(makePartialSliceSummary)
+        )
+    }
+
+    private func makeAnalysis(
+        fileURL: URL,
+        containerKind: MachOContainer.Kind,
+        slices: [SliceSummary]
+    ) -> DocumentAnalysis {
+        DocumentAnalysis(
+            fileURL: fileURL,
+            containerKind: containerKind,
             slices: slices
+        )
+    }
+
+    private func makeSliceSummary(_ slice: MachOSlice) -> SliceSummary {
+        SliceSummary(
+            fileOffset: slice.offset,
+            is64Bit: slice.is64Bit,
+            header: HeaderSummary(
+                cpuType: slice.header.cpuType,
+                cpuSubtype: slice.header.cpuSubtype,
+                fileType: slice.header.fileType,
+                numberOfCommands: slice.header.numberOfCommands,
+                sizeofCommands: slice.header.sizeofCommands,
+                flags: slice.header.flags,
+                reserved: slice.header.reserved
+            ),
+            loadCommandCount: slice.loadCommands.count,
+            loadCommands: slice.loadCommands.map(makeLoadCommandSummary),
+            platform: slice.buildVersion?.platform ?? slice.versionMin?.platform,
+            minimumOS: slice.buildVersion?.minimumOS ?? slice.versionMin?.minimumOS,
+            sdkVersion: slice.buildVersion?.sdk ?? slice.versionMin?.sdk,
+            installName: slice.installName,
+            dylibReferences: slice.dylibReferences.map { DylibSummary(command: $0.command, path: $0.path) },
+            rpaths: slice.rpaths,
+            segments: slice.segments.map(makeSegmentSummary),
+            symbolCount: slice.symbols.count,
+            symbols: slice.symbols.map {
+                SymbolSummary(
+                    name: $0.name,
+                    type: $0.type,
+                    sectionNumber: $0.sectionNumber,
+                    description: $0.description,
+                    value: $0.value
+                )
+            },
+            uuid: slice.uuid,
+            hasCodeSignature: slice.codeSignature != nil,
+            codeSignature: slice.codeSignature.map {
+                LinkEditDataSummary(
+                    command: $0.command,
+                    dataOffset: $0.dataOffset,
+                    dataSize: $0.dataSize
+                )
+            },
+            encryptionInfo: slice.encryptionInfo.map {
+                EncryptionSummary(
+                    command: $0.command,
+                    cryptOffset: $0.cryptOffset,
+                    cryptSize: $0.cryptSize,
+                    cryptID: $0.cryptID
+                )
+            }
+        )
+    }
+
+    private func makePartialSliceSummary(_ slice: MachOMetadataSlice) -> SliceSummary {
+        SliceSummary(
+            fileOffset: slice.offset,
+            is64Bit: slice.is64Bit,
+            header: HeaderSummary(
+                cpuType: slice.header.cpuType,
+                cpuSubtype: slice.header.cpuSubtype,
+                fileType: slice.header.fileType,
+                numberOfCommands: slice.header.numberOfCommands,
+                sizeofCommands: slice.header.sizeofCommands,
+                flags: slice.header.flags,
+                reserved: slice.header.reserved
+            ),
+            loadCommandCount: slice.loadCommands.count,
+            loadCommands: slice.loadCommands.map(makeLoadCommandSummary),
+            platform: slice.buildVersion?.platform ?? slice.versionMin?.platform,
+            minimumOS: slice.buildVersion?.minimumOS ?? slice.versionMin?.minimumOS,
+            sdkVersion: slice.buildVersion?.sdk ?? slice.versionMin?.sdk,
+            installName: slice.installName,
+            dylibReferences: slice.dylibReferences.map { DylibSummary(command: $0.command, path: $0.path) },
+            rpaths: slice.rpathCommands.map(\.path),
+            segments: slice.segments.map(makeSegmentSummary),
+            symbolCount: Int(slice.symbolTable?.symbolCount ?? 0),
+            symbols: [],
+            uuid: slice.uuid,
+            hasCodeSignature: slice.codeSignature != nil,
+            codeSignature: slice.codeSignature.map {
+                LinkEditDataSummary(
+                    command: $0.command,
+                    dataOffset: $0.dataOffset,
+                    dataSize: $0.dataSize
+                )
+            },
+            encryptionInfo: slice.encryptionInfo.map {
+                EncryptionSummary(
+                    command: $0.command,
+                    cryptOffset: $0.cryptOffset,
+                    cryptSize: $0.cryptSize,
+                    cryptID: $0.cryptID
+                )
+            }
         )
     }
 

@@ -1,3 +1,4 @@
+import CoreMachO
 import Foundation
 import Testing
 @testable import MachOKnifeKit
@@ -19,6 +20,23 @@ struct DocumentAnalysisServiceTests {
         #expect(analysis.slices.first?.segments.isEmpty == false)
         #expect(analysis.slices.first?.segments.first?.sections.isEmpty == false)
         #expect(analysis.slices.first?.symbols.contains(where: { $0.name.contains("_machoknife_fixture") }) == true)
+    }
+
+    @Test("builds a partial summary from a metadata scan without materializing symbol rows")
+    func buildsAPartialSummaryFromAMetadataScanWithoutMaterializingSymbolRows() throws {
+        let fixtureURL = try MachOKnifeFixtureFactory.makeThinFixture()
+        let service = DocumentAnalysisService()
+        let scan = try MachOMetadataScanner.scan(at: fixtureURL)
+
+        let analysis = try service.analyze(scan: scan)
+        let slice = try #require(analysis.slices.first)
+
+        #expect(analysis.fileURL == fixtureURL)
+        #expect(analysis.containerKind == .thin)
+        #expect(slice.loadCommandCount > 0)
+        #expect(slice.segments.isEmpty == false)
+        #expect(slice.symbols.isEmpty)
+        #expect(slice.symbolCount == Int(scan.slices.first?.symbolTable?.symbolCount ?? 0))
     }
 }
 
