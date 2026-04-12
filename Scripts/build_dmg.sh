@@ -282,9 +282,33 @@ create_pretty_dmg() {
     chflags hidden "$mounted_volume_path/.background" 2>/dev/null || true
     chflags hidden "$mounted_volume_path/.fseventsd" 2>/dev/null || true
 
+    local finder_disk_name=""
+    local finder_attempt=0
+
+    while [[ $finder_attempt -lt 10 ]]; do
+        finder_disk_name="$(osascript <<EOF
+tell application "Finder"
+    if exists disk "$mounted_volume_name" then
+        return "$mounted_volume_name"
+    end if
+end tell
+EOF
+)"
+        if [[ -n "$finder_disk_name" ]]; then
+            break
+        fi
+        finder_attempt=$((finder_attempt + 1))
+        sleep 1
+    done
+
+    if [[ -z "$finder_disk_name" ]]; then
+        echo "error: Finder did not expose mounted DMG volume: $mounted_volume_name" >&2
+        exit 1
+    fi
+
     osascript <<EOF
 tell application "Finder"
-    tell disk "$mounted_volume_name"
+    tell disk "$finder_disk_name"
         open
         set current view of container window to icon view
         set toolbar visible of container window to false
