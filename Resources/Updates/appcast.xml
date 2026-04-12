@@ -4,7 +4,7 @@
         <title>MachOKnife</title>
         <item>
             <title>1.5.0</title>
-            <pubDate>Mon, 13 Apr 2026 02:51:41 +0800</pubDate>
+            <pubDate>Mon, 13 Apr 2026 02:58:22 +0800</pubDate>
             <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.5.0</link>
             <sparkle:version>7</sparkle:version>
             <sparkle:shortVersionString>1.5.0</sparkle:shortVersionString>
@@ -16,11 +16,11 @@
 - 修复关闭文件后工作区仍残留 `Loading Mach-O` / `Scanning Mach-O metadata in the background` 状态文案的问题
 - 修复大文件浏览过程中部分节点明细展示不完整的问题，改善 `__TEXT` 等重区段下的明细可见性
 </description>
-            <enclosure url="https://github.com/wangwanjie/MachOKnife/releases/download/v1.5.0/MachOKnife_V_1.5.0.dmg" length="13660447" type="application/octet-stream" sparkle:edSignature="Ikq+4jwA7CY1pQd/hSd68agJmirGRNvnkeeQy0z31SLUJnkoCqLLD98/QwPd4qkGqwXvhVyebhp9QH+A3jHPDg==" />
+            <enclosure url="https://github.com/wangwanjie/MachOKnife/releases/download/v1.5.0/MachOKnife_V_1.5.0.dmg" length="13662464" type="application/octet-stream" sparkle:edSignature="qDuGbu2BhkxYtslrmVLvY8c38xRYhl161oHPzmZi2CFgNN2a/6KSH/XRmoJAeTJCste5vKd+6Zvth4w28qfuDA==" />
         </item>
         <item>
             <title>1.4.1</title>
-            <pubDate>Mon, 13 Apr 2026 02:51:41 +0800</pubDate>
+            <pubDate>Mon, 13 Apr 2026 02:58:22 +0800</pubDate>
             <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.4.1</link>
             <sparkle:version>6</sparkle:version>
             <sparkle:shortVersionString>1.4.1</sparkle:shortVersionString>
@@ -36,7 +36,7 @@
         </item>
         <item>
             <title>1.4.0</title>
-            <pubDate>Mon, 13 Apr 2026 02:51:41 +0800</pubDate>
+            <pubDate>Mon, 13 Apr 2026 02:58:22 +0800</pubDate>
             <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.4.0</link>
             <sparkle:version>5</sparkle:version>
             <sparkle:shortVersionString>1.4.0</sparkle:shortVersionString>
