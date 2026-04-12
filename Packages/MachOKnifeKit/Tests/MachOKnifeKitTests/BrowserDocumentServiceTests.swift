@@ -1,3 +1,4 @@
+import CoreMachO
 import Foundation
 import Testing
 @testable import MachOKnifeKit
@@ -252,6 +253,77 @@ struct BrowserDocumentServiceTests {
         #expect(targetNode.detailRows.contains(where: { $0.key == "File Type" && $0.value.contains("MH_DYLIB") }))
         #expect(targetNode.children.contains(where: { $0.title == "Header" }))
     }
+
+    @Test("budgeted documents build paged symbol and string-table shells")
+    func budgetedDocumentsBuildPagedSymbolAndStringTableShells() throws {
+        let fixtureURL = try BrowserFixtureFactory.makeSymbolHeavyDynamicLibraryFixture(symbolCount: 520)
+        let service = BrowserDocumentService()
+        let scan = try MachOMetadataScanner.scan(at: fixtureURL)
+
+        let document = try service.loadBudgeted(url: fixtureURL, scan: scan)
+        let rootNode = try #require(document.rootNodes.first)
+        let symbolsNode = try #require(rootNode.children.first(where: { $0.title == "Symbols" }))
+        let stringTablesNode = try #require(rootNode.children.first(where: { $0.title == "String Tables" }))
+
+        #expect(document.kind == .machOFile)
+        #expect(symbolsNode.childCount > 1)
+        #expect(symbolsNode.loadedChildren.isEmpty)
+
+        let firstPageNode = symbolsNode.child(at: 0)
+        #expect(firstPageNode.title.contains("Symbols"))
+        #expect(firstPageNode.title.contains("0-"))
+        #expect(firstPageNode.childCount > 0)
+
+        let firstSymbolNode = firstPageNode.child(at: 0)
+        #expect(firstSymbolNode.detailRows.contains(where: { $0.key == "Name" }))
+
+        let stringTablePageNode = try #require(stringTablesNode.children.first)
+        #expect(stringTablePageNode.title.contains("String Table"))
+        #expect(stringTablePageNode.childCount > 0)
+    }
+
+    @Test("budgeted documents keep decoded objective-c class list entries available")
+    func budgetedDocumentsKeepDecodedObjectiveCClassListEntriesAvailable() throws {
+        let fixtureURL = try BrowserFixtureFactory.makeObjCDynamicLibraryFixture()
+        let service = BrowserDocumentService()
+        let scan = try MachOMetadataScanner.scan(at: fixtureURL)
+
+        let document = try service.loadBudgeted(url: fixtureURL, scan: scan)
+        let rootNode = try #require(document.rootNodes.first)
+        let sectionsNode = try #require(rootNode.children.first(where: { $0.title == "Sections" }))
+        let classListNode = try #require(sectionsNode.children.first(where: {
+            $0.title.contains("__objc_classlist") || $0.title.contains("__objc_nlclslist")
+        }))
+
+        #expect(classListNode.childCount == 1)
+        #expect(classListNode.detailRows.contains(where: {
+            $0.key == "Objective-C Class" && $0.value == "BudgetedFixtureClass"
+        }))
+
+        if classListNode.childCount == 1 {
+            let classNode = classListNode.child(at: 0)
+            #expect(classNode.title == "BudgetedFixtureClass")
+        }
+    }
+
+    @Test("deferred heavy groups isolate load failures to the selected node")
+    func deferredHeavyGroupsIsolateLoadFailuresToTheSelectedNode() throws {
+        let fixtureURL = try BrowserFixtureFactory.makeSymbolHeavyDynamicLibraryFixture(symbolCount: 64)
+        let service = BrowserDocumentService()
+        let scan = try MachOMetadataScanner.scan(at: fixtureURL)
+
+        let document = try service.loadBudgeted(url: fixtureURL, scan: scan)
+        try FileManager.default.removeItem(at: fixtureURL)
+
+        let rootNode = try #require(document.rootNodes.first)
+        let bindingsNode = try #require(rootNode.children.first(where: { $0.title == "Bindings" }))
+
+        #expect(rootNode.children.contains(where: { $0.title == "Header" }))
+
+        let failureNode = bindingsNode.child(at: 0)
+        #expect(failureNode.title.contains("Failed"))
+        #expect(failureNode.detailRows.contains(where: { $0.key == "Status" }))
+    }
 }
 
 private enum BrowserFixtureFactory {
@@ -349,6 +421,41 @@ private enum BrowserFixtureFactory {
             "-target", "x86_64-apple-macos13.0",
             "-c",
             sourceURL.path,
+            "-o",
+            outputURL.path,
+        ]
+        try process.run()
+        process.waitUntilExit()
+        if process.terminationStatus != 0 {
+            throw BrowserFixtureError.compileFailed
+        }
+
+        return outputURL
+    }
+
+    static func makeObjCDynamicLibraryFixture() throws -> URL {
+        let source = """
+        #import <Foundation/Foundation.h>
+        @interface BudgetedFixtureClass : NSObject
+        @end
+        @implementation BudgetedFixtureClass
+        @end
+        """
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+
+        let sourceURL = tempDirectory.appendingPathComponent("budgeted-browser-fixture.m")
+        let outputURL = tempDirectory.appendingPathComponent("libBudgetedBrowserFixture.dylib")
+        try source.write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/clang")
+        process.arguments = [
+            "-target", "x86_64-apple-macos13.0",
+            "-dynamiclib",
+            sourceURL.path,
+            "-framework", "Foundation",
             "-o",
             outputURL.path,
         ]
@@ -478,6 +585,48 @@ private enum BrowserFixtureFactory {
                 "-dynamiclib",
                 sourceURL.path,
                 "-Wl,-install_name,@rpath/libBrowserFixture.dylib",
+                "-o",
+                outputURL.path,
+            ]
+        )
+
+        return outputURL
+    }
+
+    static func makeSymbolHeavyDynamicLibraryFixture(symbolCount: Int) throws -> URL {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+
+        let sourceURL = tempDirectory.appendingPathComponent("browser-symbol-heavy-fixture.c")
+        let outputURL = tempDirectory.appendingPathComponent("libBrowserSymbolHeavyFixture.dylib")
+
+        let functionDefinitions = (0..<symbolCount).map { index in
+            "int browser_symbol_heavy_fixture_\(index)(void) { return \(index); }"
+        }.joined(separator: "\n")
+        let exportCalls = (0..<symbolCount).map { index in
+            "sum += browser_symbol_heavy_fixture_\(index)();"
+        }.joined(separator: "\n    ")
+        let source = """
+        \(functionDefinitions)
+
+        int browser_symbol_heavy_fixture_entry(void) {
+            int sum = 0;
+            \(exportCalls)
+            return sum;
+        }
+        """
+
+        try source.write(to: sourceURL, atomically: true, encoding: .utf8)
+        try runTool(
+            launchPath: "/usr/bin/clang",
+            arguments: [
+                "-target", "x86_64-apple-macos13.0",
+                "-dynamiclib",
+                sourceURL.path,
+                "-Wl,-headerpad,0x4000",
+                "-Wl,-install_name,@rpath/libBrowserSymbolHeavyFixture.dylib",
+                "-Wl,-rpath,@loader_path/Frameworks",
                 "-o",
                 outputURL.path,
             ]
