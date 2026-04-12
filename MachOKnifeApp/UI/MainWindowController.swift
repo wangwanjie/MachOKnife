@@ -141,7 +141,7 @@ final class MainWindowController: NSWindowController {
     }
 
     func closeCurrentDocument() {
-        guard viewModel.hasLoadedDocument else { return }
+        guard viewModel.currentFileURL != nil else { return }
 
         let shouldClose = confirmCloseCurrentDocument?(window) ?? presentCloseConfirmation()
         guard shouldClose else { return }

@@ -17,6 +17,9 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
     private lazy var contextMenu = makeContextMenu()
     private var allOutlineItems: [BrowserNode] = []
     private var outlineItems: [BrowserNode] = []
+    private var currentLoadingState: WorkspaceViewModel.LoadingState = .idle
+    private var currentLoadingDetailText = ""
+    private var currentAnalysisMode: AnalysisMode = .normal
     private var cancellables = Set<AnyCancellable>()
 
     init(viewModel: WorkspaceViewModel) {
@@ -207,6 +210,22 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
                 self?.applySelection(nodeID)
             }
             .store(in: &cancellables)
+
+        Publishers.CombineLatest3(
+            viewModel.$loadingState,
+            viewModel.$loadingDetailText,
+            viewModel.$analysisMode
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] loadingState, loadingDetailText, analysisMode in
+            guard let self else { return }
+            currentLoadingState = loadingState
+            currentLoadingDetailText = loadingDetailText
+            currentAnalysisMode = analysisMode
+            updateDocumentSummary()
+            updatePlaceholder()
+        }
+        .store(in: &cancellables)
     }
 
     private func applyFilter(query: String) {
@@ -305,21 +324,39 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
     private func updatePlaceholder() {
         let hasDocument = !allOutlineItems.isEmpty
         let hasVisibleItems = !outlineItems.isEmpty
-        placeholderTitleLabel.stringValue = hasDocument ? L10n.sourceListNoResults : L10n.sourceListEmptyTitle
-        placeholderSubtitleLabel.stringValue = hasDocument ? "\"\(searchField.stringValue)\"" : L10n.sourceListEmptySubtitle
+        if hasDocument {
+            placeholderTitleLabel.stringValue = L10n.sourceListNoResults
+            placeholderSubtitleLabel.stringValue = "\"\(searchField.stringValue)\""
+        } else if currentLoadingState == .loading {
+            placeholderTitleLabel.stringValue = L10n.workspaceLoadingTitle
+            placeholderSubtitleLabel.stringValue = currentLoadingDetailText
+        } else {
+            placeholderTitleLabel.stringValue = L10n.sourceListEmptyTitle
+            placeholderSubtitleLabel.stringValue = L10n.sourceListEmptySubtitle
+        }
         let shouldShowPlaceholder = !hasVisibleItems
         placeholderTitleLabel.superview?.isHidden = !shouldShowPlaceholder
         outlineView.enclosingScrollView?.isHidden = shouldShowPlaceholder
     }
 
     private func updateDocumentSummary() {
+        if allOutlineItems.isEmpty, currentLoadingState == .loading {
+            documentSummaryLabel.stringValue = currentLoadingDetailText
+            documentSummaryLabel.toolTip = currentLoadingDetailText
+            documentSummaryLabel.isHidden = currentLoadingDetailText.isEmpty
+            return
+        }
+
         guard let rootNode = allOutlineItems.first, let subtitle = rootNode.subtitle, subtitle.isEmpty == false else {
             documentSummaryLabel.stringValue = ""
             documentSummaryLabel.isHidden = true
             return
         }
 
-        documentSummaryLabel.stringValue = subtitle
+        let summary = currentAnalysisMode == .budgetedLargeFile
+            ? "\(subtitle) • Budgeted"
+            : subtitle
+        documentSummaryLabel.stringValue = summary
         documentSummaryLabel.toolTip = rootNode.title
         documentSummaryLabel.isHidden = false
     }

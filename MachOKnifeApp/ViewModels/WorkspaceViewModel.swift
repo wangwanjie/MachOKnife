@@ -5,7 +5,7 @@ import MachOKnifeKit
 
 @MainActor
 final class WorkspaceViewModel {
-    enum BrowserAddressMode: String {
+    enum BrowserAddressMode: String, Sendable {
         case raw
         case rva
     }
@@ -16,7 +16,7 @@ final class WorkspaceViewModel {
         static let pageSize = bytesPerLine * linesPerPage
     }
 
-    enum Selection: Hashable {
+    enum Selection: Hashable, Sendable {
         case document
         case slice(Int)
         case header(Int)
@@ -33,10 +33,18 @@ final class WorkspaceViewModel {
         case symbol(sliceIndex: Int, symbolIndex: Int)
     }
 
-    struct OutlineItem: Hashable {
+    struct OutlineItem: Hashable, Sendable {
         let title: String
         let selection: Selection?
         let children: [OutlineItem]
+    }
+
+    enum LoadingState: Equatable, Sendable {
+        case idle
+        case loading
+        case ready
+        case degraded
+        case error
     }
 
     @Published private(set) var currentFileURL: URL?
@@ -58,12 +66,33 @@ final class WorkspaceViewModel {
     @Published private(set) var browserHexText = ""
     @Published private(set) var browserHexRows: [BrowserHexRow] = []
     @Published private(set) var browserHexPageLabel = ""
+    @Published private(set) var loadingState: LoadingState = .idle
+    @Published private(set) var analysisMode: AnalysisMode = .normal
+    @Published private(set) var loadingDetailText = ""
 
-    private let analysisService = DocumentAnalysisService()
-    private let browserDocumentService = BrowserDocumentService()
-    private let editingService = DocumentEditingService()
+    private let analysisBudget: AnalysisBudget
+    private let analysisService: DocumentAnalysisService
+    private let browserDocumentService: BrowserDocumentService
+    private let editingService: DocumentEditingService
+    private let documentLoadService: WorkspaceDocumentLoadService
     private var editableSlicesByIndex: [Int: EditableSliceViewModel] = [:]
     private var browserHexPageIndex = 0
+    private var activeLoadTask: Task<Void, Never>?
+    private var activeLoadRequestID: UUID?
+
+    init(
+        analysisBudget: AnalysisBudget = .workspaceDefault,
+        analysisService: DocumentAnalysisService = DocumentAnalysisService(),
+        browserDocumentService: BrowserDocumentService = BrowserDocumentService(),
+        editingService: DocumentEditingService = DocumentEditingService(),
+        documentLoadService: WorkspaceDocumentLoadService = .init()
+    ) {
+        self.analysisBudget = analysisBudget
+        self.analysisService = analysisService
+        self.browserDocumentService = browserDocumentService
+        self.editingService = editingService
+        self.documentLoadService = documentLoadService
+    }
 
     var hasPendingEdits: Bool {
         do {
@@ -98,6 +127,7 @@ final class WorkspaceViewModel {
     }
 
     func closeCurrentDocument() {
+        cancelActiveLoad()
         resetWorkspaceState(currentFileURL: nil, errorMessage: nil)
     }
 
@@ -199,37 +229,223 @@ final class WorkspaceViewModel {
         let previousAnalysis = analysis
         let previousDraftsByIndex = editableSlicesByIndex
 
+        cancelActiveLoad()
+
+        if shouldUseStagedLoading(for: url) {
+            beginStagedLoad(
+                at: url,
+                preservingDrafts: preservingDrafts,
+                preferredSelection: preferredSelection,
+                previousAnalysis: previousAnalysis,
+                previousDraftsByIndex: previousDraftsByIndex
+            )
+            return true
+        }
+
+        return loadSynchronously(
+            at: url,
+            preservingDrafts: preservingDrafts,
+            preferredSelection: preferredSelection,
+            previousAnalysis: previousAnalysis,
+            previousDraftsByIndex: previousDraftsByIndex
+        )
+    }
+
+    private func beginStagedLoad(
+        at url: URL,
+        preservingDrafts: Bool,
+        preferredSelection: Selection?,
+        previousAnalysis: DocumentAnalysis?,
+        previousDraftsByIndex: [Int: EditableSliceViewModel]
+    ) {
+        let requestID = UUID()
+        activeLoadRequestID = requestID
+        prepareForBackgroundLoad(currentFileURL: url)
+
+        let publishStagedResult: @MainActor @Sendable (Result<WorkspaceDocumentLoadService.MetadataStage, any Error>) -> Void = { result in
+            guard self.activeLoadRequestID == requestID else { return }
+
+            switch result {
+            case let .success(metadataStage):
+                self.completeStagedLoad(
+                    metadataStage,
+                    at: url,
+                    preservingDrafts: preservingDrafts,
+                    preferredSelection: preferredSelection,
+                    previousAnalysis: previousAnalysis,
+                    previousDraftsByIndex: previousDraftsByIndex
+                )
+            case .failure:
+                _ = self.loadSynchronously(
+                    at: url,
+                    preservingDrafts: preservingDrafts,
+                    preferredSelection: preferredSelection,
+                    previousAnalysis: previousAnalysis,
+                    previousDraftsByIndex: previousDraftsByIndex
+                )
+            }
+        }
+
+        activeLoadTask = Task.detached(priority: .userInitiated) { [analysisBudget, documentLoadService] in
+            let result: Result<WorkspaceDocumentLoadService.MetadataStage, any Error>
+
+            do {
+                result = .success(try documentLoadService.loadMetadataStage(
+                    at: url,
+                    analysisBudget: analysisBudget
+                ))
+            } catch {
+                result = .failure(error)
+            }
+
+            guard Task.isCancelled == false else { return }
+            await publishStagedResult(result)
+        }
+    }
+
+    private func completeStagedLoad(
+        _ metadataStage: WorkspaceDocumentLoadService.MetadataStage,
+        at url: URL,
+        preservingDrafts: Bool,
+        preferredSelection: Selection?,
+        previousAnalysis: DocumentAnalysis?,
+        previousDraftsByIndex: [Int: EditableSliceViewModel]
+    ) {
+        activeLoadTask = nil
+
+        switch metadataStage.decision.mode {
+        case .normal:
+            _ = loadSynchronously(
+                at: url,
+                preservingDrafts: preservingDrafts,
+                preferredSelection: preferredSelection,
+                previousAnalysis: previousAnalysis,
+                previousDraftsByIndex: previousDraftsByIndex
+            )
+        case .budgetedLargeFile:
+            do {
+                let browserDocument = try browserDocumentService.loadBudgeted(
+                    url: url,
+                    scan: metadataStage.scan
+                )
+                applyLoadedDocument(
+                    url: url,
+                    analysis: metadataStage.analysis,
+                    browserDocument: browserDocument,
+                    preservingDrafts: preservingDrafts,
+                    preferredSelection: preferredSelection,
+                    previousAnalysis: previousAnalysis,
+                    previousDraftsByIndex: previousDraftsByIndex,
+                    loadingState: .degraded,
+                    analysisMode: .budgetedLargeFile,
+                    loadingDetailText: L10n.workspaceLoadingDeferredCollections
+                )
+            } catch {
+                resetWorkspaceState(currentFileURL: url, errorMessage: error.localizedDescription)
+            }
+        }
+    }
+
+    @discardableResult
+    private func loadSynchronously(
+        at url: URL,
+        preservingDrafts: Bool,
+        preferredSelection: Selection?,
+        previousAnalysis: DocumentAnalysis?,
+        previousDraftsByIndex: [Int: EditableSliceViewModel]
+    ) -> Bool {
         do {
             let browserDocument = try browserDocumentService.load(url: url)
             let analysis = try? analysisService.analyze(url: url)
-            currentFileURL = url
-            self.analysis = analysis
-            self.browserDocument = browserDocument
-            browserOutlineRootNodes = browserDocument.rootNodes
-            errorMessage = nil
-            outlineItems = analysis.map { makeOutlineItems(for: $0, fileURL: url) } ?? []
-            editableSlicesByIndex = analysis.map(makeEditableSlices) ?? [:]
-            browserHexPageIndex = 0
-
-            if preservingDrafts, let previousAnalysis, let analysis {
-                mergeDrafts(from: previousDraftsByIndex, previousAnalysis: previousAnalysis, newAnalysis: analysis)
-            }
-
-            let restoredSelection: Selection?
-            if let analysis {
-                let fallbackSelection: Selection? = analysis.slices.isEmpty ? .document : .slice(0)
-                restoredSelection = validatedSelection(preferredSelection ?? fallbackSelection, in: analysis)
-            } else {
-                restoredSelection = nil
-            }
-
-            select(restoredSelection)
-            selectBrowserNode(browserDocument.rootNodes.first)
+            applyLoadedDocument(
+                url: url,
+                analysis: analysis,
+                browserDocument: browserDocument,
+                preservingDrafts: preservingDrafts,
+                preferredSelection: preferredSelection,
+                previousAnalysis: previousAnalysis,
+                previousDraftsByIndex: previousDraftsByIndex,
+                loadingState: .ready,
+                analysisMode: .normal,
+                loadingDetailText: ""
+            )
             return true
         } catch {
             resetWorkspaceState(currentFileURL: url, errorMessage: error.localizedDescription)
             return false
         }
+    }
+
+    private func applyLoadedDocument(
+        url: URL,
+        analysis: DocumentAnalysis?,
+        browserDocument: BrowserDocument,
+        preservingDrafts: Bool,
+        preferredSelection: Selection?,
+        previousAnalysis: DocumentAnalysis?,
+        previousDraftsByIndex: [Int: EditableSliceViewModel],
+        loadingState: LoadingState,
+        analysisMode: AnalysisMode,
+        loadingDetailText: String
+    ) {
+        activeLoadTask = nil
+        activeLoadRequestID = nil
+        currentFileURL = url
+        self.analysis = analysis
+        self.browserDocument = browserDocument
+        browserOutlineRootNodes = browserDocument.rootNodes
+        errorMessage = nil
+        outlineItems = analysis.map { makeOutlineItems(for: $0, fileURL: url) } ?? []
+        editableSlicesByIndex = analysis.map(makeEditableSlices) ?? [:]
+        browserHexPageIndex = 0
+        self.loadingState = loadingState
+        self.analysisMode = analysisMode
+        self.loadingDetailText = loadingDetailText
+
+        if preservingDrafts, let previousAnalysis, let analysis {
+            mergeDrafts(from: previousDraftsByIndex, previousAnalysis: previousAnalysis, newAnalysis: analysis)
+        }
+
+        let restoredSelection: Selection?
+        if let analysis {
+            let fallbackSelection: Selection? = analysis.slices.isEmpty ? .document : .slice(0)
+            restoredSelection = validatedSelection(preferredSelection ?? fallbackSelection, in: analysis)
+        } else {
+            restoredSelection = nil
+        }
+
+        select(restoredSelection)
+        selectBrowserNode(browserDocument.rootNodes.first)
+    }
+
+    private func prepareForBackgroundLoad(currentFileURL: URL) {
+        self.currentFileURL = currentFileURL
+        analysis = nil
+        outlineItems = []
+        selection = nil
+        detailText = ""
+        inspectorText = ""
+        previewText = ""
+        editableSlice = nil
+        selectedSliceSummary = nil
+        editableSlicesByIndex = [:]
+        errorMessage = nil
+        loadingState = .loading
+        analysisMode = .normal
+        loadingDetailText = L10n.workspaceLoadingAnalyzing
+        resetBrowserState()
+    }
+
+    private func shouldUseStagedLoading(for url: URL) -> Bool {
+        let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        let threshold = max(1, analysisBudget.maximumFileSize / 2)
+        return fileSize > threshold
+    }
+
+    private func cancelActiveLoad() {
+        activeLoadTask?.cancel()
+        activeLoadTask = nil
+        activeLoadRequestID = nil
     }
 
     private func updateDetailOutputs() {
@@ -254,7 +470,7 @@ final class WorkspaceViewModel {
                 \(L10n.viewerFileTypeLabel): \(formatHex(slice.header.fileType))
                 \(L10n.viewerLoadCommandCountLabel): \(slice.loadCommandCount)
                 \(L10n.viewerSegmentCountLabel): \(slice.segments.count)
-                \(L10n.viewerSymbolCountLabel): \(slice.symbols.count)
+                \(L10n.viewerSymbolCountLabel): \(slice.symbolCount)
                 """
             }.joined(separator: "\n\n")
 
@@ -272,7 +488,7 @@ final class WorkspaceViewModel {
             \(L10n.viewerFileTypeLabel): \(formatHex(slice.header.fileType))
             \(L10n.viewerLoadCommandCountLabel): \(slice.loadCommandCount)
             \(L10n.viewerSegmentCountLabel): \(slice.segments.count)
-            \(L10n.viewerSymbolCountLabel): \(slice.symbols.count)
+            \(L10n.viewerSymbolCountLabel): \(slice.symbolCount)
             \(L10n.viewerInstallNameLabel): \(slice.installName ?? L10n.viewerNone)
             \(L10n.viewerUUIDLabel): \(slice.uuid?.uuidString ?? L10n.viewerNone)
             """
@@ -472,11 +688,15 @@ final class WorkspaceViewModel {
 
             detailText = """
             \(L10n.viewerSymbolsSection)
-            \(L10n.viewerCountLabel): \(slice.symbols.count)
+            \(L10n.viewerCountLabel): \(slice.symbolCount)
             """
-            inspectorText = slice.symbols.prefix(200).enumerated().map { symbolIndex, symbol in
-                "\(symbolIndex). \(symbol.name.isEmpty ? L10n.viewerAnonymous : symbol.name)  value=\(formatHex(symbol.value))"
-            }.joined(separator: "\n")
+            if slice.symbols.isEmpty, slice.symbolCount > 0 {
+                inspectorText = L10n.viewerDeferredSymbolsMessage(slice.symbolCount)
+            } else {
+                inspectorText = slice.symbols.prefix(200).enumerated().map { symbolIndex, symbol in
+                    "\(symbolIndex). \(symbol.name.isEmpty ? L10n.viewerAnonymous : symbol.name)  value=\(formatHex(symbol.value))"
+                }.joined(separator: "\n")
+            }
 
         case let .symbol(sliceIndex, symbolIndex):
             guard
@@ -506,6 +726,8 @@ final class WorkspaceViewModel {
     }
 
     private func resetWorkspaceState(currentFileURL: URL?, errorMessage: String?) {
+        activeLoadTask = nil
+        activeLoadRequestID = nil
         self.currentFileURL = currentFileURL
         analysis = nil
         outlineItems = []
@@ -517,6 +739,9 @@ final class WorkspaceViewModel {
         selectedSliceSummary = nil
         editableSlicesByIndex = [:]
         self.errorMessage = errorMessage
+        loadingState = errorMessage == nil ? .idle : .error
+        analysisMode = .normal
+        loadingDetailText = errorMessage ?? ""
         resetBrowserState()
     }
 
@@ -635,8 +860,8 @@ final class WorkspaceViewModel {
 
     private func browserHexPageCount() -> Int {
         guard let browserDocument else { return 1 }
-        if browserSelectedNode?.dataRange != nil {
-            return 1
+        if let browserSelectedNode, browserSelectedNode.dataRange != nil {
+            return selectionHexPageCount(for: browserSelectedNode, in: browserDocument)
         }
         switch effectiveHexSource(for: browserSelectedNode, in: browserDocument) {
         case .unavailable:
@@ -666,29 +891,70 @@ final class WorkspaceViewModel {
             browserHexText = reason
             browserHexRows = []
             browserHexPageLabel = ""
-        case let .file(url, size):
-            let clampedOffset = max(0, min(dataRange.offset, max(size - 1, 0)))
-            let remaining = max(0, size - clampedOffset)
-            let clampedLength = min(dataRange.length, remaining)
-            guard clampedLength > 0 else {
+        case let .file(url, _):
+            guard
+                let selection = clampedSelectionHexContext(for: node, in: browserDocument),
+                selection.length > 0
+            else {
                 browserHexText = L10n.workspaceHexUnavailable
                 browserHexRows = []
                 browserHexPageLabel = ""
                 return
             }
 
+            let pageCount = max(1, Int(ceil(Double(selection.length) / Double(BrowserHexLayout.pageSize))))
+            browserHexPageIndex = min(browserHexPageIndex, pageCount - 1)
+            let pageOffset = browserHexPageIndex * BrowserHexLayout.pageSize
+            let pageLength = min(BrowserHexLayout.pageSize, selection.length - pageOffset)
+
             let rows = (try? renderHexSelectionRows(
                 url: url,
-                offset: clampedOffset,
-                length: clampedLength,
-                rawBaseAddress: Int(node.rawAddress ?? UInt64(clampedOffset)),
-                rvaBaseAddress: Int(node.rvaAddress ?? UInt64(clampedOffset)),
+                offset: selection.offset + pageOffset,
+                length: pageLength,
+                rawBaseAddress: selection.rawBaseAddress + pageOffset,
+                rvaBaseAddress: selection.rvaBaseAddress + pageOffset,
                 addressMode: browserAddressMode
             )) ?? []
             browserHexRows = rows
             browserHexText = rows.isEmpty ? L10n.workspaceHexUnavailable : renderHex(rows)
-            browserHexPageLabel = "\(clampedLength) bytes"
+            browserHexPageLabel = pageCount > 1
+                ? "\(browserHexPageIndex + 1) / \(pageCount) (\(selection.length) bytes)"
+                : "\(selection.length) bytes"
         }
+    }
+
+    private func selectionHexPageCount(for node: BrowserNode, in browserDocument: BrowserDocument) -> Int {
+        guard let selection = clampedSelectionHexContext(for: node, in: browserDocument) else {
+            return 1
+        }
+        return max(1, Int(ceil(Double(max(selection.length, 1)) / Double(BrowserHexLayout.pageSize))))
+    }
+
+    private func clampedSelectionHexContext(
+        for node: BrowserNode,
+        in browserDocument: BrowserDocument
+    ) -> (offset: Int, length: Int, rawBaseAddress: Int, rvaBaseAddress: Int)? {
+        guard let dataRange = node.dataRange else {
+            return nil
+        }
+
+        guard case let .file(_, size) = effectiveHexSource(for: node, in: browserDocument) else {
+            return nil
+        }
+
+        let clampedOffset = max(0, min(dataRange.offset, max(size - 1, 0)))
+        let remaining = max(0, size - clampedOffset)
+        let clampedLength = min(dataRange.length, remaining)
+        guard clampedLength > 0 else {
+            return nil
+        }
+
+        return (
+            offset: clampedOffset,
+            length: clampedLength,
+            rawBaseAddress: Int(node.rawAddress ?? UInt64(clampedOffset)),
+            rvaBaseAddress: Int(node.rvaAddress ?? UInt64(clampedOffset))
+        )
     }
 
     private func renderHexPageRows(url: URL, pageIndex: Int, fileSize: Int) throws -> [BrowserHexRow] {

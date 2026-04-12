@@ -48,6 +48,8 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
     private var detailNode: BrowserNode?
     private var hexDataSource: HexTableDataSource?
     private var hexEmptyMessage = ""
+    private var currentLoadingState: WorkspaceViewModel.LoadingState = .idle
+    private var currentLoadingDetailText = ""
     private var cancellables = Set<AnyCancellable>()
     private var displayMode: DisplayMode = .detail {
         didSet {
@@ -126,8 +128,7 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
     }
 
     func reloadLocalization() {
-        emptyStateTitleLabel.stringValue = L10n.workspaceEmptyTitle
-        emptyStateSubtitleLabel.stringValue = L10n.workspaceEmptySubtitle
+        updateEmptyState()
         openButton.title = L10n.workspaceEmptyOpenButton
         addressModeSelector.setLabel(L10n.workspaceAddressRaw, forSegment: 0)
         addressModeSelector.setLabel(L10n.workspaceAddressRVA, forSegment: 1)
@@ -335,6 +336,25 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
                 detailEmptyLabel.stringValue = L10n.workspaceDetailEmpty
                 refreshSelection(selectedNode)
                 refreshHexPresentation(document: browserDocument, node: selectedNode)
+                if showContent == false {
+                    updateEmptyState()
+                }
+            }
+        }
+        .store(in: &cancellables)
+
+        Publishers.CombineLatest(
+            viewModel.$loadingState,
+            viewModel.$loadingDetailText
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] loadingState, loadingDetailText in
+            guard let self else { return }
+            currentLoadingState = loadingState
+            currentLoadingDetailText = loadingDetailText
+            let showContent = browserDocument != nil || viewModel.errorMessage != nil
+            if showContent == false {
+                updateEmptyState()
             }
         }
         .store(in: &cancellables)
@@ -348,6 +368,18 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
                 self?.refreshHexPresentation(document: self?.browserDocument, node: self?.viewModel.browserSelectedNode)
             }
             .store(in: &cancellables)
+    }
+
+    private func updateEmptyState() {
+        if currentLoadingState == .loading {
+            emptyStateTitleLabel.stringValue = L10n.workspaceLoadingTitle
+            emptyStateSubtitleLabel.stringValue = currentLoadingDetailText
+            openButton.isHidden = true
+        } else {
+            emptyStateTitleLabel.stringValue = L10n.workspaceEmptyTitle
+            emptyStateSubtitleLabel.stringValue = L10n.workspaceEmptySubtitle
+            openButton.isHidden = false
+        }
     }
 
     private func detailCell(for tableColumn: NSTableColumn, row: BrowserDetailRow) -> NSView? {

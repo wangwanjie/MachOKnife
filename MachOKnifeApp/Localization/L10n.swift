@@ -139,6 +139,9 @@ enum L10n {
     static var workspaceEmptyTitle: String { text("workspace.empty.title", fallback: "Open a Mach-O to begin") }
     static var workspaceEmptySubtitle: String { text("workspace.empty.subtitle", fallback: "Drop a Mach-O, dylib, framework, or archive here, or choose Open to analyze it.") }
     static var workspaceEmptyOpenButton: String { text("workspace.empty.open", fallback: "Open File") }
+    static var workspaceLoadingTitle: String { text("workspace.loading.title", fallback: "Loading Mach-O") }
+    static var workspaceLoadingAnalyzing: String { text("workspace.loading.analyzing", fallback: "Scanning Mach-O metadata in the background.") }
+    static var workspaceLoadingDeferredCollections: String { text("workspace.loading.deferred", fallback: "Large-file mode is active. Heavy collections are deferred until you expand them.") }
     static var workspaceAddressRaw: String { text("workspace.address.raw", fallback: "RAW") }
     static var workspaceAddressRVA: String { text("workspace.address.rva", fallback: "RVA") }
     static var workspaceDetailsTab: String { text("workspace.details.tab", fallback: "Detail") }
@@ -176,6 +179,14 @@ enum L10n {
             "nodeInfo.copyLarge.message",
             fallback: "The selected node contains %d lines. Copying a large block of text may stall the app. Export it to a file instead?",
             lineCount
+        )
+    }
+
+    static func viewerDeferredSymbolsMessage(_ count: Int) -> String {
+        format(
+            "workspace.viewer.symbols.deferred",
+            fallback: "Showing the metadata shell. %d symbols are available through deferred browser pages.",
+            count
         )
     }
     static var toolbarAnalyze: String { text("workspace.toolbar.analyze", fallback: "Analyze") }

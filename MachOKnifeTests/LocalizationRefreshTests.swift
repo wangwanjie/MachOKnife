@@ -1,5 +1,7 @@
 import AppKit
+import CoreMachO
 import Foundation
+import MachOKnifeKit
 import Testing
 @testable import MachOKnife
 
@@ -26,6 +28,95 @@ struct LocalizationRefreshTests {
         #expect(controller.viewModel.currentFileURL == nil)
         #expect(controller.viewModel.browserOutlineRootNodes.isEmpty)
         #expect(controller.viewModel.browserDetailText.isEmpty)
+    }
+
+    @Test("close file clears a staged load that is still in progress")
+    func closeFileClearsAStagedLoadThatIsStillInProgress() async throws {
+        let fixtureURL = try makeEditableFixtureCopy()
+        let budget = AnalysisBudget(
+            maximumFileSize: 1,
+            maximumSymbolCount: .max,
+            maximumStringTableSize: .max,
+            maximumEstimatedNodeCount: .max
+        )
+        let controller = MainWindowController(
+            viewModel: WorkspaceViewModel(
+                analysisBudget: budget,
+                documentLoadService: WorkspaceDocumentLoadService { url, analysisBudget in
+                    Thread.sleep(forTimeInterval: 0.2)
+                    let scan = try MachOContainer.scan(at: url)
+                    return WorkspaceDocumentLoadService.MetadataStage(
+                        scan: scan,
+                        decision: analysisBudget.classify(scan: scan),
+                        analysis: try DocumentAnalysisService().analyze(scan: scan)
+                    )
+                }
+            )
+        )
+
+        controller.confirmCloseCurrentDocument = { (_: NSWindow?) in true }
+
+        #expect(controller.openDocument(at: fixtureURL))
+        #expect(controller.viewModel.loadingState == WorkspaceViewModel.LoadingState.loading)
+        #expect(controller.viewModel.hasLoadedDocument == false)
+        #expect(controller.viewModel.currentFileURL == fixtureURL)
+
+        controller.closeCurrentDocument()
+
+        #expect(controller.viewModel.currentFileURL == nil)
+        #expect(controller.viewModel.loadingState == WorkspaceViewModel.LoadingState.idle)
+        #expect(controller.viewModel.loadingDetailText.isEmpty)
+        #expect(controller.viewModel.browserDocument == nil)
+        #expect(controller.viewModel.browserOutlineRootNodes.isEmpty)
+
+        try? await Task.sleep(nanoseconds: 400_000_000)
+
+        #expect(controller.viewModel.currentFileURL == nil)
+        #expect(controller.viewModel.loadingState == WorkspaceViewModel.LoadingState.idle)
+        #expect(controller.viewModel.browserDocument == nil)
+    }
+
+    @Test("close file clears stale loading copy after a staged document finishes loading")
+    func closeFileClearsStaleLoadingCopyAfterAStagedDocumentFinishesLoading() async throws {
+        let fixtureURL = try makeEditableFixtureCopy()
+        let budget = AnalysisBudget(
+            maximumFileSize: 1,
+            maximumSymbolCount: .max,
+            maximumStringTableSize: .max,
+            maximumEstimatedNodeCount: .max
+        )
+        let scan = try MachOContainer.scan(at: fixtureURL)
+        let metadataStage = WorkspaceDocumentLoadService.MetadataStage(
+            scan: scan,
+            decision: budget.classify(scan: scan),
+            analysis: try DocumentAnalysisService().analyze(scan: scan)
+        )
+        let controller = MainWindowController(
+            viewModel: WorkspaceViewModel(
+                analysisBudget: budget,
+                documentLoadService: WorkspaceDocumentLoadService { _, _ in metadataStage }
+            )
+        )
+        _ = try #require(controller.window)
+        controller.confirmCloseCurrentDocument = { (_: NSWindow?) in true }
+
+        #expect(controller.openDocument(at: fixtureURL))
+
+        let deadline = Date().addingTimeInterval(2)
+        while controller.viewModel.browserDocument == nil, Date() < deadline {
+            pumpRunLoop(for: 0.05)
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        #expect(controller.viewModel.browserDocument != nil)
+
+        controller.closeCurrentDocument()
+        pumpRunLoop(for: 0.2)
+
+        let visibleTexts = visibleWindowTexts(in: controller.window)
+        #expect(visibleTexts.contains(L10n.workspaceEmptyTitle))
+        #expect(visibleTexts.contains(L10n.workspaceLoadingTitle) == false)
+        #expect(visibleTexts.contains(L10n.workspaceLoadingAnalyzing) == false)
     }
 
     @Test("main and preferences windows refresh localized titles immediately after language changes")
@@ -405,6 +496,33 @@ struct LocalizationRefreshTests {
 
     private func pumpRunLoop(for duration: TimeInterval) {
         RunLoop.main.run(until: Date().addingTimeInterval(duration))
+    }
+
+    private func visibleWindowTexts(in window: NSWindow?) -> [String] {
+        guard let contentView = window?.contentView else { return [] }
+        return collectVisibleTexts(in: contentView)
+    }
+
+    private func collectVisibleTexts(in view: NSView) -> [String] {
+        guard view.isHidden == false else { return [] }
+
+        var texts: [String] = []
+        if let textField = view as? NSTextField {
+            let text = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.isEmpty == false {
+                texts.append(text)
+            }
+        } else if let button = view as? NSButton {
+            let text = button.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.isEmpty == false {
+                texts.append(text)
+            }
+        }
+
+        for subview in view.subviews {
+            texts.append(contentsOf: collectVisibleTexts(in: subview))
+        }
+        return texts
     }
 
     private func mirrorValue(named name: String, from object: Any) -> Any? {

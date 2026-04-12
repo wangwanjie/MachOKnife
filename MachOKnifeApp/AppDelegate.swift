@@ -346,7 +346,7 @@ extension AppDelegate: NSMenuItemValidation {
             return updateManager.status().canCheckForUpdates
         case #selector(closeDocument(_:)):
             guard
-                mainWindowController?.hasLoadedDocument == true,
+                mainWindowController?.hasCurrentFileURL == true,
                 let mainWindow = mainWindowController?.window
             else {
                 return false

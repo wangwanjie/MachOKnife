@@ -196,6 +196,84 @@ struct WorkspaceViewModelTests {
         #expect(sectionTitles.contains("Symbols"))
     }
 
+    @Test("budgeted documents enter a loading state and then expose a deferred metadata shell")
+    func budgetedDocumentsEnterALoadingStateAndThenExposeADeferredMetadataShell() async throws {
+        let fixtureURL = try makeEditableFixtureCopy()
+        let budget = AnalysisBudget(
+            maximumFileSize: 1,
+            maximumSymbolCount: .max,
+            maximumStringTableSize: .max,
+            maximumEstimatedNodeCount: .max
+        )
+        let scan = try MachOContainer.scan(at: fixtureURL)
+        let metadataStage = WorkspaceDocumentLoadService.MetadataStage(
+            scan: scan,
+            decision: budget.classify(scan: scan),
+            analysis: try DocumentAnalysisService().analyze(scan: scan)
+        )
+        let viewModel = WorkspaceViewModel(
+            analysisBudget: budget,
+            documentLoadService: WorkspaceDocumentLoadService { _, _ in metadataStage }
+        )
+
+        #expect(viewModel.openDocument(at: fixtureURL))
+        #expect(viewModel.loadingState == .loading)
+
+        await waitUntil(timeout: 5) {
+            viewModel.loadingState != .loading
+        }
+
+        #expect(viewModel.analysisMode == .budgetedLargeFile)
+        #expect(viewModel.loadingState == .degraded)
+        #expect(viewModel.hasLoadedDocument)
+        #expect(viewModel.currentFileURL == fixtureURL)
+        #expect(viewModel.browserOutlineRootNodes.isEmpty == false)
+        #expect(viewModel.analysis?.slices.first?.symbols.isEmpty == true)
+        #expect((viewModel.analysis?.slices.first?.symbolCount ?? 0) > 0)
+    }
+
+    @Test("budgeted segment selections page hex output instead of decoding the entire range")
+    func budgetedSegmentSelectionsPageHexOutputInsteadOfDecodingTheEntireRange() async throws {
+        let fixtureURL = try makeEditableFixtureCopy()
+        let budget = AnalysisBudget(
+            maximumFileSize: 1,
+            maximumSymbolCount: .max,
+            maximumStringTableSize: .max,
+            maximumEstimatedNodeCount: .max
+        )
+        let scan = try MachOContainer.scan(at: fixtureURL)
+        let metadataStage = WorkspaceDocumentLoadService.MetadataStage(
+            scan: scan,
+            decision: budget.classify(scan: scan),
+            analysis: try DocumentAnalysisService().analyze(scan: scan)
+        )
+        let viewModel = WorkspaceViewModel(
+            analysisBudget: budget,
+            documentLoadService: WorkspaceDocumentLoadService { _, _ in metadataStage }
+        )
+
+        #expect(viewModel.openDocument(at: fixtureURL))
+        await waitUntil(timeout: 5) {
+            viewModel.loadingState == .degraded
+        }
+
+        let textSegmentNode = try #require(findBrowserNode(in: viewModel.browserOutlineRootNodes) { node in
+            node.title == "__TEXT" && node.dataRange != nil
+        })
+
+        viewModel.selectBrowserNode(textSegmentNode)
+
+        #expect(viewModel.browserHexRows.count == 256)
+        #expect(viewModel.canShowNextBrowserHexPage)
+        #expect(viewModel.browserHexPageLabel.contains("/"))
+
+        let firstPageLabel = viewModel.browserHexPageLabel
+        viewModel.nextBrowserHexPage()
+
+        #expect(viewModel.canShowPreviousBrowserHexPage)
+        #expect(viewModel.browserHexPageLabel != firstPageLabel)
+    }
+
     private func makeEditableFixtureCopy() throws -> URL {
         let sourceURL = repoRoot()
             .appendingPathComponent("Resources")
@@ -263,6 +341,32 @@ struct WorkspaceViewModelTests {
         )
 
         return universalURL
+    }
+
+    private func pumpRunLoop(for duration: TimeInterval) {
+        RunLoop.main.run(until: Date().addingTimeInterval(duration))
+    }
+
+    private func waitUntil(timeout: TimeInterval, condition: () -> Bool) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while condition() == false, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    private func findBrowserNode(
+        in nodes: [BrowserNode],
+        where matches: (BrowserNode) -> Bool
+    ) -> BrowserNode? {
+        for node in nodes {
+            if matches(node) {
+                return node
+            }
+            if let child = findBrowserNode(in: node.children, where: matches) {
+                return child
+            }
+        }
+        return nil
     }
 }
 

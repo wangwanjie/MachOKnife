@@ -1,13 +1,13 @@
 import CoreMachO
 import Foundation
 
-struct EditableDylibReference: Equatable {
+struct EditableDylibReference: Equatable, Sendable {
     let index: Int
     let command: UInt32
     var path: String
 }
 
-struct EditablePlatformMetadata: Equatable {
+struct EditablePlatformMetadata: Equatable, Sendable {
     let originalPlatform: MachOPlatform?
     let originalMinimumOS: MachOVersion?
     let originalSDK: MachOVersion?
@@ -22,7 +22,7 @@ struct EditablePlatformMetadata: Equatable {
     }
 }
 
-struct EditableSliceViewModel: Equatable {
+struct EditableSliceViewModel: Equatable, Sendable {
     let sliceIndex: Int
     var installName: String
     var dylibReferences: [EditableDylibReference]
