@@ -3,8 +3,24 @@
     <channel>
         <title>MachOKnife</title>
         <item>
+            <title>1.5.1</title>
+            <pubDate>Thu, 16 Apr 2026 23:28:22 +0800</pubDate>
+            <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.5.1</link>
+            <sparkle:version>8</sparkle:version>
+            <sparkle:shortVersionString>1.5.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown">## Highlights
+
+- 补齐 Finder `Open With` 的 Mach-O 文档类型声明，让 `dylib`、`Mach-O` 可执行文件、对象文件和静态库更稳定地出现 `MachOKnife`
+- 针对无后缀可执行文件补充 `public.unix-executable` 关联，修复归档产物内裸 Mach-O 在 Finder 里看不到 `MachOKnife` 的问题
+- 为 Finder 打开链路与项目配置新增回归测试，覆盖系统打开文件时复用现有工作区加载路径的行为
+- 归档并同步 `register-macho-document-types` OpenSpec 规范，确保主规范与实现保持一致
+</description>
+            <enclosure url="https://github.com/wangwanjie/MachOKnife/releases/download/v1.5.1/MachOKnife_V_1.5.1.dmg" length="13662860" type="application/octet-stream" sparkle:edSignature="L2wqr4CDu1Op0K68aitMlhp8qAjjGkHqiZN4vai0juNm77U5wtBQ7+VaNlsVJevlmJ/UETCPEfy6o6ETWx19Dw==" />
+        </item>
+        <item>
             <title>1.5.0</title>
-            <pubDate>Mon, 13 Apr 2026 02:58:22 +0800</pubDate>
+            <pubDate>Thu, 16 Apr 2026 23:28:22 +0800</pubDate>
             <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.5.0</link>
             <sparkle:version>7</sparkle:version>
             <sparkle:shortVersionString>1.5.0</sparkle:shortVersionString>
@@ -20,7 +36,7 @@
         </item>
         <item>
             <title>1.4.1</title>
-            <pubDate>Mon, 13 Apr 2026 02:58:22 +0800</pubDate>
+            <pubDate>Thu, 16 Apr 2026 23:28:22 +0800</pubDate>
             <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.4.1</link>
             <sparkle:version>6</sparkle:version>
             <sparkle:shortVersionString>1.4.1</sparkle:shortVersionString>
@@ -33,22 +49,6 @@
 - 修复关闭主窗口后从 Dock 重新打开时误弹文件选择器的问题
 </description>
             <enclosure url="https://github.com/wangwanjie/MachOKnife/releases/download/v1.4.1/MachOKnife_V_1.4.1.dmg" length="13389994" type="application/octet-stream" sparkle:edSignature="xxqUZ2Yz0FaT/NAkUJYHFvDRo5+Wxl1tIApIbht6jhZ0DgLXPiyfPv841eH2GyqlnjmwTBxfrG+AsD8lFEHmBg==" />
-        </item>
-        <item>
-            <title>1.4.0</title>
-            <pubDate>Mon, 13 Apr 2026 02:58:22 +0800</pubDate>
-            <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.4.0</link>
-            <sparkle:version>5</sparkle:version>
-            <sparkle:shortVersionString>1.4.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown">## Highlights
-
-- 修复了 `machoe-cli` 的安装状态识别，在打包后的沙盒应用里也能正确显示已安装状态
-- 重写 CLI 顶部帮助信息，增加版本、作者、邮箱以及各子命令作用说明
-- 修正偏好设置窗口尺寸逻辑：各标签页高度按实际内容计算，窗口宽度支持按最小值约束自由拉宽
-- 修复关闭主窗口后从 Dock 重新打开时误弹文件选择器的问题
-</description>
-            <enclosure url="https://github.com/wangwanjie/MachOKnife/releases/download/v1.4.0/MachOKnife_V_1.4.0.dmg" length="13386351" type="application/octet-stream" sparkle:edSignature="sXDLzi1qZCmFdByp0ITPJ+LWqKmqfAdeFOJ/al/nYkM2io632kq9SvN00zlXy5EsohW82Xx2LVi8KcKkOfmbDg==" />
         </item>
         <link>https://github.com/wangwanjie/MachOKnife</link>
         <description>MachOKnife release feed.</description>
