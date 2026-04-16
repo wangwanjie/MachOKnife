@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mergeSplitWindowController: MachOMergeSplitWindowController?
     private var settingsObserver: NSObjectProtocol?
     private var recentFilesMenu = NSMenu(title: "")
+    private var pendingLaunchDocumentURL: URL?
 
     override init() {
         self.settings = .shared
@@ -45,6 +46,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         self.mainWindowController = mainWindowController
         mainWindowController.present(nil)
+
+        if let pendingLaunchDocumentURL {
+            self.pendingLaunchDocumentURL = nil
+            _ = mainWindowController.openDocument(at: pendingLaunchDocumentURL)
+        }
+
         refreshRecentFilesMenu()
         updateManager.performLaunchCheckIfNeeded()
     }
@@ -67,7 +74,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let didOpen = mainWindowController?.openDocument(at: URL(fileURLWithPath: path)) ?? false
+        let url = URL(fileURLWithPath: path)
+        let didOpen: Bool
+        if let mainWindowController {
+            didOpen = mainWindowController.openDocument(at: url)
+        } else {
+            pendingLaunchDocumentURL = url
+            didOpen = true
+        }
         sender.reply(toOpenOrPrint: didOpen ? .success : .failure)
     }
 
