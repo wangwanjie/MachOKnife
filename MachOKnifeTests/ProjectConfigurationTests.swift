@@ -25,6 +25,52 @@ struct ProjectConfigurationTests {
         #expect(projectContents.contains("GENERATE_INFOPLIST_FILE = NO;"))
     }
 
+    @Test("app target declares Mach-O document associations for Finder open with")
+    func appTargetDeclaresMachODocumentAssociations() throws {
+        let repositoryRoot = try repositoryRootURL()
+        let infoPlistURL = repositoryRoot.appendingPathComponent("MachOKnife/Info.plist")
+        let plistData = try Data(contentsOf: infoPlistURL)
+        let plist = try XCTUnwrap(
+            try PropertyListSerialization.propertyList(from: plistData, format: nil) as? [String: Any],
+            "MachOKnife/Info.plist should decode as a property list dictionary"
+        )
+
+        let documentTypes = try XCTUnwrap(
+            plist["CFBundleDocumentTypes"] as? [[String: Any]],
+            "MachOKnife should declare CFBundleDocumentTypes"
+        )
+        #expect(documentTypes.isEmpty == false)
+        #expect(documentTypes.allSatisfy { $0["CFBundleTypeRole"] as? String == "Viewer" })
+
+        let contentTypes = Set(documentTypes.flatMap { $0["LSItemContentTypes"] as? [String] ?? [] })
+        #expect(contentTypes.contains("com.apple.mach-o-binary"))
+        #expect(contentTypes.contains("com.apple.mach-o-executable"))
+        #expect(contentTypes.contains("public.unix-executable"))
+        #expect(contentTypes.contains("com.apple.mach-o-object"))
+        #expect(contentTypes.contains("com.apple.mach-o-dylib"))
+        #expect(contentTypes.contains("cn.vanjay.machoknife.static-library-archive"))
+
+        let importedTypes = try XCTUnwrap(
+            plist["UTImportedTypeDeclarations"] as? [[String: Any]],
+            "MachOKnife should declare imported UTI definitions for custom archive support"
+        )
+        let staticArchiveType = try XCTUnwrap(
+            importedTypes.first(where: { $0["UTTypeIdentifier"] as? String == "cn.vanjay.machoknife.static-library-archive" }),
+            "Expected a custom imported type for static library archives"
+        )
+        #expect((staticArchiveType["UTTypeConformsTo"] as? [String])?.contains("public.archive") == true)
+        let tagSpecification = try XCTUnwrap(
+            staticArchiveType["UTTypeTagSpecification"] as? [String: Any],
+            "Static archive type should include tag specifications"
+        )
+        #expect((tagSpecification["public.filename-extension"] as? [String])?.contains("a") == true)
+
+        let declaredExtensions = Set(documentTypes.flatMap { $0["CFBundleTypeExtensions"] as? [String] ?? [] })
+        #expect(declaredExtensions.contains("app") == false)
+        #expect(declaredExtensions.contains("framework") == false)
+        #expect(declaredExtensions.contains("appex") == false)
+    }
+
     @Test("app icon asset is fully wired to MachOKnife icon files")
     func appIconAssetIsFullyWiredToMachOKnifeIconFiles() throws {
         let repositoryRoot = try repositoryRootURL()

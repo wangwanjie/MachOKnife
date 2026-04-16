@@ -4,6 +4,72 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Mach-O Executables and Binaries</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.mach-o-binary</string>
+				<string>com.apple.mach-o-executable</string>
+				<string>public.unix-executable</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>o</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>Mach-O Object Files</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.mach-o-object</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>dylib</string>
+				<string>so</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>Mach-O Dynamic Libraries</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.mach-o-dylib</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>a</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>Static Library Archives</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>cn.vanjay.machoknife.static-library-archive</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -38,5 +104,25 @@
 	<integer>86400</integer>
 	<key>SUVerifyUpdateBeforeExtraction</key>
 	<true/>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.archive</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Static Library Archive</string>
+			<key>UTTypeIdentifier</key>
+			<string>cn.vanjay.machoknife.static-library-archive</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>a</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>
