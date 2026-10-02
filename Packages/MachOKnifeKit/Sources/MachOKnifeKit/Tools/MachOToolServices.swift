@@ -75,6 +75,7 @@ public enum MachOToolServiceError: LocalizedError {
     case ambiguousPackage(URL, count: Int)
     case unsupportedInput(URL)
     case noArchitectures(URL)
+    case architectureNotFound(String, available: [String])
     case mergeNeedsMultipleInputs
     case processFailed(String)
 
@@ -88,6 +89,8 @@ public enum MachOToolServiceError: LocalizedError {
             return "Unsupported input: \(url.path)"
         case let .noArchitectures(url):
             return "No architectures were detected for \(url.lastPathComponent)."
+        case let .architectureNotFound(architecture, available):
+            return "The input does not contain the architecture \(architecture). Available architectures: \(available.joined(separator: ", "))."
         case .mergeNeedsMultipleInputs:
             return "Choose at least two input files to merge."
         case let .processFailed(message):
@@ -175,7 +178,7 @@ public final class BinarySummaryService {
                     "Minimum OS: \(slice.buildVersion?.minimumOS.description ?? slice.versionMin?.minimumOS.description ?? "unknown")",
                     "SDK: \(slice.buildVersion?.sdk.description ?? slice.versionMin?.sdk.description ?? "unknown")",
                     "CPU Type: \(cpuTypeDescription(slice.header.cpuType)) (\(slice.header.cpuType))",
-                    "CPU Subtype: \(cpuSubtypeDescription(slice.header.cpuSubtype)) (\(slice.header.cpuSubtype))",
+                    "CPU Subtype: \(cpuSubtypeDescription(slice.header.cpuSubtype, cpuType: slice.header.cpuType)) (\(slice.header.cpuSubtype))",
                     "File Type: \(fileTypeDescription(slice.header.fileType)) (\(slice.header.fileType))",
                     "Slice Offset: \(slice.offset)",
                     "Load Commands: \(slice.loadCommands.count)",
@@ -278,28 +281,20 @@ public final class BinarySummaryService {
     ) throws -> [ArchiveArchitectureDetail] {
         let architectures = inspection.architectures.isEmpty ? ["unknown"] : inspection.architectures
         return try architectures.map { architecture in
-            let extraction = try archiveInspector.extractThinArchive(
-                url: archiveURL,
-                preferredArchitecture: inspection.kind == .fatArchive ? architecture : nil
+            let members = try ArchiveArchitectureMembers.collect(
+                architecture: architecture,
+                in: archiveURL,
+                inspection: inspection,
+                archiveInspector: archiveInspector,
+                fileManager: fileManager
             )
-            defer { try? fileManager.removeItem(at: extraction.archiveURL.deletingLastPathComponent()) }
 
-            let membersDirectory = fileManager.temporaryDirectory
-                .appendingPathComponent("MachOKnifeSummary-\(UUID().uuidString)", isDirectory: true)
-            try fileManager.createDirectory(at: membersDirectory, withIntermediateDirectories: true)
-            defer { try? fileManager.removeItem(at: membersDirectory) }
-
-            let members = try archiveInspector.listMembers(in: extraction.archiveURL)
-                .filter { !$0.hasPrefix("__.SYMDEF") && $0 != "/" && $0 != "//" }
-            try archiveInspector.extractMembers(from: extraction.archiveURL, to: membersDirectory)
-
-            let inspectedMembers = members.compactMap { memberName -> ArchiveMemberMetadata? in
-                let memberURL = membersDirectory.appendingPathComponent(memberName)
-                guard let container = try? MachOContainer.parse(at: memberURL), let slice = container.slices.first else {
+            let inspectedMembers = members.compactMap { member -> ArchiveMemberMetadata? in
+                guard let slice = member.slices?.first else {
                     return nil
                 }
                 return ArchiveMemberMetadata(
-                    name: memberName,
+                    name: member.name,
                     platform: platformIdentifier(for: slice.buildVersion?.platform ?? slice.versionMin?.platform),
                     minimumOS: slice.buildVersion?.minimumOS.description ?? slice.versionMin?.minimumOS.description,
                     sdk: slice.buildVersion?.sdk.description ?? slice.versionMin?.sdk.description
@@ -310,9 +305,9 @@ public final class BinarySummaryService {
                 architecture: architecture,
                 memberCount: members.count,
                 platforms: Array(Set(inspectedMembers.compactMap(\.platform))).sorted(),
-                minimumOSVersions: Array(Set(inspectedMembers.compactMap(\.minimumOS))).sorted(),
-                sdkVersions: Array(Set(inspectedMembers.compactMap(\.sdk))).sorted(),
-                sampleMember: inspectedMembers.first?.name ?? members.first
+                minimumOSVersions: numericallySortedVersions(inspectedMembers.compactMap(\.minimumOS)),
+                sdkVersions: numericallySortedVersions(inspectedMembers.compactMap(\.sdk)),
+                sampleMember: inspectedMembers.first?.name ?? members.first?.name
             )
         }
     }
@@ -479,38 +474,26 @@ public final class BinaryContaminationCheckService {
         let architectures = inspection.architectures.isEmpty ? ["unknown"] : inspection.architectures
         var units = [InspectionUnit]()
 
+        let prefix = relativePath(for: archiveURL, rootURL: rootURL)
+
         for architecture in architectures {
-            let extraction = try archiveInspector.extractThinArchive(
-                url: archiveURL,
-                preferredArchitecture: inspection.kind == .fatArchive ? architecture : nil
+            let members = try ArchiveArchitectureMembers.collect(
+                architecture: architecture,
+                in: archiveURL,
+                inspection: inspection,
+                archiveInspector: archiveInspector,
+                fileManager: fileManager
             )
-            defer { try? fileManager.removeItem(at: extraction.archiveURL.deletingLastPathComponent()) }
 
-            let membersDirectory = fileManager.temporaryDirectory
-                .appendingPathComponent("MachOKnifeContamination-\(UUID().uuidString)", isDirectory: true)
-            try fileManager.createDirectory(at: membersDirectory, withIntermediateDirectories: true)
-            defer { try? fileManager.removeItem(at: membersDirectory) }
-
-            let members = try archiveInspector.listMembers(in: extraction.archiveURL)
-                .filter { !$0.hasPrefix("__.SYMDEF") && $0 != "/" && $0 != "//" }
-            try archiveInspector.extractMembers(from: extraction.archiveURL, to: membersDirectory)
-
-            let prefix = relativePath(for: archiveURL, rootURL: rootURL)
-            for memberName in members {
-                let memberURL = membersDirectory.appendingPathComponent(memberName)
-                guard let container = try? MachOContainer.parse(at: memberURL), let slice = container.slices.first else {
-                    units.append(
-                        InspectionUnit(
-                            label: "\(prefix) [\(architecture)] :: \(memberName)",
-                            architectures: [architecture],
-                            platforms: []
-                        )
-                    )
+            for member in members {
+                let label = "\(prefix) [\(architecture)] :: \(member.name)"
+                guard let slice = member.slices?.first else {
+                    units.append(InspectionUnit(label: label, architectures: [architecture], platforms: []))
                     continue
                 }
                 units.append(
                     InspectionUnit(
-                        label: "\(prefix) [\(architecture)] :: \(memberName)",
+                        label: label,
                         architectures: [architectureName(cpuType: slice.header.cpuType, cpuSubtype: slice.header.cpuSubtype)],
                         platforms: [platformIdentifier(for: slice.buildVersion?.platform ?? slice.versionMin?.platform)].compactMap { $0 }
                     )
@@ -560,6 +543,11 @@ public final class MachOMergeSplitService {
         let ext = inputURL.pathExtension
 
         if let archiveInspection = try archiveInspector.inspect(url: inputURL) {
+            let available = archiveInspection.architectures
+            if available.contains("unknown") == false,
+               let missing = requestedArchitectures.first(where: { available.contains($0) == false }) {
+                throw MachOToolServiceError.architectureNotFound(missing, available: available)
+            }
             return try requestedArchitectures.map { architecture in
                 let extraction = try archiveInspector.extractThinArchive(
                     url: inputURL,
@@ -576,12 +564,23 @@ public final class MachOMergeSplitService {
             }
         }
 
+        let container = try MachOContainer.parse(at: inputURL)
+        let available = container.slices.map { architectureName(cpuType: $0.header.cpuType, cpuSubtype: $0.header.cpuSubtype) }
+        if let missing = requestedArchitectures.first(where: { available.contains($0) == false }) {
+            throw MachOToolServiceError.architectureNotFound(missing, available: available)
+        }
+
         return try requestedArchitectures.map { architecture in
             let outputURL = outputDirectoryURL.appendingPathComponent(composeOutputName(baseName: baseName, architecture: architecture, pathExtension: ext))
             if fileManager.fileExists(atPath: outputURL.path) {
                 try fileManager.removeItem(at: outputURL)
             }
-            try runResolvedTool(named: "lipo", arguments: ["-thin", architecture, inputURL.path, "-output", outputURL.path])
+            if container.kind == .fat {
+                try runResolvedTool(named: "lipo", arguments: ["-thin", architecture, inputURL.path, "-output", outputURL.path])
+            } else {
+                // `lipo -thin` rejects thin inputs; a thin file already is the requested slice.
+                try fileManager.copyItem(at: inputURL, to: outputURL)
+            }
             return outputURL
         }
     }
@@ -858,13 +857,21 @@ private func cpuDescription(for architecture: String) throws -> (cpuType: Int32,
     case "arm64":
         return (CPU_TYPE_ARM64, 0)
     case "arm64e":
-        return (CPU_TYPE_ARM64, 2)
+        return (CPU_TYPE_ARM64, MachOArchitectureNaming.cpuSubtypeARM64E)
+    case "arm64_32":
+        return (MachOArchitectureNaming.cpuTypeARM64_32, 1)
     case "x86_64":
         return (CPU_TYPE_X86_64, 3)
+    case "x86_64h":
+        return (CPU_TYPE_X86_64, MachOArchitectureNaming.cpuSubtypeX86_64H)
     case "i386":
         return (CPU_TYPE_X86, 3)
+    case "armv6":
+        return (CPU_TYPE_ARM, 6)
     case "armv7":
         return (CPU_TYPE_ARM, 9)
+    case "armv7f":
+        return (CPU_TYPE_ARM, 10)
     case "armv7s":
         return (CPU_TYPE_ARM, 11)
     case "armv7k":
@@ -875,37 +882,15 @@ private func cpuDescription(for architecture: String) throws -> (cpuType: Int32,
 }
 
 private func architectureName(cpuType: Int32, cpuSubtype: Int32) -> String {
-    let subtype = cpuSubtype & 0x00FF_FFFF
-
-    switch cpuType {
-    case CPU_TYPE_ARM64:
-        return subtype == 2 ? "arm64e" : "arm64"
-    case CPU_TYPE_X86_64:
-        return "x86_64"
-    case CPU_TYPE_ARM:
-        switch subtype {
-        case 6: return "armv6"
-        case 9: return "armv7"
-        case 10: return "armv7f"
-        case 11: return "armv7s"
-        case 12: return "armv7k"
-        default: return "arm"
-        }
-    case CPU_TYPE_X86:
-        return "i386"
-    case CPU_TYPE_POWERPC:
-        return "ppc"
-    case CPU_TYPE_POWERPC64:
-        return "ppc64"
-    default:
-        return "cputype_\(cpuType)_subtype_\(subtype)"
-    }
+    MachOArchitectureNaming.name(cpuType: cpuType, cpuSubtype: cpuSubtype)
 }
 
 private func cpuTypeDescription(_ value: Int32) -> String {
     switch value {
     case CPU_TYPE_ARM64:
         return "ARM64"
+    case MachOArchitectureNaming.cpuTypeARM64_32:
+        return "ARM64_32"
     case CPU_TYPE_X86_64:
         return "X86_64"
     case CPU_TYPE_ARM:
@@ -921,13 +906,17 @@ private func cpuTypeDescription(_ value: Int32) -> String {
     }
 }
 
-private func cpuSubtypeDescription(_ value: Int32) -> String {
+private func cpuSubtypeDescription(_ value: Int32, cpuType: Int32) -> String {
     let subtype = value & 0x00FF_FFFF
+    if cpuType == CPU_TYPE_ARM64 || cpuType == CPU_TYPE_X86_64 || cpuType == MachOArchitectureNaming.cpuTypeARM64_32 {
+        let name = MachOArchitectureNaming.name(cpuType: cpuType, cpuSubtype: value)
+        if name == "arm64e" || name == "x86_64h" {
+            return name
+        }
+    }
     switch subtype {
     case 0:
         return "All"
-    case 2:
-        return "arm64e"
     case 6:
         return "armv6"
     case 9:
@@ -996,24 +985,9 @@ private func relativePath(for fileURL: URL, rootURL: URL) -> String {
 }
 
 private func runProcess(launchPath: String, arguments: [String]) throws {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: launchPath)
-    process.arguments = arguments
-
-    let stdout = Pipe()
-    let stderr = Pipe()
-    process.standardOutput = stdout
-    process.standardError = stderr
-
-    try process.run()
-    process.waitUntilExit()
-
-    guard process.terminationStatus == 0 else {
-        let output = String(
-            data: stdout.fileHandleForReading.readDataToEndOfFile()
-                + stderr.fileHandleForReading.readDataToEndOfFile(),
-            encoding: .utf8
-        )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown tool error."
+    let result = try ToolProcessRunner.run(executableURL: URL(fileURLWithPath: launchPath), arguments: arguments)
+    guard result.succeeded else {
+        let output = result.combinedOutputText.trimmingCharacters(in: .whitespacesAndNewlines)
         throw MachOToolServiceError.processFailed(output.isEmpty ? "Tool failed: \(launchPath)" : output)
     }
 }
@@ -1079,23 +1053,16 @@ private enum DeveloperToolLocator {
     }
 
     private static func selectedDeveloperRoot() throws -> URL {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
-        process.arguments = ["-p"]
-
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        process.standardError = Pipe()
-
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
+        let result = try ToolProcessRunner.run(
+            executableURL: URL(fileURLWithPath: "/usr/bin/xcode-select"),
+            arguments: ["-p"]
+        )
+        guard result.succeeded else {
             throw MachOToolServiceError.processFailed("Unable to determine active developer directory.")
         }
 
-        let path = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let path = String(decoding: result.standardOutput, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard path.isEmpty == false else {
             throw MachOToolServiceError.processFailed("Unable to determine active developer directory.")
         }

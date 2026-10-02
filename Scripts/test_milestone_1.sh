@@ -22,7 +22,7 @@ swift test --package-path "$REPO_ROOT/Packages/MachOKnifeDB"
 
 echo "[milestone-1] xcodebuild UI and settings tests"
 xcodebuild test \
-  -project "$REPO_ROOT/MachOKnife.xcodeproj" \
+  -workspace "$REPO_ROOT/MachOKnife.xcworkspace" \
   -scheme MachOKnife \
   -derivedDataPath "$DERIVED_DATA_PATH" \
   -destination 'platform=macOS,arch=x86_64' \

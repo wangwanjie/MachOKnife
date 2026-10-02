@@ -6,11 +6,8 @@ struct InfoCommand {
     static let usage = "machoe-cli info <path>"
 
     static func run(arguments: [String]) throws -> String {
-        guard arguments.count == 1 else {
-            throw CLIError.invalidUsage(usage)
-        }
-
-        let url = try CLICommandSupport.requiredPath(arguments, usage: usage)
+        let parsed = try CLICommandSupport.parse(arguments, valueOptions: [], usage: usage)
+        let url = try CLICommandSupport.requiredPath(parsed, usage: usage)
         if let archiveAnalysis = try ArchiveAnalysisService().analyze(url: url) {
             return CLIReportRenderer.renderInfo(archiveAnalysis)
         }

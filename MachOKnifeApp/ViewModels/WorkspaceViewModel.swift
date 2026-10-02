@@ -1010,7 +1010,7 @@ final class WorkspaceViewModel {
             }
 
             return BrowserHexRow(
-                address: String(format: "%08X", baseAddress + lineOffset),
+                address: BrowserAddressFormatter.string(UInt64(baseAddress + lineOffset)),
                 lowBytes: low,
                 highBytes: high,
                 ascii: String(ascii)

@@ -13,7 +13,7 @@ struct MachOToolServicesTests {
 
         #expect(rendered.contains("arm64"))
         #expect(rendered.contains("x86_64"))
-        #expect(rendered.contains("Static Archive"))
+        #expect(rendered.contains("Kind: Fat Archive"))
     }
 
     @Test("contamination checker flags archive members that do not match the requested platform")

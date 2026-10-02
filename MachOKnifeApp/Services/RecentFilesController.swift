@@ -19,18 +19,21 @@ final class RecentFilesController {
     private let defaults: UserDefaults
     private let bookmarkDataProvider: BookmarkDataProvider
     private let bookmarkResolver: BookmarkResolver
+    private let staleBookmarkRefresher: BookmarkDataProvider
 
     init(
         settings: AppSettings = .shared,
         databaseURL: URL? = nil,
         defaults: UserDefaults = .standard,
         bookmarkDataProvider: @escaping BookmarkDataProvider = RecentFilesController.makeBookmarkData(for:),
-        bookmarkResolver: @escaping BookmarkResolver = RecentFilesController.resolveBookmarkData(_:)
+        bookmarkResolver: @escaping BookmarkResolver = RecentFilesController.resolveBookmarkData(_:),
+        staleBookmarkRefresher: @escaping BookmarkDataProvider = RecentFilesController.makeRefreshedSecurityScopedBookmarkData(for:)
     ) throws {
         self.settings = settings
         self.defaults = defaults
         self.bookmarkDataProvider = bookmarkDataProvider
         self.bookmarkResolver = bookmarkResolver
+        self.staleBookmarkRefresher = staleBookmarkRefresher
 
         let resolvedDatabaseURL = try databaseURL ?? Self.defaultDatabaseURL()
         try FileManager.default.createDirectory(
@@ -66,7 +69,7 @@ final class RecentFilesController {
         do {
             let resolved = try bookmarkResolver(bookmarkData)
             if resolved.isStale {
-                try? storeBookmark(for: resolved.url, pathKey: record.path)
+                refreshStaleBookmark(for: resolved.url, pathKey: record.path)
             }
             return resolved.url
         } catch {
@@ -79,6 +82,18 @@ final class RecentFilesController {
         var bookmarks = recentFileBookmarks()
         let bookmarkData = try bookmarkDataProvider(url)
         bookmarks[pathKey ?? url.path] = bookmarkData
+        defaults.set(bookmarks, forKey: Keys.recentFileBookmarks)
+    }
+
+    /// Replaces a stale bookmark with a fresh security-scoped one. If the refresh fails, the
+    /// existing (stale but still resolvable) bookmark is kept instead of being dropped or
+    /// downgraded to a bookmark without security scope.
+    private func refreshStaleBookmark(for url: URL, pathKey: String) {
+        guard let refreshedData = try? staleBookmarkRefresher(url) else {
+            return
+        }
+        var bookmarks = recentFileBookmarks()
+        bookmarks[pathKey] = refreshedData
         defaults.set(bookmarks, forKey: Keys.recentFileBookmarks)
     }
 
@@ -127,6 +142,23 @@ final class RecentFilesController {
                 relativeTo: nil
             )
         }
+    }
+
+    /// Creates a security-scoped bookmark for a URL resolved from a stale bookmark. Access to the
+    /// security scope must be active while the new bookmark is created; there is deliberately no
+    /// fallback to a non-scoped bookmark, which would lose sandbox access on the next launch.
+    nonisolated static func makeRefreshedSecurityScopedBookmarkData(for url: URL) throws -> Data {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        return try url.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
     }
 
     nonisolated static func resolveBookmarkData(_ data: Data) throws -> BookmarkResolutionResult {

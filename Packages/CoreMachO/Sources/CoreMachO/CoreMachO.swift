@@ -52,7 +52,7 @@ struct MachOFileParser {
             if is64Bit {
                 let architectureOffset = MemoryLayout<fat_header>.size + index * MemoryLayout<fat_arch_64>.size
                 let architecture = try read(fat_arch_64.self, at: architectureOffset)
-                let sliceOffset = Int(normalize(architecture.offset, swapped: swapped))
+                let sliceOffset = try fatSliceOffset(normalize(architecture.offset, swapped: swapped))
                 let sliceMagic = try read(UInt32.self, at: sliceOffset)
                 return try parseSlice(at: sliceOffset, magic: sliceMagic)
             } else {
@@ -77,7 +77,7 @@ struct MachOFileParser {
             if is64Bit {
                 let architectureOffset = MemoryLayout<fat_header>.size + index * MemoryLayout<fat_arch_64>.size
                 let architecture = try read(fat_arch_64.self, at: architectureOffset)
-                let sliceOffset = Int(normalize(architecture.offset, swapped: swapped))
+                let sliceOffset = try fatSliceOffset(normalize(architecture.offset, swapped: swapped))
                 let sliceMagic = try read(UInt32.self, at: sliceOffset)
                 return try scanSlice(at: sliceOffset, magic: sliceMagic)
             } else {
@@ -95,6 +95,15 @@ struct MachOFileParser {
             kind: .fat,
             slices: slices
         )
+    }
+
+    /// Converts a 64-bit fat slice offset to `Int`, throwing instead of trapping when the
+    /// recorded value does not fit or lies beyond the end of the file.
+    private func fatSliceOffset(_ rawOffset: UInt64) throws -> Int {
+        guard let offset = Int(exactly: rawOffset), offset <= data.count else {
+            throw MachOParseError.outOfBounds(offset: Int(clamping: rawOffset), size: MemoryLayout<UInt32>.size)
+        }
+        return offset
     }
 
     private func parseSlice(at offset: Int, magic: UInt32) throws -> MachOSlice {

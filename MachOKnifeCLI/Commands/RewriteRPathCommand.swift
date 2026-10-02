@@ -7,10 +7,11 @@ struct RewriteRPathCommand {
     static let usage = "machoe-cli rewrite-rpath <path> --from <path> --to <path> --output <path>"
 
     static func run(arguments: [String]) throws -> String {
-        let inputURL = try CLICommandSupport.requiredPath(arguments, usage: usage)
-        let fromPath = try CLICommandSupport.requiredOption("--from", in: arguments, usage: usage)
-        let toPath = try CLICommandSupport.requiredOption("--to", in: arguments, usage: usage)
-        let outputURL = URL(filePath: try CLICommandSupport.requiredOption("--output", in: arguments, usage: usage))
+        let parsed = try CLICommandSupport.parse(arguments, valueOptions: ["--from", "--to", "--output"], usage: usage)
+        let inputURL = try CLICommandSupport.requiredPath(parsed, usage: usage)
+        let fromPath = try parsed.requiredValue("--from", usage: usage)
+        let toPath = try parsed.requiredValue("--to", usage: usage)
+        let outputURL = URL(filePath: try parsed.requiredValue("--output", usage: usage))
 
         let result = try DocumentEditingService().save(
             inputURL: inputURL,

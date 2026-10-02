@@ -6,14 +6,10 @@ struct MergeCommand {
     static let usage = "machoe-cli merge <input1> <input2> [<inputN> ...] --output <path>"
 
     static func run(arguments: [String]) throws -> String {
-        guard let outputIndex = arguments.firstIndex(of: "--output"), arguments.indices.contains(outputIndex + 1) else {
-            throw CLIError.invalidUsage(usage)
-        }
-
-        let outputPath = arguments[outputIndex + 1]
-        let outputURL = URL(filePath: outputPath)
-        let inputPaths = Array(arguments[..<outputIndex])
-        let inputURLs = try CLICommandSupport.requiredURLs(inputPaths, usage: usage)
+        // Inputs may appear before or after --output; every positional argument is an input.
+        let parsed = try CLICommandSupport.parse(arguments, valueOptions: ["--output"], usage: usage)
+        let outputURL = URL(filePath: try parsed.requiredValue("--output", usage: usage))
+        let inputURLs = try CLICommandSupport.requiredURLs(parsed.positionals, usage: usage)
 
         try MachOMergeSplitService().merge(inputURLs: inputURLs, outputURL: outputURL)
         return "Merged output: \(outputURL.path)\n"

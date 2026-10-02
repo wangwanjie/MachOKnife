@@ -1,10 +1,33 @@
 import CoreMachOC
 import Foundation
 
-public enum MachOWriteError: Error {
+public enum MachOWriteError: LocalizedError {
     case missingSlicePayloadBoundary(Int)
     case insufficientLoadCommandSpace(required: Int, available: Int, sliceOffset: Int)
     case unsupportedVersionCommand(UInt32)
+    case byteSwappedSliceUnsupported(sliceOffset: Int)
+    case missingInstallNameCommand(sliceOffset: Int)
+    case malformedLoadCommandArea(sliceOffset: Int, reason: String)
+    case invalidVersion(MachOVersion)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .missingSlicePayloadBoundary(sliceOffset):
+            return "Could not determine where the load command area ends for the slice at offset \(sliceOffset)."
+        case let .insufficientLoadCommandSpace(required, available, sliceOffset):
+            return "The slice at offset \(sliceOffset) needs \(required) bytes of load commands but only \(available) bytes are available."
+        case let .unsupportedVersionCommand(command):
+            return "Unsupported version command 0x\(String(command, radix: 16))."
+        case let .byteSwappedSliceUnsupported(sliceOffset):
+            return "The slice at offset \(sliceOffset) is byte-swapped (big-endian); editing byte-swapped Mach-O files is not supported."
+        case let .missingInstallNameCommand(sliceOffset):
+            return "The slice at offset \(sliceOffset) has no LC_ID_DYLIB command, so its install name cannot be changed."
+        case let .malformedLoadCommandArea(sliceOffset, reason):
+            return "The load command area of the slice at offset \(sliceOffset) is malformed: \(reason)"
+        case let .invalidVersion(version):
+            return "Version \(version) cannot be encoded: major must be 0...65535 and minor/patch must be 0...255."
+        }
+    }
 }
 
 public struct MachOWriter: Sendable {
@@ -36,7 +59,9 @@ public struct MachOWriter: Sendable {
             removedCodeSignature = removedCodeSignature || rewrite.removedCodeSignature
         }
 
+        let inputPermissions = MachOFileAttributes.posixPermissions(of: inputURL)
         try rewrittenData.write(to: outputURL, options: [.atomic])
+        try MachOFileAttributes.setPosixPermissions(inputPermissions, on: outputURL)
         return MachOWriteResult(outputURL: outputURL, diff: MachODiff(entries: diffEntries), removedCodeSignature: removedCodeSignature)
     }
 
@@ -45,9 +70,14 @@ public struct MachOWriter: Sendable {
     }
 
     private func rewriteSlice(_ slice: MachOSlice, in data: Data, plan: MachOEditPlan) throws -> SliceRewriteResult {
+        try ensureNativeByteOrder(slice, in: data)
+        if plan.installName != nil, slice.installNameInfo == nil {
+            throw MachOWriteError.missingInstallNameCommand(sliceOffset: slice.offset)
+        }
+
         let headerSize = slice.header.is64Bit ? MemoryLayout<mach_header_64>.size : MemoryLayout<mach_header>.size
         let commandsStart = slice.offset + headerSize
-        let availableCommandBytes = try availableLoadCommandBytes(for: slice)
+        let availableCommandBytes = try availableLoadCommandBytes(for: slice, fileSize: data.count)
         let commandAreaRange = commandsStart..<(commandsStart + availableCommandBytes)
 
         var rewrittenCommands = [Data]()
@@ -71,7 +101,14 @@ public struct MachOWriter: Sendable {
             case let .dylib(info)?:
                 if command.command == UInt32(LC_ID_DYLIB) {
                     if let installName = plan.installName, installName != info.path {
-                        rewrittenCommands.append(serializeDylibCommand(command: info.command, path: installName, from: info, is64Bit: slice.is64Bit))
+                        rewrittenCommands.append(try serializeDylibCommand(
+                            command: info.command,
+                            path: installName,
+                            timestamp: info.timestamp,
+                            currentVersion: info.currentVersion,
+                            compatibilityVersion: info.compatibilityVersion,
+                            is64Bit: slice.is64Bit
+                        ))
                         diffEntries.append(
                             DiffEntry(sliceOffset: slice.offset, kind: .installName, originalValue: info.path, updatedValue: installName)
                         )
@@ -82,7 +119,14 @@ public struct MachOWriter: Sendable {
                 }
 
                 if let replacement = matchDylibReplacement(for: info, edits: plan.dylibEdits, usedIndexes: &usedDylibReplaceIndexes) {
-                    rewrittenCommands.append(serializeDylibCommand(command: info.command, path: replacement.newPath, from: info, is64Bit: slice.is64Bit))
+                    rewrittenCommands.append(try serializeDylibCommand(
+                        command: info.command,
+                        path: replacement.newPath,
+                        timestamp: info.timestamp,
+                        currentVersion: info.currentVersion,
+                        compatibilityVersion: info.compatibilityVersion,
+                        is64Bit: slice.is64Bit
+                    ))
                     diffEntries.append(
                         DiffEntry(sliceOffset: slice.offset, kind: .dylib, originalValue: info.path, updatedValue: replacement.newPath)
                     )
@@ -116,7 +160,7 @@ public struct MachOWriter: Sendable {
                 rewrittenCommands.append(rawData)
             case let .buildVersion(info)?:
                 if let platformEdit = plan.platformEdit {
-                    rewrittenCommands.append(serializeBuildVersionCommand(info: info, edit: platformEdit, is64Bit: slice.is64Bit))
+                    rewrittenCommands.append(try serializeBuildVersionCommand(info: info, edit: platformEdit, is64Bit: slice.is64Bit))
                     diffEntries.append(
                         DiffEntry(
                             sliceOffset: slice.offset,
@@ -132,7 +176,7 @@ public struct MachOWriter: Sendable {
                 if let platformEdit = plan.platformEdit {
                     if usesBuildVersionCommand(for: platformEdit.platform) {
                         rewrittenCommands.append(
-                            serializeBuildVersionCommand(
+                            try serializeBuildVersionCommand(
                                 command: UInt32(LC_BUILD_VERSION),
                                 platform: platformEdit.platform,
                                 minimumOS: platformEdit.minimumOS,
@@ -183,9 +227,18 @@ public struct MachOWriter: Sendable {
         }
 
         for edit in plan.dylibEdits {
-            guard case let .add(path, command) = edit else { continue }
-            let template = slice.dylibReferences.first(where: { $0.command == command }) ?? slice.dylibReferences.first
-            let serialized = serializeDylibCommand(command: command, path: path, from: template, is64Bit: slice.is64Bit)
+            guard case let .add(path, command, currentVersion, compatibilityVersion) = edit else { continue }
+            // New dylib commands must not inherit metadata from unrelated dylibs: use the
+            // conventional timestamp 2 and the requested versions (0.0.0 when unspecified).
+            let zeroVersion = MachOVersion(major: 0, minor: 0, patch: 0)
+            let serialized = try serializeDylibCommand(
+                command: command,
+                path: path,
+                timestamp: 2,
+                currentVersion: currentVersion ?? zeroVersion,
+                compatibilityVersion: compatibilityVersion ?? zeroVersion,
+                is64Bit: slice.is64Bit
+            )
             rewrittenCommands.append(serialized)
             diffEntries.append(DiffEntry(sliceOffset: slice.offset, kind: .dylib, originalValue: nil, updatedValue: path))
         }
@@ -197,7 +250,7 @@ public struct MachOWriter: Sendable {
         }
 
         if let platformEdit = plan.platformEdit, slice.buildVersion == nil, slice.versionMin == nil {
-            rewrittenCommands.append(serializeBuildVersionCommand(edit: platformEdit, is64Bit: slice.is64Bit))
+            rewrittenCommands.append(try serializeBuildVersionCommand(edit: platformEdit, is64Bit: slice.is64Bit))
             diffEntries.append(
                 DiffEntry(
                     sliceOffset: slice.offset,
@@ -249,7 +302,19 @@ public struct MachOWriter: Sendable {
         }
     }
 
-    private func availableLoadCommandBytes(for slice: MachOSlice) throws -> Int {
+    private func ensureNativeByteOrder(_ slice: MachOSlice, in data: Data) throws {
+        guard slice.offset >= 0, slice.offset + MemoryLayout<UInt32>.size <= data.count else {
+            throw MachOWriteError.malformedLoadCommandArea(sliceOffset: slice.offset, reason: "the Mach-O header is out of bounds.")
+        }
+        let magic = data.withUnsafeBytes { buffer in
+            buffer.loadUnaligned(fromByteOffset: slice.offset, as: UInt32.self)
+        }
+        if magic == MH_CIGAM || magic == MH_CIGAM_64 {
+            throw MachOWriteError.byteSwappedSliceUnsupported(sliceOffset: slice.offset)
+        }
+    }
+
+    private func availableLoadCommandBytes(for slice: MachOSlice, fileSize: Int) throws -> Int {
         let headerSize = slice.header.is64Bit ? MemoryLayout<mach_header_64>.size : MemoryLayout<mach_header>.size
 
         let sectionOffsets = slice.segments
@@ -268,7 +333,28 @@ public struct MachOWriter: Sendable {
             throw MachOWriteError.missingSlicePayloadBoundary(slice.offset)
         }
 
-        return payloadStart - headerSize
+        let available = payloadStart - headerSize
+        let sizeofCommands = Int(slice.header.sizeofCommands)
+        guard available >= 0 else {
+            throw MachOWriteError.malformedLoadCommandArea(
+                sliceOffset: slice.offset,
+                reason: "the first section or segment (offset \(payloadStart)) starts inside the Mach-O header."
+            )
+        }
+        guard sizeofCommands <= available else {
+            throw MachOWriteError.malformedLoadCommandArea(
+                sliceOffset: slice.offset,
+                reason: "sizeofcmds (\(sizeofCommands)) overlaps file content that starts at offset \(payloadStart)."
+            )
+        }
+        guard slice.offset + headerSize + available <= fileSize else {
+            throw MachOWriteError.malformedLoadCommandArea(
+                sliceOffset: slice.offset,
+                reason: "the load command area extends past the end of the file."
+            )
+        }
+
+        return available
     }
 
     private func editPlanTouchesSignedMetadata(_ plan: MachOEditPlan) -> Bool {
@@ -345,7 +431,14 @@ public struct MachOWriter: Sendable {
         return false
     }
 
-    private func serializeDylibCommand(command: UInt32, path: String, from template: DylibCommandInfo?, is64Bit: Bool) -> Data {
+    private func serializeDylibCommand(
+        command: UInt32,
+        path: String,
+        timestamp: UInt32,
+        currentVersion: MachOVersion,
+        compatibilityVersion: MachOVersion,
+        is64Bit: Bool
+    ) throws -> Data {
         let alignment = is64Bit ? 8 : 4
         let pathData = utf8CStringData(path)
         let commandSize = alignedSize(MemoryLayout<dylib_command>.size + pathData.count, alignment: alignment)
@@ -354,9 +447,9 @@ public struct MachOWriter: Sendable {
         dylibCommand.cmd = command
         dylibCommand.cmdsize = UInt32(commandSize)
         dylibCommand.dylib.name.offset = UInt32(MemoryLayout<dylib_command>.size)
-        dylibCommand.dylib.timestamp = template?.timestamp ?? 0
-        dylibCommand.dylib.current_version = packedVersion(template?.currentVersion ?? MachOVersion(major: 1, minor: 0, patch: 0))
-        dylibCommand.dylib.compatibility_version = packedVersion(template?.compatibilityVersion ?? MachOVersion(major: 1, minor: 0, patch: 0))
+        dylibCommand.dylib.timestamp = timestamp
+        dylibCommand.dylib.current_version = try packedVersion(currentVersion)
+        dylibCommand.dylib.compatibility_version = try packedVersion(compatibilityVersion)
 
         var data = Data()
         appendStruct(dylibCommand, to: &data)
@@ -386,8 +479,8 @@ public struct MachOWriter: Sendable {
         return data
     }
 
-    private func serializeBuildVersionCommand(info: BuildVersionInfo, edit: PlatformEdit, is64Bit: Bool) -> Data {
-        serializeBuildVersionCommand(
+    private func serializeBuildVersionCommand(info: BuildVersionInfo, edit: PlatformEdit, is64Bit: Bool) throws -> Data {
+        try serializeBuildVersionCommand(
             command: info.command,
             platform: edit.platform,
             minimumOS: edit.minimumOS,
@@ -397,8 +490,8 @@ public struct MachOWriter: Sendable {
         )
     }
 
-    private func serializeBuildVersionCommand(edit: PlatformEdit, is64Bit: Bool) -> Data {
-        serializeBuildVersionCommand(
+    private func serializeBuildVersionCommand(edit: PlatformEdit, is64Bit: Bool) throws -> Data {
+        try serializeBuildVersionCommand(
             command: UInt32(LC_BUILD_VERSION),
             platform: edit.platform,
             minimumOS: edit.minimumOS,
@@ -415,7 +508,7 @@ public struct MachOWriter: Sendable {
         sdk: MachOVersion,
         tools: [BuildToolVersionInfo],
         is64Bit: Bool
-    ) -> Data {
+    ) throws -> Data {
         let alignment = is64Bit ? 8 : 4
         let totalSize = alignedSize(
             MemoryLayout<build_version_command>.size + tools.count * MemoryLayout<build_tool_version>.size,
@@ -426,8 +519,8 @@ public struct MachOWriter: Sendable {
         buildVersionCommand.cmd = command
         buildVersionCommand.cmdsize = UInt32(totalSize)
         buildVersionCommand.platform = rawValue(for: platform)
-        buildVersionCommand.minos = packedVersion(minimumOS)
-        buildVersionCommand.sdk = packedVersion(sdk)
+        buildVersionCommand.minos = try packedVersion(minimumOS)
+        buildVersionCommand.sdk = try packedVersion(sdk)
         buildVersionCommand.ntools = UInt32(tools.count)
 
         var data = Data()
@@ -435,7 +528,7 @@ public struct MachOWriter: Sendable {
         for tool in tools {
             var toolVersion = build_tool_version()
             toolVersion.tool = tool.tool
-            toolVersion.version = packedVersion(tool.version)
+            toolVersion.version = try packedVersion(tool.version)
             appendStruct(toolVersion, to: &data)
         }
         if data.count < totalSize {
@@ -464,8 +557,8 @@ public struct MachOWriter: Sendable {
         var versionCommand = version_min_command()
         versionCommand.cmd = command
         versionCommand.cmdsize = UInt32(totalSize)
-        versionCommand.version = packedVersion(edit.minimumOS)
-        versionCommand.sdk = packedVersion(edit.sdk)
+        versionCommand.version = try packedVersion(edit.minimumOS)
+        versionCommand.sdk = try packedVersion(edit.sdk)
 
         var data = Data()
         appendStruct(versionCommand, to: &data)
@@ -517,8 +610,12 @@ public struct MachOWriter: Sendable {
         return remainder == 0 ? value : value + alignment - remainder
     }
 
-    private func packedVersion(_ version: MachOVersion) -> UInt32 {
-        UInt32(version.major << 16) | UInt32(version.minor << 8) | UInt32(version.patch)
+    private func packedVersion(_ version: MachOVersion) throws -> UInt32 {
+        do {
+            return try version.packedValue()
+        } catch {
+            throw MachOWriteError.invalidVersion(version)
+        }
     }
 
     private func rawValue(for platform: MachOPlatform) -> UInt32 {

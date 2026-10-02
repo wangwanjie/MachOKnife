@@ -495,9 +495,9 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
 
                 let baseAddress = switch viewModel.browserAddressMode {
                 case .raw:
-                    Int(node.rawAddress ?? UInt64(clampedOffset))
+                    node.rawAddress ?? UInt64(clampedOffset)
                 case .rva:
-                    Int(node.rvaAddress ?? UInt64(clampedOffset))
+                    node.rvaAddress ?? UInt64(clampedOffset)
                 }
                 hexDataSource = HexTableDataSource(
                     url: url,
@@ -524,7 +524,7 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
     }
 
     private func refreshColumnTitles() {
-        let addressTitle = L10n.workspaceDetailColumnAddress
+        let addressTitle = viewModel.browserAddressMode == .raw ? L10n.workspaceAddressRaw : L10n.workspaceAddressRVA
 
         detailTableView.tableColumns.first { $0.identifier.rawValue == "address" }?.title = addressTitle
         detailTableView.tableColumns.first { $0.identifier.rawValue == "data" }?.title = L10n.workspaceDetailColumnData
@@ -532,8 +532,8 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
         detailTableView.tableColumns.first { $0.identifier.rawValue == "value" }?.title = L10n.workspaceDetailColumnValue
 
         dataTableView.tableColumns.first { $0.identifier.rawValue == "address" }?.title = addressTitle
-        dataTableView.tableColumns.first { $0.identifier.rawValue == "low" }?.title = "Data LO"
-        dataTableView.tableColumns.first { $0.identifier.rawValue == "high" }?.title = "DATA HI"
+        dataTableView.tableColumns.first { $0.identifier.rawValue == "low" }?.title = L10n.workspaceHexColumnLow
+        dataTableView.tableColumns.first { $0.identifier.rawValue == "high" }?.title = L10n.workspaceHexColumnHigh
         dataTableView.tableColumns.first { $0.identifier.rawValue == "ascii" }?.title = L10n.workspaceDetailColumnValue
     }
 
@@ -643,8 +643,8 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
     private func formattedHexRowInfo(_ row: BrowserHexRow) -> String {
         [
             "\(L10n.workspaceDetailColumnAddress): \(row.address)",
-            "Data LO: \(row.lowBytes.trimmingCharacters(in: .whitespaces))",
-            "DATA HI: \(row.highBytes.trimmingCharacters(in: .whitespaces))",
+            "\(L10n.workspaceHexColumnLow): \(row.lowBytes.trimmingCharacters(in: .whitespaces))",
+            "\(L10n.workspaceHexColumnHigh): \(row.highBytes.trimmingCharacters(in: .whitespaces))",
             "\(L10n.workspaceDetailColumnValue): \(row.ascii)",
         ].joined(separator: "\n")
     }
@@ -721,7 +721,7 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
         }
 
         guard let value else { return "" }
-        return String(format: "%08llX", value)
+        return BrowserAddressFormatter.string(value)
     }
 }
 
@@ -734,10 +734,10 @@ private final class HexTableDataSource {
     private let url: URL
     private let offset: Int
     private let length: Int
-    private let baseAddress: Int
+    private let baseAddress: UInt64
     private var chunkCache: [Int: Data] = [:]
 
-    init(url: URL, offset: Int, length: Int, baseAddress: Int) {
+    init(url: URL, offset: Int, length: Int, baseAddress: UInt64) {
         self.url = url
         self.offset = offset
         self.length = max(0, length)
@@ -767,7 +767,7 @@ private final class HexTableDataSource {
         }
 
         return BrowserHexRow(
-            address: String(format: "%08X", baseAddress + lineOffset),
+            address: BrowserAddressFormatter.string(baseAddress + UInt64(lineOffset)),
             lowBytes: low,
             highBytes: high,
             ascii: String(ascii)

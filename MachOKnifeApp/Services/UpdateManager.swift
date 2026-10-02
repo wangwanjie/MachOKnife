@@ -22,11 +22,23 @@ protocol UpdateClient: AnyObject {
 
     func checkForUpdates()
     func checkForUpdatesInBackground()
+
+    /// Starts observing changes to `canCheckForUpdates` (which Sparkle toggles while a check is
+    /// in progress). Returns a token that keeps the observation alive, or nil if unsupported.
+    func observeCanCheckForUpdates(_ handler: @escaping @MainActor () -> Void) -> AnyObject?
+}
+
+extension UpdateClient {
+    func observeCanCheckForUpdates(_ handler: @escaping @MainActor () -> Void) -> AnyObject? {
+        nil
+    }
 }
 
 @MainActor
 final class UpdateManager {
     static let dailyUpdateCheckInterval: TimeInterval = 24 * 60 * 60
+    /// Posted (with the manager as the object) when the client's update-check availability changes.
+    static let statusDidChangeNotification = Notification.Name("MachOKnife.UpdateManager.statusDidChange")
 
     enum UnavailableReason: Equatable {
         case feedURLMissing
@@ -54,6 +66,8 @@ final class UpdateManager {
     private let injectedClientProvider: ClientProvider?
     private let defaults: UserDefaults
     private lazy var defaultClient = Self.makeDefaultClient()
+    private var canCheckForUpdatesObservation: AnyObject?
+    private weak var observedClient: AnyObject?
 
     private enum Keys {
         static let updateCheckStrategy = "app.updateCheckStrategy"
@@ -178,7 +192,20 @@ final class UpdateManager {
     }
 
     private func activeClient() -> UpdateClient? {
-        injectedClientProvider?() ?? defaultClient
+        let client = injectedClientProvider?() ?? defaultClient
+        observeIfNeeded(client)
+        return client
+    }
+
+    private func observeIfNeeded(_ client: UpdateClient?) {
+        guard let client, observedClient !== client else {
+            return
+        }
+        observedClient = client
+        canCheckForUpdatesObservation = client.observeCanCheckForUpdates { [weak self] in
+            guard let self else { return }
+            NotificationCenter.default.post(name: Self.statusDidChangeNotification, object: self)
+        }
     }
 
     private func storedUpdateCheckStrategy() -> UpdateCheckStrategy? {
@@ -239,5 +266,15 @@ private final class SparkleUpdateClient: NSObject, UpdateClient {
 
     func checkForUpdatesInBackground() {
         updaterController.updater.checkForUpdatesInBackground()
+    }
+
+    func observeCanCheckForUpdates(_ handler: @escaping @MainActor () -> Void) -> AnyObject? {
+        updaterController.updater.observe(\.canCheckForUpdates, options: [.new]) { _, _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    handler()
+                }
+            }
+        }
     }
 }

@@ -131,7 +131,22 @@ final class CLIInstallService: CLIInstallServicing {
             return true
         }
 
-        return settings.lastKnownCLIExecutablePath() == url.path
+        // The path remembered from a successful install only counts while the file has not been
+        // positively observed as missing (for example after the user deleted it in Terminal).
+        guard settings.lastKnownCLIExecutablePath() == url.path else {
+            return false
+        }
+        return Self.isKnownMissing(path: url.path) == false
+    }
+
+    /// True only when `lstat` reports that the path does not exist. A sandbox denial (EPERM/EACCES)
+    /// is not proof of absence, so it returns false in that case.
+    nonisolated static func isKnownMissing(path: String) -> Bool {
+        var info = stat()
+        if lstat(path, &info) == 0 {
+            return false
+        }
+        return errno == ENOENT || errno == ENOTDIR
     }
 
     nonisolated private static func defaultBundledCLIURL() throws -> URL? {
@@ -169,30 +184,46 @@ final class CLIInstallService: CLIInstallServicing {
     }
 
     private func installWithPrivileges(sourceURL: URL, destinationURL: URL) throws {
-        let script = """
-        do shell script "mkdir -p \(Self.shellQuoted(destinationURL.deletingLastPathComponent().path)) && /usr/bin/install -m 755 \(Self.shellQuoted(sourceURL.path)) \(Self.shellQuoted(destinationURL.path))" with administrator privileges
-        """
-        try runPrivileged(script: script)
+        let command = "/bin/mkdir -p \(Self.shellQuoted(destinationURL.deletingLastPathComponent().path)) && /usr/bin/install -m 755 \(Self.shellQuoted(sourceURL.path)) \(Self.shellQuoted(destinationURL.path))"
+        try runPrivileged(script: Self.privilegedShellScript(command: command))
     }
 
     private func removeWithPrivileges(url: URL) throws {
-        let script = """
-        do shell script "if [ -e \(Self.shellQuoted(url.path)) ]; then /bin/rm -f \(Self.shellQuoted(url.path)); fi" with administrator privileges
-        """
-        try runPrivileged(script: script)
+        let command = "if [ -e \(Self.shellQuoted(url.path)) ]; then /bin/rm -f \(Self.shellQuoted(url.path)); fi"
+        try runPrivileged(script: Self.privilegedShellScript(command: command))
+    }
+
+    /// Wraps a shell command in an AppleScript `do shell script ... with administrator privileges`
+    /// statement. The command is embedded in an AppleScript string literal, so backslashes and
+    /// double quotes (which may appear in user-chosen paths) must be escaped for AppleScript.
+    nonisolated static func privilegedShellScript(command: String) -> String {
+        "do shell script \(appleScriptStringLiteral(command)) with administrator privileges"
+    }
+
+    nonisolated static func appleScriptStringLiteral(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"" + escaped + "\""
     }
 
     private func runPrivileged(script: String) throws {
         var error: NSDictionary?
-        let appleScript = NSAppleScript(source: script)
-        appleScript?.executeAndReturnError(&error)
+        guard let appleScript = NSAppleScript(source: script) else {
+            throw NSError(
+                domain: "MachOKnife.CLIInstall",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: L10n.preferencesCLIErrorAdministratorCommandFailed]
+            )
+        }
+        appleScript.executeAndReturnError(&error)
         if let error {
-            let message = (error[NSAppleScript.errorMessage] as? String) ?? "Administrator command failed."
+            let message = (error[NSAppleScript.errorMessage] as? String) ?? L10n.preferencesCLIErrorAdministratorCommandFailed
             throw NSError(domain: "MachOKnife.CLIInstall", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
         }
     }
 
-    nonisolated private static func shellQuoted(_ value: String) -> String {
+    nonisolated static func shellQuoted(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 }

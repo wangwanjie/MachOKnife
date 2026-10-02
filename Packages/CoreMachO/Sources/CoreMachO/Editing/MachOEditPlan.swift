@@ -49,7 +49,9 @@ public struct MachOEditPlan: Sendable {
 
 public enum DylibEdit: Sendable {
     case replace(oldPath: String, newPath: String, command: UInt32? = nil)
-    case add(path: String, command: UInt32)
+    /// Adds a new dylib load command. The command is written with timestamp 2 (the value
+    /// ld64 uses) and the given versions, or 0.0.0 when no version is supplied.
+    case add(path: String, command: UInt32, currentVersion: MachOVersion? = nil, compatibilityVersion: MachOVersion? = nil)
     case remove(path: String, command: UInt32? = nil)
 }
 

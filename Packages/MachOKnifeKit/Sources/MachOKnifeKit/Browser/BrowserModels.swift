@@ -50,8 +50,15 @@ public final class BrowserNode {
     public let rawAddress: UInt64?
     public let rvaAddress: UInt64?
     public let dataRange: BrowserDataRange?
-    public let detailCount: Int
     public let childCount: Int
+
+    /// Number of detail rows. Nodes built with only a `detailProvider` and no explicit count
+    /// resolve their rows the first time the count is requested.
+    public var detailCount: Int {
+        fixedDetailCount ?? detailRows.count
+    }
+
+    private let fixedDetailCount: Int?
 
     private let detailProvider: (() -> [BrowserDetailRow])?
     private let indexedDetailProvider: ((Int) -> BrowserDetailRow)?
@@ -71,7 +78,7 @@ public final class BrowserNode {
         if let detailProvider {
             loadedRows = detailProvider()
         } else if indexedDetailProvider != nil {
-            loadedRows = (0..<detailCount).map { detailRow(at: $0) }
+            loadedRows = (0..<(fixedDetailCount ?? 0)).map { detailRow(at: $0) }
         } else {
             loadedRows = []
         }
@@ -84,7 +91,10 @@ public final class BrowserNode {
         if let cachedDetailRows {
             return cachedDetailRows
         }
-        return (0..<detailCount).compactMap { indexedDetailRows[$0] }
+        guard let fixedDetailCount else {
+            return []
+        }
+        return (0..<fixedDetailCount).compactMap { indexedDetailRows[$0] }
     }
 
     public var children: [BrowserNode] {
@@ -176,7 +186,13 @@ public final class BrowserNode {
         self.rawAddress = rawAddress
         self.rvaAddress = rvaAddress
         self.dataRange = dataRange
-        self.detailCount = detailCount ?? detailRows.count
+        if let detailCount {
+            self.fixedDetailCount = detailCount
+        } else if detailProvider != nil, indexedDetailProvider == nil, detailRows.isEmpty {
+            self.fixedDetailCount = nil
+        } else {
+            self.fixedDetailCount = detailRows.count
+        }
         self.childCount = childCount ?? children.count
         self.detailProvider = detailProvider
         self.indexedDetailProvider = indexedDetailProvider

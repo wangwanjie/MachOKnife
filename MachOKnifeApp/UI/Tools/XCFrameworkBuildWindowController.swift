@@ -63,7 +63,8 @@ final class XCFrameworkBuildWindowController: NSWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            // Delivered on the main queue, so refresh synchronously instead of hopping through a Task.
+            MainActor.assumeIsolated {
                 self?.reloadLocalization()
             }
         }
@@ -113,7 +114,10 @@ private final class XCFrameworkBuildViewController: NSViewController {
     private let sdkVersionLabel = makeSectionLabel("")
     private let sdkVersionField = NSTextField(string: "17.5")
     private let logTitleLabel = NSTextField(labelWithString: "")
-    private let logTextView = NSTextView()
+    private let logScrollView = NSTextView.scrollableTextView()
+    private var logTextView: NSTextView {
+        logScrollView.documentView as! NSTextView
+    }
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
     private let progressIndicator = NSProgressIndicator()
     private let startButton = NSButton(title: "", target: nil, action: nil)
@@ -125,6 +129,18 @@ private final class XCFrameworkBuildViewController: NSViewController {
     private var macCatalystLibraryURL: URL?
     private var headersDirectoryURL: URL?
     private var outputDirectoryURL: URL?
+    /// Identifies the build whose callbacks are still relevant; callbacks from a cancelled or
+    /// superseded build are ignored so they cannot overwrite the current status.
+    private var activeBuildID: UUID?
+    private var status: BuildStatus = .idle
+
+    private enum BuildStatus {
+        case idle
+        case running
+        case completed(URL)
+        case cancelled
+        case failed(Error)
+    }
 
     override func loadView() {
         view = AdaptiveBackgroundView(backgroundColor: .windowBackgroundColor)
@@ -167,8 +183,48 @@ private final class XCFrameworkBuildViewController: NSViewController {
         outputDirectoryClearButton.title = L10n.mergeSplitMergeClear
         startButton.title = L10n.xcframeworkStart
         cancelButton.title = L10n.xcframeworkCancel
-        if statusLabel.stringValue.isEmpty {
+        refreshPlaceholders()
+        renderStatus()
+    }
+
+    private func refreshPlaceholders() {
+        if sourceLibraryURL == nil {
+            sourceLibraryField.stringValue = L10n.xcframeworkNoSelection
+        }
+        if deviceLibraryURL == nil {
+            deviceLibraryField.stringValue = L10n.xcframeworkUseSourceLibraryHint
+        }
+        if simulatorLibraryURL == nil {
+            simulatorLibraryField.stringValue = L10n.xcframeworkUseSourceLibraryHint
+        }
+        if macCatalystLibraryURL == nil {
+            macCatalystLibraryField.stringValue = L10n.xcframeworkMacCatalystOptionalHint
+        }
+        if headersDirectoryURL == nil {
+            headersField.stringValue = L10n.xcframeworkNoSelection
+        }
+        if outputDirectoryURL == nil {
+            outputDirectoryField.stringValue = L10n.xcframeworkNoSelection
+        }
+    }
+
+    private func setStatus(_ newStatus: BuildStatus) {
+        status = newStatus
+        renderStatus()
+    }
+
+    private func renderStatus() {
+        switch status {
+        case .idle:
             statusLabel.stringValue = L10n.xcframeworkIdleStatus
+        case .running:
+            statusLabel.stringValue = L10n.xcframeworkRunningStatus
+        case let .completed(url):
+            statusLabel.stringValue = L10n.xcframeworkCompletedStatus(path: url.path)
+        case .cancelled:
+            statusLabel.stringValue = L10n.xcframeworkCancelledStatus
+        case let .failed(error):
+            statusLabel.stringValue = compactStatusMessage(for: error)
         }
     }
 
@@ -324,6 +380,15 @@ private final class XCFrameworkBuildViewController: NSViewController {
             return
         }
 
+        let xcframeworkName = XCFrameworkBuildService.normalizedXCFrameworkName(xcframeworkNameField.stringValue)
+        xcframeworkNameField.stringValue = xcframeworkName
+        guard XCFrameworkBuildService.isValidXCFrameworkName(xcframeworkName) else {
+            let error = XCFrameworkBuildError.invalidXCFrameworkName(xcframeworkName)
+            setStatus(.failed(error))
+            presentErrorAlert(error)
+            return
+        }
+
         let configuration = XCFrameworkBuildConfiguration(
             sourceLibraryURL: effectiveSourceLibraryURL,
             iosDeviceSourceLibraryURL: deviceLibraryURL,
@@ -332,56 +397,70 @@ private final class XCFrameworkBuildViewController: NSViewController {
             headersDirectoryURL: headersDirectoryURL,
             outputDirectoryURL: outputDirectoryURL,
             outputLibraryName: outputLibraryNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty(or: "libSDK.a"),
-            xcframeworkName: xcframeworkNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty(or: "SDK.xcframework"),
+            xcframeworkName: xcframeworkName,
             moduleName: moduleNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
             umbrellaHeader: umbrellaHeaderField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
             macCatalystMinimumVersion: minVersionField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty(or: "13.1"),
             macCatalystSDKVersion: sdkVersionField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty(or: "17.5")
         )
 
+        let buildID = UUID()
+        activeBuildID = buildID
         setRunning(true)
         logTextView.string = ""
-        statusLabel.stringValue = L10n.xcframeworkRunningStatus
+        setStatus(.running)
 
         do {
+            // The service delivers both callbacks on the main queue.
             try buildService.startBuild(
                 configuration: configuration,
                 outputHandler: { [weak self] chunk in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        self.logTextView.string += chunk
-                        self.logTextView.scrollToEndOfDocument(nil)
-                    }
+                    guard let self, self.activeBuildID == buildID else { return }
+                    self.logTextView.textStorage?.append(NSAttributedString(
+                        string: chunk,
+                        attributes: self.logTextAttributes
+                    ))
+                    self.logTextView.scrollToEndOfDocument(nil)
                 },
                 completionHandler: { [weak self] result in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        self.setRunning(false)
-                        switch result {
-                        case let .success(url):
-                            self.statusLabel.stringValue = L10n.xcframeworkCompletedStatus(path: url.path)
-                        case let .failure(error):
-                            self.appendErrorToLogIfNeeded(error)
-                            self.statusLabel.stringValue = self.compactStatusMessage(for: error)
-                            if error.localizedDescription != "XCFramework build cancelled." {
-                                self.presentErrorAlert(error)
-                            }
+                    guard let self, self.activeBuildID == buildID else { return }
+                    self.activeBuildID = nil
+                    self.setRunning(false)
+                    switch result {
+                    case let .success(url):
+                        self.setStatus(.completed(url))
+                    case let .failure(error):
+                        if case XCFrameworkBuildError.cancelled = error {
+                            self.setStatus(.cancelled)
+                            return
                         }
+                        self.appendErrorToLogIfNeeded(error)
+                        self.setStatus(.failed(error))
+                        self.presentErrorAlert(error)
                     }
                 }
             )
         } catch {
+            activeBuildID = nil
             setRunning(false)
             appendErrorToLogIfNeeded(error)
-            statusLabel.stringValue = compactStatusMessage(for: error)
+            setStatus(.failed(error))
             presentErrorAlert(error)
         }
     }
 
     @objc private func cancelBuild(_ sender: Any?) {
+        activeBuildID = nil
         buildService.cancel()
         setRunning(false)
-        statusLabel.stringValue = L10n.xcframeworkCancelledStatus
+        setStatus(.cancelled)
+    }
+
+    private var logTextAttributes: [NSAttributedString.Key: Any] {
+        [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+            .foregroundColor: NSColor.textColor,
+        ]
     }
 
     private func chooseFile(completion: @escaping (URL) -> Void) {
@@ -494,15 +573,12 @@ private final class XCFrameworkBuildViewController: NSViewController {
         logTextView.isSelectable = true
         logTextView.drawsBackground = false
         logTextView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        logTextView.isHorizontallyResizable = false
-        logTextView.textContainer?.widthTracksTextView = true
+        logTextView.textColor = .textColor
         logTextView.textContainerInset = NSSize(width: 4, height: 8)
 
-        let logScrollView = NSScrollView()
         logScrollView.drawsBackground = false
         logScrollView.hasVerticalScroller = true
         logScrollView.autohidesScrollers = true
-        logScrollView.documentView = logTextView
 
         progressIndicator.style = .spinning
         progressIndicator.controlSize = .regular
@@ -621,8 +697,31 @@ private final class XCFrameworkBuildViewController: NSViewController {
         }
     }
 
+    private func message(for error: Error) -> String {
+        guard let buildError = error as? XCFrameworkBuildError else {
+            return error.localizedDescription
+        }
+        switch buildError {
+        case .cancelled:
+            return L10n.xcframeworkCancelledStatus
+        case let .invalidXCFrameworkName(name):
+            return L10n.xcframeworkErrorInvalidName(name)
+        case .missingOutputPath:
+            return L10n.xcframeworkErrorMissingOutputPath
+        case let .failed(output):
+            return output.isEmpty ? L10n.xcframeworkErrorFailed : output
+        case let .developerToolNotFound(tool):
+            return L10n.xcframeworkErrorToolNotFound(tool)
+        case .developerDirectoryUnavailable:
+            return L10n.xcframeworkErrorDeveloperDirectory
+        }
+    }
+
     private func compactStatusMessage(for error: Error) -> String {
-        let firstLine = error.localizedDescription
+        if case XCFrameworkBuildError.failed = error {
+            return L10n.xcframeworkErrorFailed
+        }
+        let firstLine = message(for: error)
             .split(whereSeparator: \.isNewline)
             .map(String.init)
             .first { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
@@ -630,12 +729,20 @@ private final class XCFrameworkBuildViewController: NSViewController {
     }
 
     private func appendErrorToLogIfNeeded(_ error: Error) {
-        let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard message.isEmpty == false else { return }
-        if logTextView.string.isEmpty == false, logTextView.string.hasSuffix("\n") == false {
-            logTextView.string += "\n"
+        // Process output has already been streamed into the log; don't append it a second time.
+        let message: String
+        if case XCFrameworkBuildError.failed = error {
+            message = L10n.xcframeworkErrorFailed
+        } else {
+            message = self.message(for: error).trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        logTextView.string += message + "\n"
+        guard message.isEmpty == false else { return }
+        var text = ""
+        if logTextView.string.isEmpty == false, logTextView.string.hasSuffix("\n") == false {
+            text += "\n"
+        }
+        text += message + "\n"
+        logTextView.textStorage?.append(NSAttributedString(string: text, attributes: logTextAttributes))
         logTextView.scrollToEndOfDocument(nil)
     }
 
@@ -658,7 +765,7 @@ private final class XCFrameworkBuildViewController: NSViewController {
         outputDirectoryField.stringValue = L10n.xcframeworkNoSelection
         outputDirectoryField.showsPlaceholderText = true
         outputDirectoryClearButton.isEnabled = false
-        statusLabel.stringValue = L10n.xcframeworkIdleStatus
+        setStatus(.idle)
         setRunning(false)
     }
 
@@ -696,7 +803,7 @@ private final class XCFrameworkBuildViewController: NSViewController {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = L10n.xcframeworkErrorTitle
-        alert.informativeText = error.localizedDescription
+        alert.informativeText = message(for: error)
         if let window = view.window {
             alert.beginSheetModal(for: window)
         } else {
@@ -809,6 +916,7 @@ private final class DropReceivingPathLabel: NSTextField {
         wantsLayer = true
         layer?.cornerRadius = 8
         layer?.borderWidth = 1
+        layer?.masksToBounds = true
         lineBreakMode = .byTruncatingMiddle
         maximumNumberOfLines = 1
         registerForDraggedTypes([.fileURL])
@@ -886,8 +994,12 @@ private final class DropReceivingPathLabel: NSTextField {
             highlighted: isDropTargetHighlighted,
             showsPlaceholderText: showsPlaceholderText
         )
-        layer?.borderColor = DropReceivingPathLabelStyleResolver.color(for: style.border).cgColor
-        layer?.backgroundColor = DropReceivingPathLabelStyleResolver.color(for: style.background).cgColor
+        // Resolve dynamic colors against this view's appearance; `cgColor` is otherwise
+        // evaluated with whatever appearance happens to be current.
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.borderColor = DropReceivingPathLabelStyleResolver.color(for: style.border).cgColor
+            layer?.backgroundColor = DropReceivingPathLabelStyleResolver.color(for: style.background).cgColor
+        }
         textColor = DropReceivingPathLabelStyleResolver.color(for: style.text)
     }
 

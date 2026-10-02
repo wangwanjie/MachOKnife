@@ -4,31 +4,54 @@ import Testing
 @testable import MachOKnifeKit
 
 struct BrowserDocumentServiceTests {
-    @Test("loads a Mach-O fixture with explicit browser categories for advanced metadata")
-    func loadsMachOFixtureWithExplicitBrowserCategories() throws {
+    @Test("thin Mach-O files use the MachOView layout: header, load commands, sections and link-edit tables")
+    func loadsMachOFixtureWithMachOViewLayout() throws {
         let fixtureURL = try BrowserFixtureFactory.makeThinFixture()
-        let service = BrowserDocumentService()
-
-        let document = try service.load(url: fixtureURL)
+        let document = try BrowserDocumentService().load(url: fixtureURL)
 
         #expect(document.kind == .machOFile)
-
         let rootNode = try #require(document.rootNodes.first)
-        let categoryTitles = Set(rootNode.children.map(\.title))
+        let titles = rootNode.children.map(\.title)
 
-        #expect(categoryTitles.contains("Header"))
-        #expect(categoryTitles.contains(where: { $0.hasPrefix("Load Commands") }))
-        #expect(categoryTitles.contains("Segments"))
-        #expect(categoryTitles.contains("Sections"))
-        #expect(categoryTitles.contains("Symbols"))
-        #expect(categoryTitles.contains("String Tables"))
-        #expect(categoryTitles.contains("Bindings"))
-        #expect(categoryTitles.contains("Exports"))
-        #expect(categoryTitles.contains("Fixups"))
-        #expect(categoryTitles.contains("Function Starts"))
-        #expect(categoryTitles.contains("Data In Code"))
-        #expect(categoryTitles.contains("Code Sign"))
-        #expect(categoryTitles.contains("Raw Object"))
+        #expect(titles.first == "Mach64 Header")
+        #expect(titles.contains(where: { $0.hasPrefix("Load Commands (") }))
+        #expect(titles.contains("Section64 (__TEXT,__text)"))
+        #expect(titles.contains("Section64 (__TEXT,__cstring)"))
+        #expect(titles.contains(where: { $0.hasPrefix("Symbol Table (") }))
+        #expect(titles.contains("String Table"))
+    }
+
+    @Test("linked executables expose fixups, function starts and code signature structures")
+    func linkedExecutablesExposeLinkEditStructures() throws {
+        let fixtureURL = try BrowserFixtureFactory.makeExecutableFixture(signed: true)
+        let document = try BrowserDocumentService().load(url: fixtureURL)
+        let rootNode = try #require(document.rootNodes.first)
+        let titles = rootNode.children.map(\.title)
+
+        #expect(titles.contains(where: { $0 == "Chained Fixups" || $0 == "Dynamic Loader Info" }))
+        #expect(titles.contains(where: { $0.hasPrefix("Function Starts") }))
+
+        let signature = try #require(rootNode.children.first(where: { $0.title == "Code Signature" }))
+        let blobTitles = signature.children.map(\.title)
+        #expect(blobTitles.contains("Code Directory"))
+        #expect(blobTitles.contains("Requirements"))
+        let codeDirectory = try #require(signature.children.first(where: { $0.title == "Code Directory" }))
+        #expect(codeDirectory.detailRows.contains(where: { $0.key == "Identifier" && $0.value.isEmpty == false }))
+    }
+
+    @Test("chained fixups decode imports and fixup chains")
+    func chainedFixupsDecodeImportsAndChains() throws {
+        let fixtureURL = try BrowserFixtureFactory.makeChainedFixupsExecutableFixture()
+        let document = try BrowserDocumentService().load(url: fixtureURL)
+        let rootNode = try #require(document.rootNodes.first)
+        let fixups = try #require(rootNode.children.first(where: { $0.title == "Chained Fixups" }))
+
+        let imports = try #require(fixups.children.first(where: { $0.title.hasPrefix("Imports (") }))
+        #expect(imports.detailCount > 0)
+        #expect((0..<imports.detailCount).contains(where: { imports.detailRow(at: $0).key.contains("_printf") }))
+
+        let chain = try #require(fixups.children.first(where: { $0.title.hasPrefix("Fixups (") }))
+        #expect(chain.detailCount > 0)
     }
 
     @Test("loads an in-memory Mach-O image with browser metadata and no hex source")
@@ -49,28 +72,27 @@ struct BrowserDocumentServiceTests {
         #expect(reason.contains("memory images"))
     }
 
-    @Test("header detail rows use semantic names for magic and CPU type")
+    @Test("header rows show file offsets, raw data and semantic values")
     func headerDetailRowsUseSemanticNames() throws {
         let fixtureURL = try BrowserFixtureFactory.makeThinFixture()
-        let service = BrowserDocumentService()
-
-        let document = try service.load(url: fixtureURL)
+        let document = try BrowserDocumentService().load(url: fixtureURL)
         let rootNode = try #require(document.rootNodes.first)
-        let headerNode = try #require(rootNode.children.first(where: { $0.title == "Header" }))
+        let headerNode = try #require(rootNode.children.first(where: { $0.title == "Mach64 Header" }))
 
-        let magicRow = try #require(headerNode.detailRows.first(where: { $0.key == "Magic" }))
+        let magicRow = try #require(headerNode.detailRows.first(where: { $0.key == "Magic Number" }))
         let cpuTypeRow = try #require(headerNode.detailRows.first(where: { $0.key == "CPU Type" }))
 
-        #expect(magicRow.value.contains("MH_MAGIC"))
-        #expect(cpuTypeRow.value.contains("CPU_TYPE"))
+        #expect(magicRow.value == "MH_MAGIC_64")
+        #expect(magicRow.rawAddress == 0)
+        #expect(magicRow.dataPreview == "FEEDFACF")
+        #expect(cpuTypeRow.value == "CPU_TYPE_X86_64")
+        #expect(cpuTypeRow.rawAddress == 4)
     }
 
     @Test("root node exposes semantic Mach-O summary")
     func rootNodeExposesSemanticSummary() throws {
         let fixtureURL = try BrowserFixtureFactory.makeThinFixture()
-        let service = BrowserDocumentService()
-
-        let document = try service.load(url: fixtureURL)
+        let document = try BrowserDocumentService().load(url: fixtureURL)
         let rootNode = try #require(document.rootNodes.first)
 
         let subtitle = try #require(rootNode.subtitle)
@@ -85,114 +107,72 @@ struct BrowserDocumentServiceTests {
         #expect(fileTypeRow.value.contains("MH_OBJECT"))
     }
 
-    @Test("objective-c class list lazily exposes class names")
+    @Test("objective-c class list lazily exposes class nodes")
     func objectiveCClassListLazilyExposesClassNames() throws {
         let fixtureURL = try BrowserFixtureFactory.makeObjCFixture()
-        let service = BrowserDocumentService()
-
-        let document = try service.load(url: fixtureURL)
+        let document = try BrowserDocumentService().load(url: fixtureURL)
         let rootNode = try #require(document.rootNodes.first)
-        let sectionsNode = try #require(rootNode.children.first(where: { $0.title == "Sections" }))
-        let classListNode = try #require(sectionsNode.children.first(where: { $0.title.contains("__objc_classlist") }))
+        let classListNode = try #require(rootNode.children.first(where: { $0.title == "Section64 (__DATA,__objc_classlist)" }))
 
-        #expect(classListNode.childCount == 1)
         #expect(classListNode.loadedChildren.isEmpty)
-        #expect(classListNode.title.contains("(1)"))
+        #expect(classListNode.detailRows.contains(where: { $0.key == "Objective-C Class" && $0.value == "BrowserFixtureClass" }))
 
         let classNode = classListNode.child(at: 0)
         #expect(classNode.title == "BrowserFixtureClass")
-        #expect(classListNode.loadedChildren.count == 1)
+        #expect(classNode.detailRows.contains(where: { $0.key == "Name" && $0.value == "BrowserFixtureClass" }))
     }
 
-    @Test("objective-c category and method-name sections expose symbolic children")
+    @Test("objective-c category and method-name sections decode their contents")
     func objectiveCCategoryAndMethodNameSectionsExposeSymbolicChildren() throws {
         let fixtureURL = try BrowserFixtureFactory.makeObjCCategoryFixture()
-        let service = BrowserDocumentService()
-
-        let document = try service.load(url: fixtureURL)
+        let document = try BrowserDocumentService().load(url: fixtureURL)
         let rootNode = try #require(document.rootNodes.first)
-        let sectionsNode = try #require(rootNode.children.first(where: { $0.title == "Sections" }))
 
-        let categoryListNode = try #require(sectionsNode.children.first(where: { $0.title.contains("__objc_catlist") }))
-        let methodNameNode = try #require(sectionsNode.children.first(where: { $0.title.contains("__objc_methname") }))
+        let categoryListNode = try #require(rootNode.children.first(where: { $0.title == "Section64 (__DATA,__objc_catlist)" }))
+        let methodNameNode = try #require(rootNode.children.first(where: { $0.title == "Section64 (__TEXT,__objc_methname)" }))
 
-        #expect(categoryListNode.childCount == 1)
-        #expect(categoryListNode.child(at: 0).title.contains("BrowserFixtureClass"))
-        #expect(categoryListNode.child(at: 0).title.contains("Extra"))
+        let summaryRow = try #require(categoryListNode.detailRows.first(where: { $0.key == "Objective-C Category" }))
+        #expect(summaryRow.value == "BrowserFixtureClass(Extra)")
+        #expect(categoryListNode.child(at: 0).title == "BrowserFixtureClass(Extra)")
 
-        let methodTitles = methodNameNode.children.map(\.title)
-        #expect(methodTitles.contains("baseMethod"))
-        #expect(methodTitles.contains("categoryMethod"))
+        let methodNames = methodNameNode.detailRows.map(\.value)
+        #expect(methodNames.contains("baseMethod"))
+        #expect(methodNames.contains("categoryMethod"))
     }
 
-    @Test("group nodes expose child summaries instead of leaking first descendant values")
-    func groupNodesExposeChildSummaries() throws {
-        let fixtureURL = try BrowserFixtureFactory.makeThinFixture()
-        let service = BrowserDocumentService()
+    @Test("symbol table rows decode nlist fields and two-level library ordinals")
+    func symbolTableRowsDecodeNlistFields() throws {
+        let fixtureURL = try BrowserFixtureFactory.makeObjCDynamicLibraryFixture()
+        let document = try BrowserDocumentService().load(url: fixtureURL)
+        let rootNode = try #require(document.rootNodes.first).child(at: 0)
+        let symbols = try #require(rootNode.children.first(where: { $0.title.hasPrefix("Symbol Table (") }))
+        let rows = (0..<symbols.detailCount).map(symbols.detailRow(at:))
 
-        let document = try service.load(url: fixtureURL)
-        let rootNode = try #require(document.rootNodes.first)
-        let stringTablesNode = try #require(rootNode.children.first(where: { $0.title == "String Tables" }))
-        let cStringsRow = try #require(stringTablesNode.detailRows.first(where: { $0.key == "C Strings" }))
-
-        #expect(cStringsRow.value != "C Strings")
-        #expect(cStringsRow.value.contains("item"))
-    }
-
-    @Test("leaf summaries keep semantic field names in Description and values in Value")
-    func leafSummariesKeepSemanticFieldNames() throws {
-        let fixtureURL = try BrowserFixtureFactory.makeExecutableFixture()
-        let service = BrowserDocumentService()
-
-        let document = try service.load(url: fixtureURL)
-        let rootNode = try #require(document.rootNodes.first)
-        let symbolsNode = try #require(rootNode.children.first(where: { $0.title == "Symbols" }))
-        let symbolRow = try #require(symbolsNode.detailRows.first)
-
-        #expect(symbolRow.key == "Name")
-        #expect(symbolRow.value.isEmpty == false)
+        let undefinedIndex = try #require(rows.firstIndex(where: { $0.key == "String Table Index" && $0.value == "_OBJC_CLASS_$_NSObject" }))
+        let descriptionRow = rows[undefinedIndex + 3]
+        #expect(descriptionRow.key == "Description")
+        #expect(descriptionRow.value.contains("Library:"))
+        #expect(descriptionRow.value.contains("N_SYMBOL_RESOLVER") == false)
+        #expect(descriptionRow.value.contains("N_ALT_ENTRY") == false)
     }
 
     @Test("load command nodes expose command lists and layout details")
     func loadCommandNodesExposeCommandListsAndLayoutDetails() throws {
         let fixtureURL = try BrowserFixtureFactory.makeExecutableFixture()
-        let service = BrowserDocumentService()
-
-        let document = try service.load(url: fixtureURL)
+        let document = try BrowserDocumentService().load(url: fixtureURL)
         let rootNode = try #require(document.rootNodes.first)
         let loadCommandsNode = try #require(rootNode.children.first(where: { $0.title.hasPrefix("Load Commands") }))
 
         #expect(loadCommandsNode.detailCount == loadCommandsNode.childCount)
-        #expect(loadCommandsNode.title.contains("(\(loadCommandsNode.childCount))"))
+        #expect(loadCommandsNode.title == "Load Commands (\(loadCommandsNode.childCount))")
 
         let commandNode = loadCommandsNode.child(at: 0)
-        #expect(commandNode.title.hasPrefix("0.") == false)
-        #expect(commandNode.detailRows.contains(where: { $0.key == "Load Command" }))
+        #expect(commandNode.detailRows.contains(where: { $0.key == "Command" }))
         #expect(commandNode.detailRows.contains(where: { $0.key == "Command Size" }))
 
-        let dylibNode = try #require(loadCommandsNode.children.first(where: { node in
-            node.detailRows.contains(where: { $0.key == "Library" })
-        }))
-        let libraryRow = try #require(dylibNode.detailRows.first(where: { $0.key == "Library" }))
-
-        #expect(libraryRow.value.contains("/"))
-        #expect(dylibNode.title.contains((libraryRow.value as NSString).lastPathComponent))
-        #expect(dylibNode.title.contains(libraryRow.value) == false)
-    }
-
-    @Test("objective-c special sections use type labels in Description and names in Value")
-    func objectiveCSpecialSectionsUseTypeLabelsInDescription() throws {
-        let fixtureURL = try BrowserFixtureFactory.makeObjCCategoryFixture()
-        let service = BrowserDocumentService()
-
-        let document = try service.load(url: fixtureURL)
-        let rootNode = try #require(document.rootNodes.first)
-        let sectionsNode = try #require(rootNode.children.first(where: { $0.title == "Sections" }))
-        let categoryListNode = try #require(sectionsNode.children.first(where: { $0.title.contains("__objc_catlist") }))
-
-        let summaryRow = try #require(categoryListNode.detailRows.first(where: { $0.key == "Objective-C Category" }))
-        #expect(summaryRow.key == "Objective-C Category")
-        #expect(summaryRow.value.contains("BrowserFixtureClass"))
+        let dylibNode = try #require(loadCommandsNode.children.first(where: { $0.title == "LC_LOAD_DYLIB (libSystem.B.dylib)" }))
+        let nameRow = try #require(dylibNode.detailRows.first(where: { $0.key == "Name" }))
+        #expect(nameRow.value == "/usr/lib/libSystem.B.dylib")
     }
 
     @Test("archive documents expose a container root, target nodes, and file-backed hex data")
@@ -224,6 +204,7 @@ struct BrowserDocumentServiceTests {
         let objectNode = try #require(arm64TargetNode.children.first(where: { $0.title.hasSuffix(".o") }))
         let objectChildTitles = objectNode.children.map(\.title)
         #expect(objectChildTitles.contains("Object Header"))
+        #expect(objectChildTitles.contains("Mach64 Header"))
 
         guard case let .file(url, size) = document.hexSource else {
             Issue.record("Expected archive documents to expose a file-backed hex source.")
@@ -237,9 +218,7 @@ struct BrowserDocumentServiceTests {
     @Test("dynamic libraries expose a container root and per-target child nodes")
     func dynamicLibrariesExposeContainerRootAndTargetNodes() throws {
         let fixtureURL = try BrowserFixtureFactory.makeDynamicLibraryFixture()
-        let service = BrowserDocumentService()
-
-        let document = try service.load(url: fixtureURL)
+        let document = try BrowserDocumentService().load(url: fixtureURL)
 
         #expect(document.kind == .machOFile)
         #expect(document.rootNodes.count == 1)
@@ -251,35 +230,25 @@ struct BrowserDocumentServiceTests {
         let targetNode = rootNode.child(at: 0)
         #expect(targetNode.title == "Dynamic Link Library (macos_X86_64)")
         #expect(targetNode.detailRows.contains(where: { $0.key == "File Type" && $0.value.contains("MH_DYLIB") }))
-        #expect(targetNode.children.contains(where: { $0.title == "Header" }))
+        #expect(targetNode.children.contains(where: { $0.title == "Mach64 Header" }))
     }
 
-    @Test("budgeted documents build paged symbol and string-table shells")
-    func budgetedDocumentsBuildPagedSymbolAndStringTableShells() throws {
+    @Test("budgeted documents page large symbol and string tables through indexed rows")
+    func budgetedDocumentsPageLargeTables() throws {
         let fixtureURL = try BrowserFixtureFactory.makeSymbolHeavyDynamicLibraryFixture(symbolCount: 520)
         let service = BrowserDocumentService()
         let scan = try MachOMetadataScanner.scan(at: fixtureURL)
 
         let document = try service.loadBudgeted(url: fixtureURL, scan: scan)
-        let rootNode = try #require(document.rootNodes.first)
-        let symbolsNode = try #require(rootNode.children.first(where: { $0.title == "Symbols" }))
-        let stringTablesNode = try #require(rootNode.children.first(where: { $0.title == "String Tables" }))
+        let imageNode = try #require(document.rootNodes.first).child(at: 0)
+        let symbolsNode = try #require(imageNode.children.first(where: { $0.title.hasPrefix("Symbol Table (") }))
+        let stringTableNode = try #require(imageNode.children.first(where: { $0.title == "String Table" }))
 
         #expect(document.kind == .machOFile)
-        #expect(symbolsNode.childCount > 1)
-        #expect(symbolsNode.loadedChildren.isEmpty)
-
-        let firstPageNode = symbolsNode.child(at: 0)
-        #expect(firstPageNode.title.contains("Symbols"))
-        #expect(firstPageNode.title.contains("0-"))
-        #expect(firstPageNode.childCount > 0)
-
-        let firstSymbolNode = firstPageNode.child(at: 0)
-        #expect(firstSymbolNode.detailRows.contains(where: { $0.key == "Name" }))
-
-        let stringTablePageNode = try #require(stringTablesNode.children.first)
-        #expect(stringTablePageNode.title.contains("String Table"))
-        #expect(stringTablePageNode.childCount > 0)
+        #expect(symbolsNode.detailCount >= 520 * 5)
+        #expect(symbolsNode.detailRow(at: 0).key == "String Table Index")
+        #expect(stringTableNode.detailCount > 520)
+        #expect(stringTableNode.detailRow(at: stringTableNode.detailCount - 1).rawAddress != nil)
     }
 
     @Test("budgeted documents keep decoded objective-c class list entries available")
@@ -289,40 +258,23 @@ struct BrowserDocumentServiceTests {
         let scan = try MachOMetadataScanner.scan(at: fixtureURL)
 
         let document = try service.loadBudgeted(url: fixtureURL, scan: scan)
-        let rootNode = try #require(document.rootNodes.first)
-        let sectionsNode = try #require(rootNode.children.first(where: { $0.title == "Sections" }))
-        let classListNode = try #require(sectionsNode.children.first(where: {
-            $0.title.contains("__objc_classlist") || $0.title.contains("__objc_nlclslist")
-        }))
+        let imageNode = try #require(document.rootNodes.first).child(at: 0)
+        let classListNode = try #require(imageNode.children.first(where: { $0.title.contains("__objc_classlist") }))
 
         #expect(classListNode.childCount == 1)
         #expect(classListNode.detailRows.contains(where: {
             $0.key == "Objective-C Class" && $0.value == "BudgetedFixtureClass"
         }))
-
-        if classListNode.childCount == 1 {
-            let classNode = classListNode.child(at: 0)
-            #expect(classNode.title == "BudgetedFixtureClass")
-        }
+        #expect(classListNode.child(at: 0).title == "BudgetedFixtureClass")
     }
 
-    @Test("deferred heavy groups isolate load failures to the selected node")
-    func deferredHeavyGroupsIsolateLoadFailuresToTheSelectedNode() throws {
-        let fixtureURL = try BrowserFixtureFactory.makeSymbolHeavyDynamicLibraryFixture(symbolCount: 64)
-        let service = BrowserDocumentService()
-        let scan = try MachOMetadataScanner.scan(at: fixtureURL)
-
-        let document = try service.loadBudgeted(url: fixtureURL, scan: scan)
-        try FileManager.default.removeItem(at: fixtureURL)
-
-        let rootNode = try #require(document.rootNodes.first)
-        let bindingsNode = try #require(rootNode.children.first(where: { $0.title == "Bindings" }))
-
-        #expect(rootNode.children.contains(where: { $0.title == "Header" }))
-
-        let failureNode = bindingsNode.child(at: 0)
-        #expect(failureNode.title.contains("Failed"))
-        #expect(failureNode.detailRows.contains(where: { $0.key == "Status" }))
+    @Test("code signature blob titles follow cs_blobs.h magics")
+    func codeSignatureBlobTitlesFollowMagics() {
+        #expect(MachOLayoutBuilder.codeSignatureBlobTitle(slot: 0x10000, magic: 0xFADE_0B01) == "Signature (CMS)")
+        #expect(MachOLayoutBuilder.codeSignatureBlobTitle(slot: 0, magic: 0xFADE_0C02) == "Code Directory")
+        #expect(MachOLayoutBuilder.codeSignatureBlobTitle(slot: 0x1000, magic: 0xFADE_0C02) == "Alternate Code Directory")
+        #expect(MachOConstants.codeSignatureMagicName(0xFADE_0B01) == "CSMAGIC_BLOBWRAPPER")
+        #expect(MachOConstants.codeSignatureMagicName(0xFADE_0B02) == "CSMAGIC_EMBEDDED_SIGNATURE_OLD")
     }
 }
 
@@ -468,7 +420,26 @@ private enum BrowserFixtureFactory {
         return outputURL
     }
 
-    static func makeExecutableFixture() throws -> URL {
+    static func makeChainedFixupsExecutableFixture() throws -> URL {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        let sourceURL = tempDirectory.appendingPathComponent("chained-fixture.c")
+        let outputURL = tempDirectory.appendingPathComponent("chained-fixture")
+        try """
+        #include <stdio.h>
+        static const char *greeting = "hello";
+        const char **greeting_ref = &greeting;
+        int main(void) { printf("%s\\n", *greeting_ref); return 0; }
+        """.write(to: sourceURL, atomically: true, encoding: .utf8)
+        try runTool(
+            launchPath: "/usr/bin/clang",
+            arguments: ["-target", "arm64-apple-macos13.0", sourceURL.path, "-o", outputURL.path]
+        )
+        return outputURL
+    }
+
+    static func makeExecutableFixture(signed: Bool = false) throws -> URL {
         let source = """
         int exported_value(void) { return 42; }
         int main(void) { return exported_value(); }
@@ -493,6 +464,9 @@ private enum BrowserFixtureFactory {
         process.waitUntilExit()
         if process.terminationStatus != 0 {
             throw BrowserFixtureError.compileFailed
+        }
+        if signed {
+            try runTool(launchPath: "/usr/bin/codesign", arguments: ["-s", "-", "-f", outputURL.path])
         }
 
         return outputURL

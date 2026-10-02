@@ -63,7 +63,8 @@ final class MachOSummaryWindowController: NSWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            // Delivered on the main queue, so refresh synchronously instead of hopping through a Task.
+            MainActor.assumeIsolated {
                 self?.reloadLocalization()
             }
         }
@@ -84,6 +85,9 @@ private final class MachOSummaryViewController: NSViewController {
 
     private var inputURL: URL?
     private var report: ToolTextReport?
+    /// The last analysis failure for `inputURL`, kept so a language change can re-render it
+    /// without re-running the analysis or presenting the alert again.
+    private var reportError: Error?
 
     override func loadView() {
         view = AdaptiveBackgroundView(backgroundColor: .windowBackgroundColor)
@@ -103,12 +107,20 @@ private final class MachOSummaryViewController: NSViewController {
         dropView.titleLabel.stringValue = L10n.summaryDropHint
         pathLabel.stringValue = inputURL?.path ?? L10n.xcframeworkNoSelection
 
-        if inputURL != nil {
-            analyzeCurrentInput()
-        } else {
+        renderReport()
+    }
+
+    private func renderReport() {
+        if inputURL == nil {
             reportTextView.string = L10n.summaryIdleStatus
-            refreshReportLayout()
+        } else if let report {
+            reportTextView.string = report.renderedText
+        } else if let reportError {
+            reportTextView.string = reportError.localizedDescription
+        } else {
+            reportTextView.string = ""
         }
+        refreshReportLayout()
     }
 
     @objc private func chooseInput(_ sender: Any?) {
@@ -125,9 +137,9 @@ private final class MachOSummaryViewController: NSViewController {
     @objc private func clearInput(_ sender: Any?) {
         inputURL = nil
         report = nil
+        reportError = nil
         pathLabel.stringValue = L10n.xcframeworkNoSelection
-        reportTextView.string = L10n.summaryIdleStatus
-        refreshReportLayout()
+        renderReport()
         clearButton.isEnabled = false
     }
 
@@ -203,19 +215,19 @@ private final class MachOSummaryViewController: NSViewController {
     }
 
     private func analyzeCurrentInput() {
+        report = nil
+        reportError = nil
         guard let inputURL else {
-            reportTextView.string = L10n.summaryIdleStatus
+            renderReport()
             return
         }
 
         do {
-            let report = try summaryService.makeReport(for: inputURL)
-            self.report = report
-            reportTextView.string = report.renderedText
-            refreshReportLayout()
+            report = try summaryService.makeReport(for: inputURL)
+            renderReport()
         } catch {
-            reportTextView.string = error.localizedDescription
-            refreshReportLayout()
+            reportError = error
+            renderReport()
             presentSummaryAlert(error)
         }
     }

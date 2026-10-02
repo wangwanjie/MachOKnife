@@ -2,8 +2,18 @@ import CoreMachO
 import Foundation
 import MachOKit
 
+public enum BrowserDocumentLoadError: LocalizedError, Equatable {
+    case unsupportedFormat(URL)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .unsupportedFormat(url):
+            "\(url.lastPathComponent) is not a Mach-O file, universal binary, static library or dyld shared cache."
+        }
+    }
+}
+
 public struct BrowserDocumentService: Sendable {
-    private let archiveInspector = ArchiveInspector()
 
     public init() {}
 
@@ -14,85 +24,10 @@ public struct BrowserDocumentService: Sendable {
         if let document = try loadDyldCache(url: url) {
             return document
         }
-        if let archiveInspection = try archiveInspector.inspect(url: url) {
-            return try loadArchive(url: url, inspection: archiveInspection)
+        if let document = try MachOLayoutDocument.load(url: url) {
+            return document
         }
-
-        let loaded = try MachOKit.loadFromFile(url: url)
-        let size = (try? fileSize(url: url)) ?? 0
-        let hexSource: BrowserHexSource = .file(url: url, size: size)
-
-        switch loaded {
-        case let .machO(machO):
-            if machO.header.fileType == .dylib {
-                return BrowserDocument(
-                    sourceName: url.lastPathComponent,
-                    kind: .machOFile,
-                    rootNodes: [makeDylibContainerNode(machO, sourceURL: url, hexSource: hexSource)],
-                    hexSource: hexSource
-                )
-            }
-            return BrowserDocument(
-                sourceName: url.lastPathComponent,
-                kind: .machOFile,
-                rootNodes: [makeMachONode(
-                    machO,
-                    title: url.lastPathComponent,
-                    path: ["root"],
-                    fileBackedMachO: machO,
-                    sourceURL: url,
-                    hexSource: hexSource
-                )],
-                hexSource: hexSource
-            )
-        case let .fat(fat):
-            return BrowserDocument(
-                sourceName: url.lastPathComponent,
-                kind: .fatFile,
-                rootNodes: [makeFatNode(fat, sourceURL: url, title: url.lastPathComponent, hexSource: hexSource)],
-                hexSource: hexSource
-            )
-        }
-    }
-
-    private func loadArchive(url: URL, inspection: ArchiveInspection) throws -> BrowserDocument {
-        let rootChildren = try inspection.architectures.map { architecture in
-            let extraction = try archiveInspector.extractThinArchive(url: url, preferredArchitecture: architecture)
-            return try makeArchiveArchitectureNode(
-                architecture: extraction.architecture,
-                thinArchiveURL: extraction.archiveURL,
-                sourceURL: url,
-                path: ["archive", extraction.architecture]
-            )
-        }
-        let size = (try? fileSize(url: url)) ?? 0
-        let rootTitle = switch inspection.kind {
-        case .archive:
-            "Static Library"
-        case .fatArchive:
-            "Fat Archive"
-        }
-        let rootDetailRows: [BrowserDetailRow] = [
-            .init(key: "Source File", value: url.path, groupIdentifier: 1),
-            .init(key: "Container", value: rootTitle, groupIdentifier: 1),
-            .init(key: "Targets", value: "\(rootChildren.count)", groupIdentifier: 1),
-        ]
-
-        return BrowserDocument(
-            sourceName: url.lastPathComponent,
-            kind: .archive,
-            rootNodes: [
-                BrowserNode(
-                    id: "archive-root",
-                    title: rootTitle,
-                    subtitle: url.lastPathComponent,
-                    summaryStyle: .group,
-                    detailRows: rootDetailRows,
-                    children: rootChildren
-                ),
-            ],
-            hexSource: .file(url: url, size: size)
-        )
+        throw BrowserDocumentLoadError.unsupportedFormat(url)
     }
 
     public func loadMemoryImage(named name: String) throws -> BrowserDocument {
@@ -108,34 +43,6 @@ public struct BrowserDocumentService: Sendable {
             kind: .memoryImage,
             rootNodes: [makeMachONode(image, title: name, path: ["memory-image"])],
             hexSource: .unavailable(reason: "Hex view is unavailable for memory images in this pass.")
-        )
-    }
-
-    private func makeDylibContainerNode(
-        _ machO: MachOFile,
-        sourceURL: URL,
-        hexSource: BrowserHexSource
-    ) -> BrowserNode {
-        let targetTitle = "Dynamic Link Library (\(platformArchitectureLabel(for: machO)))"
-        let targetNode = makeMachONode(
-            machO,
-            title: targetTitle,
-            path: ["dynamic-library", "target"],
-            fileBackedMachO: machO,
-            sourceURL: sourceURL,
-            hexSource: hexSource
-        )
-
-        return BrowserNode(
-            id: "dynamic-library-root",
-            title: "Dynamic Link Library",
-            subtitle: sourceURL.lastPathComponent,
-            summaryStyle: .group,
-            detailRows: [
-                .init(key: "Source File", value: sourceURL.path, groupIdentifier: 1),
-                .init(key: "Target", value: targetTitle, groupIdentifier: 1),
-            ],
-            children: [targetNode]
         )
     }
 
@@ -168,76 +75,6 @@ public struct BrowserDocumentService: Sendable {
                 makeDyldCacheNode(cache, title: url.lastPathComponent, path: ["dyld-cache"]),
             ],
             hexSource: .file(url: url, size: size)
-        )
-    }
-
-    private func makeArchiveTargetDescriptor(
-        architecture: String,
-        members: [String],
-        extractedMembersDirectory: URL
-    ) -> ArchiveTargetDescriptor {
-        for memberName in members {
-            let memberURL = extractedMembersDirectory.appendingPathComponent(memberName)
-            guard let loaded = try? MachOKit.loadFromFile(url: memberURL) else {
-                continue
-            }
-
-            switch loaded {
-            case let .machO(machO):
-                let platformName = platformName(for: machO).nonEmpty(or: "unknown")
-                return ArchiveTargetDescriptor(
-                    platformName: platformName,
-                    targetName: "Static Library (\(platformName)_\(architecture.uppercased()))"
-                )
-            case let .fat(fat):
-                if let machO = try? fat.machOFiles().first {
-                    let platformName = platformName(for: machO).nonEmpty(or: "unknown")
-                    return ArchiveTargetDescriptor(
-                        platformName: platformName,
-                        targetName: "Static Library (\(platformName)_\(architecture.uppercased()))"
-                    )
-                }
-            }
-        }
-
-        return ArchiveTargetDescriptor(
-            platformName: "unknown",
-            targetName: "Static Library (\(architecture.uppercased()))"
-        )
-    }
-
-    private func makeFatNode(_ fat: FatFile, sourceURL: URL, title: String, hexSource: BrowserHexSource? = nil) -> BrowserNode {
-        let arches = fat.arches.enumerated().map { index, arch in
-            makeGenericNode(
-                title: "Architecture \(index)",
-                value: arch,
-                path: ["fat", "arch", "\(index)"],
-                depthLimit: 2,
-                hexSource: hexSource
-            )
-        }
-        let images = (try? fat.machOFiles().enumerated().map { index, machO in
-            makeMachONode(
-                machO,
-                title: makeImageTitle(machO, fallback: "Slice \(index)"),
-                path: ["fat", "image", "\(index)"],
-                fileBackedMachO: machO,
-                sourceURL: sourceURL,
-                hexSource: hexSource
-            )
-        }) ?? []
-
-        return BrowserNode(
-            id: "fat-root",
-            title: title,
-            subtitle: "Universal Mach-O",
-            hexSource: hexSource,
-            detailRows: makeDetailRows(fat),
-            children: [
-                BrowserNode(id: "fat-arches", title: "Architectures", hexSource: hexSource, detailRows: [.init(key: "count", value: "\(arches.count)")], children: arches),
-                BrowserNode(id: "fat-images", title: "Mach-O Images", hexSource: hexSource, detailRows: [.init(key: "count", value: "\(images.count)")], children: images),
-                makeGenericNode(title: "Raw Object", value: fat, path: ["fat", "raw"], depthLimit: 2, hexSource: hexSource),
-            ]
         )
     }
 
@@ -287,342 +124,6 @@ public struct BrowserDocumentService: Sendable {
             detailRows: makeDetailRows(cache),
             children: makeDyldCacheChildren(cache, path: path)
         )
-    }
-
-    private func makeArchiveArchitectureNode(
-        architecture: String,
-        thinArchiveURL: URL,
-        sourceURL: URL,
-        path: [String]
-    ) throws -> BrowserNode {
-        let extractedMembersDirectory = thinArchiveURL.deletingLastPathComponent().appendingPathComponent("members", isDirectory: true)
-        try archiveInspector.extractMembers(from: thinArchiveURL, to: extractedMembersDirectory)
-
-        let memberLayouts = try archiveInspector.memberLayouts(in: thinArchiveURL)
-        let members = memberLayouts.filter { isArchiveObjectMember($0.name) }.map(\.name)
-        let targetHexSource = BrowserHexSource.file(
-            url: thinArchiveURL,
-            size: (try? fileSize(url: thinArchiveURL)) ?? 0
-        )
-        let targetDescriptor = makeArchiveTargetDescriptor(
-            architecture: architecture,
-            members: members,
-            extractedMembersDirectory: extractedMembersDirectory
-        )
-        let detailRows: [BrowserDetailRow] = [
-            .init(key: "Source File", value: sourceURL.path, groupIdentifier: 1),
-            .init(key: "Architecture", value: architecture, groupIdentifier: 1),
-            .init(key: "Platform", value: targetDescriptor.platformName, groupIdentifier: 1),
-            .init(key: "Target", value: targetDescriptor.targetName, groupIdentifier: 1),
-            .init(key: "Members", value: "\(members.count)", groupIdentifier: 1),
-            .init(key: "Archive", value: sourceURL.lastPathComponent, groupIdentifier: 1),
-        ]
-        let specialNodes = makeArchiveSpecialNodes(
-            memberLayouts: memberLayouts,
-            extractedMembersDirectory: extractedMembersDirectory,
-            archiveURL: thinArchiveURL,
-            path: path,
-            hexSource: targetHexSource
-        )
-        let cache = LazyIndexedValueCache<BrowserNode>()
-        let totalChildCount = specialNodes.count + members.count
-
-        func child(at index: Int) -> BrowserNode {
-            if let cached = cache.values[index] {
-                return cached
-            }
-
-            let node: BrowserNode
-            if index < specialNodes.count {
-                node = specialNodes[index]
-            } else {
-                let memberIndex = index - specialNodes.count
-                let memberName = members[memberIndex]
-                let memberURL = extractedMembersDirectory.appendingPathComponent(memberName)
-                node = makeArchiveMemberNode(
-                    memberName: memberName,
-                    memberURL: memberURL,
-                    path: path + ["members", "\(memberIndex)"]
-                )
-            }
-
-            cache.values[index] = node
-            return node
-        }
-
-        return BrowserNode(
-            id: path.joined(separator: "/"),
-            title: targetDescriptor.targetName,
-            subtitle: sourceURL.path,
-            summaryStyle: .group,
-            hexSource: targetHexSource,
-            detailCount: detailRows.count + totalChildCount,
-            indexedDetailProvider: { index in
-                if index < detailRows.count {
-                    return detailRows[index]
-                }
-                return summaryDetailRow(for: child(at: index - detailRows.count), groupIdentifier: UInt(index + 1))
-            },
-            childCount: totalChildCount,
-            indexedChildProvider: child(at:)
-        )
-    }
-
-    private func makeArchiveMemberNode(
-        memberName: String,
-        memberURL: URL,
-        path: [String]
-    ) -> BrowserNode {
-        if let loaded = try? MachOKit.loadFromFile(url: memberURL) {
-            let memberHexSource = BrowserHexSource.file(
-                url: memberURL,
-                size: (try? fileSize(url: memberURL)) ?? 0
-            )
-            switch loaded {
-            case let .machO(machO):
-                if machO.header.fileType == .object {
-                    return makeArchiveObjectNode(
-                        machO,
-                        title: memberName,
-                        path: path,
-                        sourceURL: memberURL,
-                        hexSource: memberHexSource
-                    )
-                }
-                return makeMachONode(
-                    machO,
-                    title: memberName,
-                    path: path,
-                    fileBackedMachO: machO,
-                    sourceURL: memberURL,
-                    hexSource: memberHexSource
-                )
-            case let .fat(fat):
-                return makeFatNode(fat, sourceURL: memberURL, title: memberName, hexSource: memberHexSource)
-            }
-        }
-
-        let fileSize = (try? fileSize(url: memberURL)) ?? 0
-        return BrowserNode(
-            id: path.joined(separator: "/"),
-            title: memberName,
-            subtitle: "Archive Member",
-            hexSource: .file(url: memberURL, size: fileSize),
-            detailRows: [
-                .init(key: "Path", value: memberURL.path, groupIdentifier: 1),
-                .init(key: "Size", value: "\(fileSize) bytes", groupIdentifier: 1),
-            ]
-        )
-    }
-
-    private func makeArchiveObjectNode(
-        _ machO: MachOFile,
-        title: String,
-        path: [String],
-        sourceURL: URL,
-        hexSource: BrowserHexSource
-    ) -> BrowserNode {
-        let objectHeaderNode = makeGenericNode(
-            title: "Object Header",
-            value: machO.header,
-            path: path + ["objectHeader"],
-            depthLimit: 2,
-            hexSource: hexSource
-        )
-
-        var detailRows = makeMachORootDetailRows(machO)
-        detailRows.insert(.init(key: "Path", value: sourceURL.path, groupIdentifier: 1), at: 0)
-
-        return BrowserNode(
-            id: path.joined(separator: "/"),
-            title: title,
-            subtitle: machOSummary(for: machO),
-            hexSource: hexSource,
-            detailRows: detailRows,
-            children: [
-                objectHeaderNode,
-                makeIndexedSummaryNode(
-                    id: (path + ["sections"]).joined(separator: "/"),
-                    title: "Sections",
-                    hexSource: hexSource,
-                    childCount: machO.sections.count,
-                    childBuilder: { index in
-                        let section = machO.sections[index]
-                        return makeSectionNode(
-                            section,
-                            in: machO,
-                            sourceURL: sourceURL,
-                            path: path + ["sections", "\(index)"],
-                            hexSource: hexSource
-                        )
-                    }
-                ),
-                makeGenericNode(title: "Raw Object", value: machO, path: path + ["raw"], depthLimit: 2, hexSource: hexSource),
-            ]
-        )
-    }
-
-    private func makeArchiveSpecialNodes(
-        memberLayouts: [ArchiveMemberLayout],
-        extractedMembersDirectory: URL,
-        archiveURL: URL,
-        path: [String],
-        hexSource: BrowserHexSource
-    ) -> [BrowserNode] {
-        let archiveMembers = makeArchiveMemberContent(
-            from: memberLayouts.filter { isArchiveObjectMember($0.name) },
-            extractedMembersDirectory: extractedMembersDirectory
-        )
-        let symtabLayout = memberLayouts.first(where: { $0.name.hasPrefix("__.SYMDEF") })
-        let stringTableLayout = memberLayouts.first(where: { $0.name == "//" })
-        let archiveRange = BrowserDataRange(offset: 0, length: min(archiveMagicLength, (try? fileSize(url: archiveURL)) ?? archiveMagicLength))
-
-        return [
-            makeArchiveSummaryNode(
-                id: (path + ["start"]).joined(separator: "/"),
-                title: "Start",
-                subtitle: archiveURL.lastPathComponent,
-                rows: archiveMembers.map {
-                    BrowserDetailRow(
-                        key: $0.name,
-                        value: "offset \(summarize(UInt64($0.layout.dataOffset), fieldName: "offset")) • size \($0.startLength) bytes",
-                        rawAddress: UInt64($0.layout.dataOffset),
-                        groupIdentifier: 1
-                    )
-                },
-                dataRange: archiveRange,
-                hexSource: hexSource
-            ),
-            makeArchiveSummaryNode(
-                id: (path + ["symtabHeader"]).joined(separator: "/"),
-                title: "Symtab Header",
-                subtitle: symtabLayout?.name ?? "Not present",
-                rows: archiveMembers.map {
-                    if let symtabHeaderRange = $0.symtabHeaderRange {
-                        return BrowserDetailRow(
-                            key: $0.name,
-                            value: "offset \(summarize(UInt64(symtabHeaderRange.offset), fieldName: "offset")) • size \(symtabHeaderRange.length) bytes",
-                            rawAddress: UInt64(symtabHeaderRange.offset),
-                            groupIdentifier: 1
-                        )
-                    }
-                    return BrowserDetailRow(
-                        key: $0.name,
-                        value: "Not present",
-                        groupIdentifier: 1
-                    )
-                },
-                dataRange: symtabLayout.flatMap { BrowserDataRange(offset: $0.headerOffset, length: $0.headerSize) },
-                hexSource: hexSource
-            ),
-            makeArchiveSummaryNode(
-                id: (path + ["symbolTable"]).joined(separator: "/"),
-                title: "Symbol Table",
-                subtitle: archiveMembers.reduce(0) { $0 + $1.symbols.count } == 0
-                    ? (symtabLayout.map { "\($0.dataSize) bytes" } ?? "Not present")
-                    : "\(archiveMembers.reduce(0) { $0 + $1.symbols.count }) symbols",
-                rows: archiveMembers.flatMap { member in
-                    member.symbols.map {
-                        BrowserDetailRow(
-                            key: member.name,
-                            value: $0,
-                            rawAddress: member.symbolTableRange.map { UInt64($0.offset) },
-                            groupIdentifier: 1
-                        )
-                    }
-                },
-                dataRange: symtabLayout.flatMap { BrowserDataRange(offset: $0.dataOffset, length: $0.dataSize) },
-                hexSource: hexSource
-            ),
-            makeArchiveSummaryNode(
-                id: (path + ["stringTable"]).joined(separator: "/"),
-                title: "String Table",
-                subtitle: archiveMembers.reduce(0) { $0 + $1.stringEntries.count } == 0
-                    ? (stringTableLayout.map { "\($0.dataSize) bytes" } ?? "Not present")
-                    : "\(archiveMembers.reduce(0) { $0 + $1.stringEntries.count }) strings",
-                rows: archiveMembers.flatMap { member in
-                    member.stringEntries.map {
-                        BrowserDetailRow(
-                            key: member.name,
-                            value: $0,
-                            rawAddress: member.stringTableRange.map { UInt64($0.offset) },
-                            groupIdentifier: 1
-                        )
-                    }
-                },
-                dataRange: stringTableLayout.flatMap { BrowserDataRange(offset: $0.dataOffset, length: $0.dataSize) },
-                hexSource: hexSource
-            ),
-        ]
-    }
-
-    private func makeArchiveSummaryNode(
-        id: String,
-        title: String,
-        subtitle: String,
-        rows: [BrowserDetailRow],
-        dataRange: BrowserDataRange?,
-        hexSource: BrowserHexSource
-    ) -> BrowserNode {
-        return BrowserNode(
-            id: id,
-            title: title,
-            subtitle: subtitle,
-            hexSource: hexSource,
-            detailRows: rows.isEmpty ? [.init(key: "Status", value: "Not present", groupIdentifier: 1)] : rows,
-            rawAddress: dataRange.map { UInt64($0.offset) },
-            dataRange: dataRange
-        )
-    }
-
-    private func isArchiveObjectMember(_ name: String) -> Bool {
-        if name.hasPrefix("__.SYMDEF") || name == "/" || name == "//" {
-            return false
-        }
-        return true
-    }
-
-    private func makeArchiveMemberContent(
-        from memberLayouts: [ArchiveMemberLayout],
-        extractedMembersDirectory: URL
-    ) -> [ArchiveMemberContent] {
-        memberLayouts.compactMap { layout in
-            let memberURL = extractedMembersDirectory.appendingPathComponent(layout.name)
-            guard
-                let loaded = try? MachOKit.loadFromFile(url: memberURL),
-                case let .machO(machO) = loaded
-            else {
-                return nil
-            }
-
-            let headerSize = machO.is64Bit ? MemoryLayout<mach_header_64>.size : MemoryLayout<mach_header>.size
-            let symtab: LoadCommandInfo<symtab_command>? = machO.loadCommands.info(of: LoadCommand.symtab)
-
-            return ArchiveMemberContent(
-                name: layout.name,
-                layout: layout,
-                startLength: min(headerSize, layout.dataSize),
-                symtabHeaderRange: symtab.map {
-                    BrowserDataRange(
-                        offset: layout.dataOffset + machO.headerStartOffset + machO.cmdsStartOffset + $0.offset,
-                        length: Int($0.layout.cmdsize)
-                    )
-                },
-                symbolTableRange: symtab.map {
-                    BrowserDataRange(
-                        offset: layout.dataOffset + Int($0.layout.symoff),
-                        length: Int($0.layout.nsyms) * (machO.is64Bit ? MemoryLayout<nlist_64>.size : MemoryLayout<nlist>.size)
-                    )
-                },
-                stringTableRange: symtab.flatMap {
-                    $0.layout.strsize > 0
-                        ? BrowserDataRange(offset: layout.dataOffset + Int($0.layout.stroff), length: Int($0.layout.strsize))
-                        : nil
-                },
-                symbols: objectFileSymbolNames(in: machO).filter { $0.isEmpty == false },
-                stringEntries: objectFileStringTableEntries(in: machO)
-            )
-        }
     }
 
     private func makeDyldCacheChildren(_ cache: some DyldCacheRepresentable, path: [String]) -> [BrowserNode] {
@@ -1260,13 +761,6 @@ public struct BrowserDocumentService: Sendable {
         default:
             return []
         }
-    }
-
-    private func reflectLoadCommandString(from value: Any, member: String) -> String {
-        guard let memberValue = Mirror(reflecting: value).children.first(where: { $0.label == member })?.value else {
-            return ""
-        }
-        return summarize(memberValue, fieldName: member)
     }
 
     private func associatedValue(of loadCommand: LoadCommand) -> Any? {
@@ -2660,117 +2154,6 @@ public struct BrowserDocumentService: Sendable {
         return fallback
     }
 
-    private func platformArchitectureLabel(for machO: some MachORepresentable) -> String {
-        "\(platformName(for: machO))_\(architectureName(for: machO).uppercased())"
-    }
-
-    private func platformName(for machO: some MachORepresentable) -> String {
-        if let platform = machO.loadCommands.info(of: LoadCommand.buildVersion)?.platform {
-            return normalizedPlatformName(shortPlatformName(platform), for: machO)
-        }
-        if machO.loadCommands.info(of: LoadCommand.versionMinMacosx) != nil {
-            return "macos"
-        }
-        if machO.loadCommands.info(of: LoadCommand.versionMinIphoneos) != nil {
-            return normalizedPlatformName("iphoneos", for: machO)
-        }
-        if machO.loadCommands.info(of: LoadCommand.versionMinTvos) != nil {
-            return normalizedPlatformName("tvos", for: machO)
-        }
-        if machO.loadCommands.info(of: LoadCommand.versionMinWatchos) != nil {
-            return normalizedPlatformName("watchos", for: machO)
-        }
-        return "unknown"
-    }
-
-    private func normalizedPlatformName(_ name: String, for machO: some MachORepresentable) -> String {
-        guard let cpuType = machO.header.cpuType, isSimulatorArchitecture(cpuType) else {
-            return name
-        }
-
-        switch name {
-        case "iphoneos":
-            return "iphonesimulator"
-        case "tvos":
-            return "tvossimulator"
-        case "watchos":
-            return "watchsimulator"
-        default:
-            return name
-        }
-    }
-
-    private func isSimulatorArchitecture(_ cpuType: CPUType) -> Bool {
-        switch cpuType {
-        case .x86, .i386, .x86_64:
-            return true
-        default:
-            return false
-        }
-    }
-
-    private func shortPlatformName(_ platform: Platform) -> String {
-        switch platform {
-        case .macOS, .macOSExclaveCore, .macOSExclaveKit:
-            "macos"
-        case .iOS:
-            "iphoneos"
-        case .tvOS:
-            "tvos"
-        case .watchOS:
-            "watchos"
-        case .bridgeOS:
-            "bridgeos"
-        case .macCatalyst:
-            "maccatalyst"
-        case .iOSSimulator:
-            "iphonesimulator"
-        case .tvOSSimulator:
-            "tvossimulator"
-        case .watchOSSimulator:
-            "watchsimulator"
-        case .driverKit:
-            "driverkit"
-        case .visionOS:
-            "xros"
-        case .visionOSSimulator:
-            "xrsimulator"
-        case .firmware:
-            "firmware"
-        case .sepOS:
-            "sepos"
-        case .iOSExclaveCore, .iOSExclaveKit:
-            "iosexclave"
-        case .tvOSExclaveCore, .tvOSExclaveKit:
-            "tvosexclave"
-        case .watchOSExclaveCore, .watchOSExclaveKit:
-            "watchosexclave"
-        case .visionOSExclaveCore, .visionOSExclaveKit:
-            "visionosexclave"
-        case .unknown, .any:
-            "unknown"
-        }
-    }
-
-    private func architectureName(for machO: some MachORepresentable) -> String {
-        switch machO.header.cpuType {
-        case .arm64:
-            return machO.header.cpuSubType?.description.contains("ARM64E") == true ? "arm64e" : "arm64"
-        case .x86_64:
-            return "x86_64"
-        case .arm:
-            return "arm"
-        case .x86, .i386:
-            return "i386"
-        case .arm64_32:
-            return "arm64_32"
-        default:
-            return String(describing: machO.header.cpuType)
-                .replacingOccurrences(of: "CPU_TYPE_", with: "")
-                .lowercased()
-        }
-    }
-
     private func makeMachORootDetailRows(_ machO: some MachORepresentable) -> [BrowserDetailRow] {
         let headerRows = makeDetailRows(machO.header).map {
             BrowserDetailRow(
@@ -2897,41 +2280,6 @@ public struct BrowserDocumentService: Sendable {
                 ) ?? ""
             }
         }
-    }
-
-    private func objectFileStringTableEntries(in machO: MachOFile) -> [String] {
-        guard let symtab: LoadCommandInfo<symtab_command> = machO.loadCommands.info(of: LoadCommand.symtab) else {
-            return []
-        }
-
-        let handle: FileHandle
-        do {
-            handle = try FileHandle(forReadingFrom: machO.url)
-        } catch {
-            return []
-        }
-        defer {
-            try? handle.close()
-        }
-
-        let stringTableOffset = machO.headerStartOffset + Int(symtab.stroff)
-        let stringTableSize = Int(symtab.strsize)
-        guard stringTableSize > 0 else {
-            return []
-        }
-
-        let stringTable: Data
-        do {
-            try handle.seek(toOffset: UInt64(stringTableOffset))
-            stringTable = handle.readData(ofLength: stringTableSize)
-        } catch {
-            return []
-        }
-
-        return stringTable
-            .split(separator: 0)
-            .compactMap { String(data: $0, encoding: .utf8) }
-            .filter { $0.isEmpty == false }
     }
 
     private func demangleObjCClassSymbol(_ symbolName: String) -> String {
@@ -3173,22 +2521,6 @@ private struct ObjCCategorySymbol {
 private struct ObjCCategoryInfo {
     let categoryName: String?
     let className: String?
-}
-
-private struct ArchiveTargetDescriptor {
-    let platformName: String
-    let targetName: String
-}
-
-private struct ArchiveMemberContent {
-    let name: String
-    let layout: ArchiveMemberLayout
-    let startLength: Int
-    let symtabHeaderRange: BrowserDataRange?
-    let symbolTableRange: BrowserDataRange?
-    let stringTableRange: BrowserDataRange?
-    let symbols: [String]
-    let stringEntries: [String]
 }
 
 private let archiveMagicLength = 8

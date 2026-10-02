@@ -79,13 +79,77 @@ struct RecentFilesControllerTests {
         #expect(try controller.recentFileURLs() == [fileURL])
     }
 
+    @Test("replaces a stale bookmark with a refreshed security-scoped bookmark")
+    func replacesStaleBookmarkWithRefreshedBookmark() throws {
+        let settings = makeSettings()
+        let defaults = makeDefaults()
+        let originalURL = try makeExistingFile(named: "Stale.dylib")
+        let resolvedURL = URL(filePath: "/tmp/MachOKnife/Moved.dylib")
+        let staleData = Data("stale-bookmark".utf8)
+        let refreshedData = Data("refreshed-bookmark".utf8)
+        var resolvedData: [Data] = []
+
+        let controller = try makeController(
+            settings: settings,
+            defaults: defaults,
+            bookmarkDataProvider: { _ in staleData },
+            bookmarkResolver: { data in
+                resolvedData.append(data)
+                return RecentFilesController.BookmarkResolutionResult(url: resolvedURL, isStale: data == staleData)
+            },
+            staleBookmarkRefresher: { url in
+                #expect(url == resolvedURL)
+                return refreshedData
+            }
+        )
+
+        try controller.recordOpen(url: originalURL, openedAt: Date(timeIntervalSince1970: 10))
+        #expect(try controller.recentFileURLs() == [resolvedURL])
+        #expect(try controller.recentFileURLs() == [resolvedURL])
+        #expect(resolvedData == [staleData, refreshedData])
+    }
+
+    @Test("keeps the existing bookmark when refreshing a stale bookmark fails")
+    func keepsExistingBookmarkWhenStaleRefreshFails() throws {
+        struct RefreshFailure: Error {}
+        let settings = makeSettings()
+        let defaults = makeDefaults()
+        let originalURL = try makeExistingFile(named: "StaleKept.dylib")
+        let resolvedURL = URL(filePath: "/tmp/MachOKnife/Kept.dylib")
+        let staleData = Data("stale-bookmark".utf8)
+        var resolvedData: [Data] = []
+        var bookmarkProviderCalls = 0
+
+        let controller = try makeController(
+            settings: settings,
+            defaults: defaults,
+            bookmarkDataProvider: { _ in
+                bookmarkProviderCalls += 1
+                return staleData
+            },
+            bookmarkResolver: { data in
+                resolvedData.append(data)
+                return RecentFilesController.BookmarkResolutionResult(url: resolvedURL, isStale: true)
+            },
+            staleBookmarkRefresher: { _ in throw RefreshFailure() }
+        )
+
+        try controller.recordOpen(url: originalURL, openedAt: Date(timeIntervalSince1970: 10))
+        #expect(try controller.recentFileURLs() == [resolvedURL])
+        #expect(try controller.recentFileURLs() == [resolvedURL])
+        #expect(resolvedData == [staleData, staleData])
+        // The downgrading record-time provider must not be used for stale refreshes.
+        #expect(bookmarkProviderCalls == 1)
+    }
+
     private func makeController(
         settings: AppSettings,
         defaults: UserDefaults? = nil,
         bookmarkDataProvider: RecentFilesController.BookmarkDataProvider? = nil,
-        bookmarkResolver: RecentFilesController.BookmarkResolver? = nil
+        bookmarkResolver: RecentFilesController.BookmarkResolver? = nil,
+        staleBookmarkRefresher: RecentFilesController.BookmarkDataProvider? = nil
     ) throws -> RecentFilesController {
-        let databaseURL = FileManager.default.temporaryDirectory
+        let databaseURL = FileManager.default.canonicalTemporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathComponent("RecentFiles.sqlite")
         try FileManager.default.createDirectory(
@@ -98,7 +162,9 @@ struct RecentFilesControllerTests {
             databaseURL: databaseURL,
             defaults: defaults ?? makeDefaults(),
             bookmarkDataProvider: bookmarkDataProvider ?? RecentFilesController.makeBookmarkData(for:),
-            bookmarkResolver: bookmarkResolver ?? RecentFilesController.resolveBookmarkData(_:)
+            bookmarkResolver: bookmarkResolver ?? RecentFilesController.resolveBookmarkData(_:),
+            staleBookmarkRefresher: staleBookmarkRefresher
+                ?? RecentFilesController.makeRefreshedSecurityScopedBookmarkData(for:)
         )
     }
 
@@ -117,7 +183,7 @@ struct RecentFilesControllerTests {
     }
 
     private func makeExistingFile(named name: String) throws -> URL {
-        let directoryURL = FileManager.default.temporaryDirectory
+        let directoryURL = FileManager.default.canonicalTemporaryDirectory
             .appendingPathComponent("RecentFilesControllerTests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)

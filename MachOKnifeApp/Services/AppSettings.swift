@@ -5,6 +5,25 @@ final class AppSettings {
     static let shared = AppSettings()
     static let didChangeNotification = Notification.Name("cn.vanjay.MachOKnife.AppSettingsDidChange")
     static let defaultRecentFilesLimit = 50
+    /// `userInfo` key of `didChangeNotification` holding the `Change` (raw value) that was made.
+    static let changeUserInfoKey = "change"
+
+    enum Change: String {
+        case language
+        case theme
+        case recentFilesLimit
+        case cliInstallDirectory
+        case cliExecutable
+
+        var affectsCLIInstallation: Bool {
+            self == .cliInstallDirectory || self == .cliExecutable
+        }
+    }
+
+    /// The change carried by a `didChangeNotification`, if any.
+    static func change(from notification: Notification) -> Change? {
+        (notification.userInfo?[changeUserInfoKey] as? String).flatMap(Change.init(rawValue:))
+    }
 
     private enum Keys {
         static let language = "app.language"
@@ -27,7 +46,7 @@ final class AppSettings {
         }
         set {
             defaults.set(newValue.rawValue, forKey: Keys.language)
-            notifyDidChange()
+            notifyDidChange(.language)
         }
     }
 
@@ -37,7 +56,7 @@ final class AppSettings {
         }
         set {
             defaults.set(newValue.rawValue, forKey: Keys.theme)
-            notifyDidChange()
+            notifyDidChange(.theme)
         }
     }
 
@@ -48,7 +67,7 @@ final class AppSettings {
         }
         set {
             defaults.set(max(1, newValue), forKey: Keys.recentFilesLimit)
-            notifyDidChange()
+            notifyDidChange(.recentFilesLimit)
         }
     }
 
@@ -60,23 +79,23 @@ final class AppSettings {
         )
         defaults.set(bookmarkData, forKey: Keys.cliInstallDirectoryBookmark)
         defaults.set(url.path, forKey: Keys.cliInstallDirectoryPath)
-        notifyDidChange()
+        notifyDidChange(.cliInstallDirectory)
     }
 
     func clearCLIInstallDirectory() {
         defaults.removeObject(forKey: Keys.cliInstallDirectoryBookmark)
         defaults.removeObject(forKey: Keys.cliInstallDirectoryPath)
-        notifyDidChange()
+        notifyDidChange(.cliInstallDirectory)
     }
 
     func setLastKnownCLIExecutablePath(_ path: String) {
         defaults.set(path, forKey: Keys.cliInstalledExecutablePath)
-        notifyDidChange()
+        notifyDidChange(.cliExecutable)
     }
 
     func clearLastKnownCLIExecutablePath() {
         defaults.removeObject(forKey: Keys.cliInstalledExecutablePath)
-        notifyDidChange()
+        notifyDidChange(.cliExecutable)
     }
 
     func lastKnownCLIExecutablePath() -> String? {
@@ -93,6 +112,9 @@ final class AppSettings {
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
             ) {
+                if isStale {
+                    refreshStaleCLIInstallDirectoryBookmark(for: url)
+                }
                 return url
             }
         }
@@ -124,7 +146,34 @@ final class AppSettings {
         }
     }
 
-    private func notifyDidChange() {
-        NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
+    /// Re-creates a stale security-scoped bookmark so it keeps resolving. Access is started first
+    /// (a security-scoped bookmark can only be created while the scope is active); if anything
+    /// fails the existing bookmark data is kept rather than replaced with a non-scoped one.
+    private func refreshStaleCLIInstallDirectoryBookmark(for url: URL) {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard let refreshedBookmark = try? url.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        ) else {
+            return
+        }
+
+        defaults.set(refreshedBookmark, forKey: Keys.cliInstallDirectoryBookmark)
+        defaults.set(url.path, forKey: Keys.cliInstallDirectoryPath)
+    }
+
+    private func notifyDidChange(_ change: Change) {
+        NotificationCenter.default.post(
+            name: Self.didChangeNotification,
+            object: self,
+            userInfo: [Self.changeUserInfoKey: change.rawValue]
+        )
     }
 }

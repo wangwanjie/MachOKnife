@@ -14,9 +14,8 @@ enum L10n {
     static var menuCloseWindow: String { text("menu.closeWindow", fallback: "Close Window") }
     static var menuOpenRecent: String { text("menu.openRecent", fallback: "Open Recent") }
     static var menuOpenRecentEmpty: String { text("menu.openRecent.empty", fallback: "No Recent Files") }
-    static var menuAnalyze: String { text("menu.analyze", fallback: "Analyze") }
     static var menuTools: String { text("menu.tools", fallback: "Tools") }
-    static var menuRetag: String { text("menu.retag", fallback: "Retag...") }
+    static var menuRetag: String { text("menu.retag", fallback: "MachO Retag...") }
     static var menuBuildXCFramework: String { text("menu.buildXCFramework", fallback: "Build XCFramework...") }
     static var menuMachOSummary: String { text("menu.machoSummary", fallback: "Mach-O Summary...") }
     static var menuCheckBinaryContamination: String { text("menu.checkBinaryContamination", fallback: "Check Binary Contamination...") }
@@ -150,6 +149,8 @@ enum L10n {
     static var workspaceDetailColumnData: String { text("workspace.detail.column.data", fallback: "Data") }
     static var workspaceDetailColumnName: String { text("workspace.detail.column.name", fallback: "Description") }
     static var workspaceDetailColumnValue: String { text("workspace.detail.column.value", fallback: "Value") }
+    static var workspaceHexColumnLow: String { text("workspace.hex.column.low", fallback: "Data LO") }
+    static var workspaceHexColumnHigh: String { text("workspace.hex.column.high", fallback: "Data HI") }
     static var workspaceDetailEmpty: String { text("workspace.detail.empty", fallback: "Select a node in the tree to inspect its fields.") }
     static var workspaceDataEmpty: String { text("workspace.data.empty", fallback: "Binary data is unavailable for the current selection.") }
     static var workspaceContextCopyRow: String { text("workspace.context.copyRow", fallback: "Copy Row Info") }
@@ -204,7 +205,6 @@ enum L10n {
     static var preferencesRecentFilesLabel: String { text("preferences.general.recentLimit", fallback: "Recent Files Limit") }
     static var preferencesRecentFilesHint: String { text("preferences.general.recentHint", fallback: "Controls how many recently opened files are retained.") }
     static var preferencesThemeLabel: String { text("preferences.appearance.theme", fallback: "Theme") }
-    static var preferencesPlaceholderMilestone3: String { text("preferences.placeholder.milestone3", fallback: "Coming in Milestone 3.") }
     static var preferencesAdvancedTitle: String { text("preferences.advanced.title", fallback: "Advanced") }
     static var preferencesAdvancedSubtitle: String { text("preferences.advanced.subtitle", fallback: "Low-level tooling, CLI installation, and updater controls will appear here.") }
     static var preferencesUpdatesStatusLabel: String { text("preferences.updates.status", fallback: "Update Service") }
@@ -320,7 +320,7 @@ enum L10n {
     static var mergeSplitSplitIdleStatus: String { text("mergeSplit.split.status.idle", fallback: "Choose a fat binary to split.") }
     static var mergeSplitCompletedStatus: String { text("mergeSplit.status.completed", fallback: "Operation completed.") }
     static var mergeSplitErrorTitle: String { text("mergeSplit.error.title", fallback: "Merge / Split Failed") }
-    static var xcframeworkIdleStatus: String { text("xcframework.status.idle", fallback: "Select headers and output directory, then provide Source Library or iOS Device Library to begin.") }
+    static var xcframeworkIdleStatus: String { text("xcframework.status.idle", fallback: "Select headers and an output directory, then provide Source Library, iOS Device Library, or iOS Simulator Library to begin.") }
     static var xcframeworkRunningStatus: String { text("xcframework.status.running", fallback: "Building XCFramework…") }
     static var xcframeworkCancelledStatus: String { text("xcframework.status.cancelled", fallback: "XCFramework build cancelled.") }
     static var xcframeworkErrorTitle: String { text("xcframework.error.title", fallback: "XCFramework Build Failed") }
@@ -432,4 +432,64 @@ enum L10n {
         let settings = settingsProvider()
         return AppLocalization(bundle: bundleProvider(), language: settings.resolvedLanguage())
     }
+}
+
+// MARK: - Tool, menu, and service strings
+
+extension L10n {
+    static var menuServices: String { text("menu.services", fallback: "Services") }
+    static func menuHide(appName: String = appName) -> String {
+        format("menu.hide", fallback: "Hide %@", appName)
+    }
+    static var menuHideOthers: String { text("menu.hideOthers", fallback: "Hide Others") }
+    static var menuShowAll: String { text("menu.showAll", fallback: "Show All") }
+    static var menuUndo: String { text("menu.undo", fallback: "Undo") }
+    static var menuRedo: String { text("menu.redo", fallback: "Redo") }
+    static var menuCut: String { text("menu.cut", fallback: "Cut") }
+    static var menuCopy: String { text("menu.copy", fallback: "Copy") }
+    static var menuPaste: String { text("menu.paste", fallback: "Paste") }
+    static var menuDelete: String { text("menu.delete", fallback: "Delete") }
+    static var menuSelectAll: String { text("menu.selectAll", fallback: "Select All") }
+    static var menuMinimize: String { text("menu.minimize", fallback: "Minimize") }
+    static var menuZoom: String { text("menu.zoom", fallback: "Zoom") }
+    static var menuBringAllToFront: String { text("menu.bringAllToFront", fallback: "Bring All to Front") }
+    static func nodeInfoRowCount(_ count: Int) -> String {
+        format("nodeInfo.rowCount", fallback: "Rows: %ld", count)
+    }
+    static func xcframeworkErrorInvalidName(_ name: String) -> String {
+        format("xcframework.error.invalidName", fallback: "Invalid XCFramework name \"%@\". Use a plain file name ending in .xcframework (no \"/\" and not starting with \".\").", name)
+    }
+    static var xcframeworkErrorMissingOutputPath: String { text("xcframework.error.missingOutputPath", fallback: "The build finished without reporting an output path.") }
+    static var xcframeworkErrorFailed: String { text("xcframework.error.failed", fallback: "The XCFramework build failed. See the log for details.") }
+    static func xcframeworkErrorToolNotFound(_ tool: String) -> String {
+        format("xcframework.error.toolNotFound", fallback: "Could not find the developer tool \"%@\". Install Xcode or the Command Line Tools.", tool)
+    }
+    static var xcframeworkErrorDeveloperDirectory: String { text("xcframework.error.developerDirectory", fallback: "Could not determine the active developer directory (xcode-select -p).") }
+    static var retagNoOutputDirectory: String { text("retag.output.noDirectory", fallback: "No output directory selected.") }
+    static var retagSummaryNotAvailable: String { text("retag.summary.notAvailable", fallback: "n/a") }
+    static var retagSummaryFile: String { text("retag.summary.file", fallback: "File") }
+    static var retagSummaryContainer: String { text("retag.summary.container", fallback: "Container") }
+    static var retagSummarySlices: String { text("retag.summary.slices", fallback: "Slices") }
+    static var retagSummaryCPU: String { text("retag.summary.cpu", fallback: "CPU") }
+    static var retagSummaryFileType: String { text("retag.summary.fileType", fallback: "File Type") }
+    static var retagSummaryPlatform: String { text("retag.summary.platform", fallback: "Platform") }
+    static var retagSummaryInstallName: String { text("retag.summary.installName", fallback: "Install Name") }
+    static var retagSummaryNone: String { text("retag.summary.none", fallback: "(none)") }
+    static var retagSummaryFatStaticArchive: String { text("retag.summary.fatStaticArchive", fallback: "Fat Static Archive") }
+    static var retagSummaryStaticArchive: String { text("retag.summary.staticArchive", fallback: "Static Archive") }
+    static var retagSummaryArchitectures: String { text("retag.summary.architectures", fallback: "Architectures") }
+    static var retagSummarySelectedArchitecture: String { text("retag.summary.selectedArchitecture", fallback: "Selected Architecture") }
+    static var retagSummaryArchiveNote: String { text("retag.summary.archiveNote", fallback: "Retag rewrites object members inside the selected static-archive architecture only.") }
+    static var retagSummaryDiff: String { text("retag.summary.diff", fallback: "Diff") }
+    static var retagErrorOutputDirectoryMissing: String { text("retag.error.outputDirectoryMissing", fallback: "Choose an output directory.") }
+    static var retagErrorOutputNameMissing: String { text("retag.error.outputNameMissing", fallback: "Enter an output file name.") }
+    static func retagErrorInvalidOutputName(_ name: String) -> String {
+        format("retag.error.invalidOutputName", fallback: "Invalid output file name: %@", name)
+    }
+    static func retagErrorInvalidVersion(_ value: String) -> String {
+        format("retag.error.invalidVersion", fallback: "Invalid version \"%@\". Use 1–3 numeric parts (major ≤ 65535, minor and patch ≤ 255), for example 13.0.", value)
+    }
+    static var mergeSplitRunningStatus: String { text("mergeSplit.status.running", fallback: "Working…") }
+    static var preferencesCLIErrorAdministratorCommandFailed: String { text("preferences.cli.error.adminFailed", fallback: "Administrator command failed.") }
+    static var commonOK: String { text("common.ok", fallback: "OK") }
 }

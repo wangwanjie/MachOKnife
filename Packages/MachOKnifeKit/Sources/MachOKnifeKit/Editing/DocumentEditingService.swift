@@ -35,14 +35,23 @@ public struct DocumentEditingService {
             .appendingPathComponent(".\(UUID().uuidString).tmp")
         let backupURL = createBackup ? inputURL.appendingPathExtension("bak") : nil
 
+        // The temporary file must never outlive this call: remove it whenever the write, the
+        // backup or the replacement fails. After a successful replacement it no longer exists.
+        defer {
+            if fileManager.fileExists(atPath: temporaryURL.path) {
+                try? fileManager.removeItem(at: temporaryURL)
+            }
+        }
+
+        // Write first so a failing edit neither touches the input nor replaces an existing backup.
+        let writeResult = try writer.write(inputURL: inputURL, outputURL: temporaryURL, editPlan: editPlan)
+
         if let backupURL {
             if fileManager.fileExists(atPath: backupURL.path) {
                 try fileManager.removeItem(at: backupURL)
             }
             try fileManager.copyItem(at: inputURL, to: backupURL)
         }
-
-        let writeResult = try writer.write(inputURL: inputURL, outputURL: temporaryURL, editPlan: editPlan)
 
         _ = try fileManager.replaceItemAt(inputURL, withItemAt: temporaryURL)
 

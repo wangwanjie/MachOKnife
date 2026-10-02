@@ -63,7 +63,8 @@ final class BinaryContaminationWindowController: NSWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            // Delivered on the main queue, so refresh synchronously instead of hopping through a Task.
+            MainActor.assumeIsolated {
                 self?.reloadLocalization()
             }
         }
@@ -72,7 +73,6 @@ final class BinaryContaminationWindowController: NSWindowController {
 
 @MainActor
 private final class BinaryContaminationViewController: NSViewController, NSComboBoxDelegate, NSTextFieldDelegate {
-    private let service = BinaryContaminationCheckService()
     private let platformOptions = ["iphoneos", "iphonesimulator", "maccatalyst", "macos", "tvos", "watchos", "xros"]
     private let architectureOptions = ["arm64", "arm64e", "x86_64", "i386", "armv7", "armv7s"]
 
@@ -90,6 +90,11 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
     private let reportTextView = NSTextView()
 
     private var inputURL: URL?
+    /// Incremented for every requested check so results from superseded checks are dropped.
+    private var checkGeneration = 0
+    private var pendingTypingCheck: DispatchWorkItem?
+    private var checkTask: Task<Void, Never>?
+    private static let typingDebounceInterval: TimeInterval = 0.4
 
     override func loadView() {
         view = AdaptiveBackgroundView(backgroundColor: .windowBackgroundColor)
@@ -131,6 +136,7 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
     }
 
     @objc private func clearInput(_ sender: Any?) {
+        cancelPendingChecks()
         inputURL = nil
         inputPathLabel.stringValue = L10n.xcframeworkNoSelection
         reportTextView.string = L10n.contaminationIdleStatus
@@ -139,7 +145,9 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
     }
 
     @objc private func modeChanged(_ sender: Any?) {
-        rebuildTargetOptions()
+        // A platform name is never a valid architecture (and vice versa), so switching modes
+        // resets the target to the new mode's default instead of carrying the old value over.
+        rebuildTargetOptions(resetValue: true)
         runCheckIfPossible(presentingErrors: false)
     }
 
@@ -153,23 +161,66 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
 
     func controlTextDidChange(_ obj: Notification) {
         guard obj.object as? NSComboBox === targetComboBox else { return }
-        runCheckIfPossible(presentingErrors: false)
+        // Typing must not inspect the binary on every keystroke; wait until the user pauses.
+        pendingTypingCheck?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.pendingTypingCheck = nil
+                self?.runCheckIfPossible(presentingErrors: false)
+            }
+        }
+        pendingTypingCheck = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.typingDebounceInterval, execute: workItem)
+    }
+
+    private func cancelPendingChecks() {
+        pendingTypingCheck?.cancel()
+        pendingTypingCheck = nil
+        checkTask?.cancel()
+        checkTask = nil
+        checkGeneration += 1
     }
 
     private func runCheckIfPossible(presentingErrors: Bool) {
+        pendingTypingCheck?.cancel()
+        pendingTypingCheck = nil
         guard let inputURL else { return }
         let target = targetComboBox.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard target.isEmpty == false else { return }
 
-        do {
-            let report = try service.runCheck(
-                at: inputURL,
-                target: target,
-                mode: selectedMode
-            )
+        checkTask?.cancel()
+        checkGeneration += 1
+        let generation = checkGeneration
+        let mode = selectedMode
+
+        // Inspecting large archives can take a while, so the check runs off the main thread.
+        checkTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let result: Result<BinaryContaminationReport, Error>
+            do {
+                result = .success(try BinaryContaminationCheckService().runCheck(at: inputURL, target: target, mode: mode))
+            } catch {
+                result = .failure(error)
+            }
+            guard Task.isCancelled == false else { return }
+            await MainActor.run {
+                self?.applyCheckResult(result, generation: generation, presentingErrors: presentingErrors)
+            }
+        }
+    }
+
+    private func applyCheckResult(
+        _ result: Result<BinaryContaminationReport, Error>,
+        generation: Int,
+        presentingErrors: Bool
+    ) {
+        guard generation == checkGeneration else { return }
+        checkTask = nil
+
+        switch result {
+        case let .success(report):
             reportTextView.string = report.renderedText
             refreshReportLayout()
-        } catch {
+        case let .failure(error):
             reportTextView.string = error.localizedDescription
             refreshReportLayout()
             if presentingErrors {
@@ -274,16 +325,16 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
         rebuildTargetOptions()
     }
 
-    private func rebuildTargetOptions() {
+    private func rebuildTargetOptions(resetValue: Bool = false) {
         let previousValue = targetComboBox.stringValue
+        let options = selectedMode == .platform ? platformOptions : architectureOptions
         targetComboBox.removeAllItems()
-        targetComboBox.addItems(withObjectValues: selectedMode == .platform ? platformOptions : architectureOptions)
-        targetComboBox.stringValue = previousValue.isEmpty
-            ? (selectedMode == .platform ? platformOptions[0] : architectureOptions[0])
-            : previousValue
+        targetComboBox.addItems(withObjectValues: options)
+        targetComboBox.stringValue = (resetValue || previousValue.isEmpty) ? options[0] : previousValue
     }
 
     private func loadInput(_ url: URL) {
+        cancelPendingChecks()
         inputURL = url
         inputPathLabel.stringValue = url.path
         clearButton.isEnabled = true

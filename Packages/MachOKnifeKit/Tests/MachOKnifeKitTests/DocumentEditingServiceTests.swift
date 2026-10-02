@@ -65,6 +65,58 @@ struct DocumentEditingServiceTests {
         #expect(exported.slices.first?.installName == "@rpath/libExportedFixture.dylib")
         #expect(exported.slices.first?.rpaths.contains("@loader_path") == true)
     }
+
+    @Test("a failing in-place save leaves no temporary file, backup or modified input behind")
+    func failingInPlaceSaveLeavesNothingBehind() throws {
+        let fixture = try EditingFixtureFactory.makeEditableFixture()
+        let originalData = try Data(contentsOf: fixture.binaryURL)
+        let service = DocumentEditingService()
+
+        #expect(throws: MachOWriteError.self) {
+            try service.save(
+                inputURL: fixture.binaryURL,
+                editPlan: MachOEditPlan(installName: "@rpath/" + String(repeating: "x", count: 0x10000)),
+                createBackup: true
+            )
+        }
+
+        #expect(try Data(contentsOf: fixture.binaryURL) == originalData)
+        #expect(try EditingFixtureFactory.temporaryFiles(in: fixture.directory).isEmpty)
+        #expect(FileManager.default.fileExists(atPath: fixture.binaryURL.appendingPathExtension("bak").path) == false)
+    }
+
+    @Test("a failing in-place replacement removes the temporary file")
+    func failingInPlaceReplacementRemovesTemporaryFile() throws {
+        let fixture = try EditingFixtureFactory.makeEditableFixture()
+        let originalData = try Data(contentsOf: fixture.binaryURL)
+        let service = DocumentEditingService(fileManager: FailingReplaceFileManager())
+
+        #expect(throws: FailingReplaceFileManager.ReplaceError.self) {
+            try service.save(
+                inputURL: fixture.binaryURL,
+                editPlan: MachOEditPlan(installName: "@rpath/libReplaceFails.dylib"),
+                createBackup: false
+            )
+        }
+
+        #expect(try Data(contentsOf: fixture.binaryURL) == originalData)
+        #expect(try EditingFixtureFactory.temporaryFiles(in: fixture.directory).isEmpty)
+    }
+}
+
+/// Simulates `replaceItemAt` failing after the edited temporary file was written.
+private final class FailingReplaceFileManager: FileManager, @unchecked Sendable {
+    struct ReplaceError: Error {}
+
+    override func replaceItem(
+        at originalItemURL: URL,
+        withItemAt newItemURL: URL,
+        backupItemName: String?,
+        options: FileManager.ItemReplacementOptions = [],
+        resultingItemURL: AutoreleasingUnsafeMutablePointer<NSURL?>?
+    ) throws {
+        throw ReplaceError()
+    }
 }
 
 private struct EditingFixture {
@@ -100,6 +152,12 @@ private enum EditingFixtureFactory {
         }
 
         return EditingFixture(directory: directory, binaryURL: binaryURL)
+    }
+}
+
+extension EditingFixtureFactory {
+    static func temporaryFiles(in directory: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.hasSuffix(".tmp") }
     }
 }
 

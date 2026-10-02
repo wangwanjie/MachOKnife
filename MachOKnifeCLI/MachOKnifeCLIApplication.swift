@@ -1,13 +1,23 @@
 import Foundation
 
 enum MachOKnifeCLIApplication {
+    /// sysexits(3) EX_USAGE: the command was used incorrectly.
+    static let usageExitCode: Int32 = 64
+
     static func main(arguments: [String] = CommandLine.arguments) {
         do {
             let output = try run(arguments: arguments)
             FileHandle.standardOutput.write(Data(output.utf8))
+        } catch let failure as CLICommandFailure {
+            FileHandle.standardOutput.write(Data(failure.output.utf8))
+            if let message = failure.message {
+                FileHandle.standardError.write(Data("error: \(message)\n".utf8))
+            }
+            Foundation.exit(failure.exitCode)
         } catch let error as CLIError {
-            FileHandle.standardError.write(Data("error: \(error.message)\n".utf8))
-            Foundation.exit(Int32(error.exitCode))
+            let text = error.isRawMessage ? error.message : "error: \(error.message)\n"
+            FileHandle.standardError.write(Data(text.utf8))
+            Foundation.exit(error.exitCode)
         } catch {
             FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
             Foundation.exit(1)
@@ -16,14 +26,32 @@ enum MachOKnifeCLIApplication {
 
     static func run(arguments: [String]) throws -> String {
         guard arguments.count >= 2 else {
-            return CLIHelp.text
+            throw CLIError(message: CLIHelp.text, exitCode: usageExitCode, isRawMessage: true)
         }
 
         let command = arguments[1]
-        if CLIHelp.isHelpCommand(command) {
-            return CLIHelp.text
-        }
         let commandArguments = Array(arguments.dropFirst(2))
+
+        if CLIHelp.isVersionCommand(command) {
+            return CLIHelp.versionLine + "\n"
+        }
+
+        if CLIHelp.isHelpCommand(command) {
+            guard let topic = commandArguments.first else {
+                return CLIHelp.text
+            }
+            guard let help = CLIHelp.commandHelp(for: topic) else {
+                throw CLIError.unsupportedCommand(topic)
+            }
+            return help
+        }
+
+        if CLICommandSupport.containsHelpFlag(commandArguments) {
+            guard let help = CLIHelp.commandHelp(for: command) else {
+                throw CLIError.unsupportedCommand(command)
+            }
+            return help
+        }
 
         switch command {
         case SummaryCommand.name:
@@ -60,20 +88,38 @@ enum MachOKnifeCLIApplication {
 
 struct CLIError: Error {
     let message: String
-    let exitCode: Int
-
-    static let usage = CLIError(message: CLIHelp.text, exitCode: 1)
+    let exitCode: Int32
+    /// When true, `message` is written to stderr verbatim (no `error:` prefix).
+    var isRawMessage = false
 
     static func unsupportedCommand(_ command: String) -> CLIError {
-        CLIError(message: "unsupported command '\(command)'", exitCode: 2)
+        CLIError(
+            message: "unsupported command '\(command)'. Run 'machoe-cli --help' for a list of commands.",
+            exitCode: MachOKnifeCLIApplication.usageExitCode
+        )
     }
 
-    static func invalidUsage(_ usage: String) -> CLIError {
-        CLIError(message: usage, exitCode: 1)
+    static func invalidUsage(_ usage: String, detail: String? = nil) -> CLIError {
+        var lines: [String] = []
+        if let detail {
+            lines.append(detail)
+        }
+        lines.append("usage:")
+        lines += usage.split(separator: "\n").map { "  \($0)" }
+        return CLIError(message: lines.joined(separator: "\n"), exitCode: MachOKnifeCLIApplication.usageExitCode)
     }
 }
 
-private enum CLIHelp {
+/// Thrown when a command produced a normal report but must exit with a non-zero status
+/// (for example a contamination check that found mismatches, or a failed validation).
+/// The report is still written to stdout.
+struct CLICommandFailure: Error {
+    let output: String
+    let exitCode: Int32
+    var message: String?
+}
+
+enum CLIHelp {
     private struct CommandDescriptor {
         let name: String
         let summary: String
@@ -82,7 +128,7 @@ private enum CLIHelp {
 
     private static let author = "VanJay"
     private static let email = "vanjay.dev@gmail.com"
-    private static let fallbackVersion = "1.3.0"
+    private static let fallbackVersion = "unknown"
 
     private static let commands = [
         CommandDescriptor(
@@ -92,7 +138,7 @@ private enum CLIHelp {
         ),
         CommandDescriptor(
             name: ContaminationCheckCommand.name,
-            summary: "Detect platform or architecture slices that do not match a target.",
+            summary: "Detect platform or architecture slices that do not match a target. Exits with status 1 when mismatches are found.",
             usageLines: [ContaminationCheckCommand.usage]
         ),
         CommandDescriptor(
@@ -147,25 +193,46 @@ private enum CLIHelp {
         ),
         CommandDescriptor(
             name: ValidateCommand.name,
-            summary: "Validate Mach-O structure and signature metadata.",
+            summary: "Validate Mach-O structure and signature metadata. Exits with status 1 when problems are found.",
             usageLines: [ValidateCommand.usage]
         ),
     ]
 
     static let text = render()
 
+    static var versionLine: String {
+        "machoe-cli v\(version)"
+    }
+
     static func isHelpCommand(_ command: String) -> Bool {
         command == "help" || command == "-h" || command == "--help"
     }
 
+    static func isVersionCommand(_ command: String) -> Bool {
+        command == "--version" || command == "-v" || command == "version"
+    }
+
+    static func commandHelp(for name: String) -> String? {
+        guard let descriptor = commands.first(where: { $0.name == name }) else {
+            return nil
+        }
+        let lines = [
+            "\(descriptor.name): \(descriptor.summary)",
+            "",
+            "Usage:",
+        ] + descriptor.usageLines.map { "  \($0)" }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
     private static func render() -> String {
         let header = [
-            "machoe-cli v\(version) \(author) \(email)",
+            "\(versionLine) \(author) \(email)",
             "",
             "Usage:",
             "  machoe-cli <command> [options]",
-            "  machoe-cli help",
-            "  machoe-cli --help",
+            "  machoe-cli <command> --help",
+            "  machoe-cli help [<command>]",
+            "  machoe-cli --version",
             "",
             "Commands:",
         ]
@@ -179,6 +246,8 @@ private enum CLIHelp {
     }
 
     private static var version: String {
+        // The CLI target embeds its generated Info.plist (CREATE_INFOPLIST_SECTION_IN_BINARY),
+        // so this reflects MARKETING_VERSION from the project.
         if let bundleVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
            bundleVersion.isEmpty == false {
             return bundleVersion

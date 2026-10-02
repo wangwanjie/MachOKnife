@@ -15,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mergeSplitWindowController: MachOMergeSplitWindowController?
     private var settingsObserver: NSObjectProtocol?
     private var recentFilesMenu = NSMenu(title: "")
-    private var pendingLaunchDocumentURL: URL?
+    private var pendingLaunchDocumentURLs: [URL] = []
 
     override init() {
         self.settings = .shared
@@ -47,9 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.mainWindowController = mainWindowController
         mainWindowController.present(nil)
 
-        if let pendingLaunchDocumentURL {
-            self.pendingLaunchDocumentURL = nil
-            _ = mainWindowController.openDocument(at: pendingLaunchDocumentURL)
+        let pendingLaunchDocumentURLs = self.pendingLaunchDocumentURLs
+        self.pendingLaunchDocumentURLs = []
+        for url in pendingLaunchDocumentURLs {
+            _ = mainWindowController.openDocument(at: url)
         }
 
         refreshRecentFilesMenu()
@@ -69,20 +70,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
-        guard let path = filenames.first else {
+        guard filenames.isEmpty == false else {
             sender.reply(toOpenOrPrint: .failure)
             return
         }
 
-        let url = URL(fileURLWithPath: path)
-        let didOpen: Bool
-        if let mainWindowController {
-            didOpen = mainWindowController.openDocument(at: url)
-        } else {
-            pendingLaunchDocumentURL = url
-            didOpen = true
+        // The workspace shows one document at a time, so files are opened in order and the last
+        // one stays visible; every file still goes through the normal open (and recents) flow.
+        let urls = filenames.map { URL(fileURLWithPath: $0) }
+        guard let mainWindowController else {
+            pendingLaunchDocumentURLs.append(contentsOf: urls)
+            sender.reply(toOpenOrPrint: .success)
+            return
         }
-        sender.reply(toOpenOrPrint: didOpen ? .success : .failure)
+
+        var openedCount = 0
+        for url in urls where mainWindowController.openDocument(at: url) {
+            openedCount += 1
+        }
+        sender.reply(toOpenOrPrint: openedCount == urls.count ? .success : .failure)
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
@@ -196,6 +202,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updatesItem.target = self
         appMenu.addItem(updatesItem)
         appMenu.addItem(NSMenuItem.separator())
+        let servicesMenu = NSMenu(title: L10n.menuServices)
+        let servicesItem = NSMenuItem(title: L10n.menuServices, action: nil, keyEquivalent: "")
+        servicesItem.submenu = servicesMenu
+        appMenu.addItem(servicesItem)
+        NSApp.servicesMenu = servicesMenu
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(NSMenuItem(title: L10n.menuHide(), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
+        let hideOthersItem = NSMenuItem(title: L10n.menuHideOthers, action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthersItem.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(hideOthersItem)
+        appMenu.addItem(NSMenuItem(title: L10n.menuShowAll, action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(NSMenuItem(title: L10n.menuQuit(), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
@@ -232,7 +250,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: L10n.menuEdit)
+        // Standard editing items are nil-targeted so they reach the first responder
+        // (text fields, text views, and the workspace tables).
+        editMenu.addItem(NSMenuItem(title: L10n.menuUndo, action: Selector(("undo:")), keyEquivalent: "z"))
+        let redoItem = NSMenuItem(title: L10n.menuRedo, action: Selector(("redo:")), keyEquivalent: "z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redoItem)
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(NSMenuItem(title: L10n.menuCut, action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: L10n.menuCopy, action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: L10n.menuPaste, action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: L10n.menuDelete, action: #selector(NSText.delete(_:)), keyEquivalent: ""))
+        editMenu.addItem(NSMenuItem(title: L10n.menuSelectAll, action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editMenu.addItem(NSMenuItem.separator())
         let copyNodeInfoItem = NSMenuItem(title: L10n.menuCopyNodeInfo, action: #selector(copySelectedNodeInfo(_:)), keyEquivalent: "c")
+        copyNodeInfoItem.keyEquivalentModifierMask = [.command, .shift]
         copyNodeInfoItem.target = self
         editMenu.addItem(copyNodeInfoItem)
         editItem.submenu = editMenu
@@ -265,9 +297,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: L10n.menuWindow)
+        windowMenu.addItem(NSMenuItem(title: L10n.menuMinimize, action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
+        windowMenu.addItem(NSMenuItem(title: L10n.menuZoom, action: #selector(NSWindow.performZoom(_:)), keyEquivalent: ""))
+        windowMenu.addItem(NSMenuItem.separator())
         let showWindowItem = NSMenuItem(title: L10n.menuShowWorkspace, action: #selector(showMainWindow(_:)), keyEquivalent: "1")
         showWindowItem.target = self
         windowMenu.addItem(showWindowItem)
+        windowMenu.addItem(NSMenuItem.separator())
+        windowMenu.addItem(NSMenuItem(title: L10n.menuBringAllToFront, action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: ""))
         windowItem.submenu = windowMenu
         mainMenu.addItem(windowItem)
 
@@ -281,6 +318,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(helpItem)
 
         replaceMainMenu(with: mainMenu)
+        NSApp.windowsMenu = windowMenu
+        NSApp.helpMenu = helpMenu
     }
 
     private func applyAppearance() {
@@ -293,18 +332,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            // Delivered on the main queue, so refresh synchronously instead of hopping through a Task.
+            MainActor.assumeIsolated {
                 guard let self else { return }
 
+                // Windows (main, preferences, tools) observe this notification themselves and
+                // reload their own localization; only app-level state is refreshed here.
                 self.applyAppearance()
                 self.buildMainMenu()
-                self.mainWindowController?.reloadLocalization()
-                self.preferencesWindowController?.reloadLocalization()
-                self.retagWindowController?.reloadLocalization()
-                self.xcframeworkBuildWindowController?.reloadLocalization()
-                self.machoSummaryWindowController?.reloadLocalization()
-                self.contaminationWindowController?.reloadLocalization()
-                self.mergeSplitWindowController?.reloadLocalization()
                 self.refreshRecentFilesMenu()
             }
         }

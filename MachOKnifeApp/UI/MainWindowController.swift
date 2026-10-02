@@ -33,6 +33,9 @@ final class MainWindowController: NSWindowController {
     private var cancellables = Set<AnyCancellable>()
     private var settingsObserver: NSObjectProtocol?
     private var activeSecurityScopedURL: URL?
+    /// A document whose staged (background) load is still running. It is reported through
+    /// `onDocumentOpened` (and thus added to recents) only once the load actually succeeds.
+    private var pendingOpenedDocumentURL: URL?
 
     convenience init() {
         self.init(viewModel: WorkspaceViewModel())
@@ -123,7 +126,7 @@ final class MainWindowController: NSWindowController {
                 stopAccessingActiveSecurityScopedURL()
                 activeSecurityScopedURL = didAccessSecurityScope ? url : nil
             }
-            onDocumentOpened?(url)
+            reportOpenedDocumentWhenLoaded(url)
         } else {
             if didAccessSecurityScope {
                 url.stopAccessingSecurityScopedResource()
@@ -147,6 +150,7 @@ final class MainWindowController: NSWindowController {
         guard shouldClose else { return }
 
         viewModel.closeCurrentDocument()
+        pendingOpenedDocumentURL = nil
         stopAccessingActiveSecurityScopedURL()
     }
 
@@ -229,11 +233,42 @@ final class MainWindowController: NSWindowController {
         NSPasteboard.general.setString(currentFileURL.path, forType: .string)
     }
 
+    private func reportOpenedDocumentWhenLoaded(_ url: URL) {
+        switch viewModel.loadingState {
+        case .ready, .degraded:
+            pendingOpenedDocumentURL = nil
+            onDocumentOpened?(url)
+        case .loading:
+            pendingOpenedDocumentURL = url
+        case .idle, .error:
+            pendingOpenedDocumentURL = nil
+        }
+    }
+
     private func bindViewModel() {
-        Publishers.CombineLatest3(viewModel.$analysis, viewModel.$editableSlice, viewModel.$previewText)
+        viewModel.$loadingState
             .receive(on: RunLoop.main)
-            .sink { _ in }
+            .sink { [weak self] _ in
+                self?.resolvePendingOpenedDocument()
+            }
             .store(in: &cancellables)
+    }
+
+    private func resolvePendingOpenedDocument() {
+        guard let pendingURL = pendingOpenedDocumentURL else { return }
+        guard viewModel.currentFileURL?.standardizedFileURL == pendingURL.standardizedFileURL else {
+            pendingOpenedDocumentURL = nil
+            return
+        }
+        switch viewModel.loadingState {
+        case .ready, .degraded:
+            pendingOpenedDocumentURL = nil
+            onDocumentOpened?(pendingURL)
+        case .idle, .error:
+            pendingOpenedDocumentURL = nil
+        case .loading:
+            break
+        }
     }
 
     private func observeSettings() {
@@ -242,7 +277,8 @@ final class MainWindowController: NSWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            // Delivered on the main queue, so refresh synchronously instead of hopping through a Task.
+            MainActor.assumeIsolated {
                 self?.reloadLocalization()
             }
         }
@@ -292,7 +328,7 @@ final class MainWindowController: NSWindowController {
         if let subtitle = node.subtitle, subtitle.isEmpty == false {
             lines.append(subtitle)
         }
-        lines.append("Rows: \(rows.count)")
+        lines.append(L10n.nodeInfoRowCount(rows.count))
         lines.append("")
 
         let header = formattedNodeInfoLine(
@@ -334,7 +370,7 @@ final class MainWindowController: NSWindowController {
         }
 
         guard let value else { return "" }
-        return String(format: "%08llX", value)
+        return BrowserAddressFormatter.string(value)
     }
 
     private func formattedNodeInfoLine(

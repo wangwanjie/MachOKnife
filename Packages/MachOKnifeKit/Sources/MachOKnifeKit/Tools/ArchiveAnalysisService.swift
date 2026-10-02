@@ -81,20 +81,13 @@ public struct ArchiveAnalysisService {
         in archiveURL: URL,
         inspection: ArchiveInspection
     ) throws -> ArchiveArchitectureAnalysis {
-        let extraction = try archiveInspector.extractThinArchive(
-            url: archiveURL,
-            preferredArchitecture: inspection.kind == .fatArchive ? architecture : nil
+        let members = try ArchiveArchitectureMembers.collect(
+            architecture: architecture,
+            in: archiveURL,
+            inspection: inspection,
+            archiveInspector: archiveInspector,
+            fileManager: fileManager
         )
-        defer { try? fileManager.removeItem(at: extraction.archiveURL.deletingLastPathComponent()) }
-
-        let membersDirectory = fileManager.temporaryDirectory
-            .appendingPathComponent("MachOKnifeArchiveAnalysis-\(UUID().uuidString)", isDirectory: true)
-        try fileManager.createDirectory(at: membersDirectory, withIntermediateDirectories: true)
-        defer { try? fileManager.removeItem(at: membersDirectory) }
-
-        let members = try archiveInspector.listMembers(in: extraction.archiveURL)
-            .filter { !$0.hasPrefix("__.SYMDEF") && $0 != "/" && $0 != "//" }
-        try archiveInspector.extractMembers(from: extraction.archiveURL, to: membersDirectory)
 
         var parsedMemberCount = 0
         var platforms = Set<String>()
@@ -105,13 +98,12 @@ public struct ArchiveAnalysisService {
         var rpaths = Set<String>()
 
         for member in members {
-            let memberURL = membersDirectory.appendingPathComponent(member)
-            guard let container = try? MachOContainer.parse(at: memberURL) else {
+            guard let slices = member.slices else {
                 continue
             }
 
             parsedMemberCount += 1
-            for slice in container.slices {
+            for slice in slices {
                 if let platform = slice.buildVersion?.platform ?? slice.versionMin?.platform {
                     platforms.insert(platformLabel(platform))
                 }
@@ -134,8 +126,8 @@ public struct ArchiveAnalysisService {
             memberCount: members.count,
             parsedMemberCount: parsedMemberCount,
             platforms: platforms.sorted(),
-            minimumOSVersions: minimumOSVersions.sorted(),
-            sdkVersions: sdkVersions.sorted(),
+            minimumOSVersions: numericallySortedVersions(minimumOSVersions),
+            sdkVersions: numericallySortedVersions(sdkVersions),
             installNames: installNames.sorted(),
             dylibReferences: dylibReferences.sorted(),
             rpaths: rpaths.sorted()

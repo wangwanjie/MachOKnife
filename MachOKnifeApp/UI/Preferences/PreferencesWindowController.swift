@@ -10,10 +10,6 @@ final class PreferencesWindowController: NSWindowController {
     private let preferencesViewController: PreferencesTabViewController
     private var settingsObserver: NSObjectProtocol?
 
-    convenience init() {
-        self.init(settings: .shared, updateManager: UpdateManager())
-    }
-
     init(settings: AppSettings, updateManager: UpdateManager) {
         let tabViewController = PreferencesTabViewController(settings: settings, updateManager: updateManager)
         self.preferencesViewController = tabViewController
@@ -87,7 +83,8 @@ final class PreferencesWindowController: NSWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            // Delivered on the main queue, so refresh synchronously instead of hopping through a Task.
+            MainActor.assumeIsolated {
                 self?.reloadLocalization()
             }
         }

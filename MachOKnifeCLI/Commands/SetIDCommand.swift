@@ -7,9 +7,10 @@ struct SetIDCommand {
     static let usage = "machoe-cli set-id <path> --install-name <path> --output <path>"
 
     static func run(arguments: [String]) throws -> String {
-        let inputURL = try CLICommandSupport.requiredPath(arguments, usage: usage)
-        let installName = try CLICommandSupport.requiredOption("--install-name", in: arguments, usage: usage)
-        let outputURL = URL(filePath: try CLICommandSupport.requiredOption("--output", in: arguments, usage: usage))
+        let parsed = try CLICommandSupport.parse(arguments, valueOptions: ["--install-name", "--output"], usage: usage)
+        let inputURL = try CLICommandSupport.requiredPath(parsed, usage: usage)
+        let installName = try parsed.requiredValue("--install-name", usage: usage)
+        let outputURL = URL(filePath: try parsed.requiredValue("--output", usage: usage))
 
         let result = try DocumentEditingService().save(
             inputURL: inputURL,

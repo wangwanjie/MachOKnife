@@ -14,6 +14,7 @@ final class CLIPreferencesViewController: NSViewController {
     private let viewModel: CLIPreferencesViewModel
     private var settingsObserver: NSObjectProtocol?
     private var lastAction: LastAction = .idle
+    private var hasAppeared = false
 
     private let statusLabel = makeSectionLabel("")
     private let directoryLabel = makeSectionLabel("")
@@ -47,8 +48,18 @@ final class CLIPreferencesViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         buildUI()
-        refreshState()
+        refreshState(presentingErrors: false)
         observeSettings()
+    }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        // The install state is probed on demand: when the pane is shown again (the CLI may have
+        // been removed outside the app), not on every unrelated settings change.
+        if hasAppeared {
+            refreshState(presentingErrors: false)
+        }
+        hasAppeared = true
     }
 
     deinit {
@@ -73,7 +84,7 @@ final class CLIPreferencesViewController: NSViewController {
 
         do {
             try settings.setCLIInstallDirectory(selectedURL)
-            refreshState()
+            refreshState(presentingErrors: true)
         } catch {
             presentCLIError(error)
         }
@@ -194,13 +205,22 @@ final class CLIPreferencesViewController: NSViewController {
         reloadLocalization()
     }
 
-    private func refreshState() {
+    private func refreshState(presentingErrors: Bool) {
         do {
             try viewModel.refresh()
             applyState()
         } catch {
-            presentCLIError(error)
+            if presentingErrors {
+                presentCLIError(error)
+            } else {
+                showCLIErrorInline(error)
+            }
         }
+    }
+
+    private func showCLIErrorInline(_ error: Error) {
+        statusValueLabel.stringValue = error.localizedDescription
+        statusValueLabel.textColor = .systemRed
     }
 
     private func applyState() {
@@ -236,15 +256,14 @@ final class CLIPreferencesViewController: NSViewController {
     }
 
     private func presentCLIError(_ error: Error) {
-        statusValueLabel.stringValue = error.localizedDescription
-        statusValueLabel.textColor = .systemRed
+        showCLIErrorInline(error)
         lastAction = .failed(message: error.localizedDescription)
         applyLastActionText()
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = L10n.preferencesCLIErrorTitle
         alert.informativeText = L10n.preferencesCLIErrorMessage(for: error)
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: L10n.commonOK)
         if let window = view.window {
             alert.beginSheetModal(for: window)
         } else {
@@ -257,9 +276,16 @@ final class CLIPreferencesViewController: NSViewController {
             forName: AppSettings.didChangeNotification,
             object: settings,
             queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.refreshState()
+        ) { [weak self] notification in
+            // Only CLI-related changes require re-probing the install state (and never with an
+            // alert: this runs for changes the user did not make in this pane). Language and theme
+            // changes just re-render the existing state.
+            let needsRefresh = AppSettings.change(from: notification)?.affectsCLIInstallation ?? true
+            // Delivered on the main queue, so refresh synchronously instead of hopping through a Task.
+            MainActor.assumeIsolated {
+                if needsRefresh {
+                    self?.refreshState(presentingErrors: false)
+                }
                 self?.reloadLocalization()
             }
         }

@@ -66,7 +66,8 @@ final class RetagWindowController: NSWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            // Delivered on the main queue, so refresh synchronously instead of hopping through a Task.
+            MainActor.assumeIsolated {
                 self?.reloadLocalization()
             }
         }
@@ -99,9 +100,12 @@ private final class RetagViewController: NSViewController {
     private let chooseInputButton = NSButton(title: "", target: nil, action: nil)
     private let clearInputButton = NSButton(title: "", target: nil, action: nil)
     private let inputPathLabel = makeCopyablePathLabel()
-    private let inputDropView = RetagDropZoneView()
+    private let inputDropView = ToolDropZoneView()
     private let infoTitleLabel = NSTextField(labelWithString: "")
-    private let infoTextView = NSTextView()
+    private let infoScrollView = NSTextView.scrollableTextView()
+    private var infoTextView: NSTextView {
+        infoScrollView.documentView as! NSTextView
+    }
     private let architectureLabel = makeSectionLabel("")
     private let architecturePopUpButton = NSPopUpButton()
     private let targetLabel = makeSectionLabel("")
@@ -129,6 +133,19 @@ private final class RetagViewController: NSViewController {
     private var archiveInspection: ArchiveInspection?
     private var architectureRow: NSStackView?
     private var retagTask: Task<Void, Never>?
+    /// Identifies the retag whose result is still wanted. Cancelling clears it, so a result that
+    /// arrives afterwards is discarded (and its staged output removed) instead of being published.
+    private var activeRetagID: UUID?
+    private var lastDiffEntries: [DiffEntry] = []
+    private var status: RetagStatus = .idle
+
+    private enum RetagStatus {
+        case idle
+        case running
+        case completed(URL)
+        case cancelled
+        case failed(Error)
+    }
 
     deinit {
         Self.stopAccessingSecurityScope(activeInputSecurityScopedURL)
@@ -169,6 +186,7 @@ private final class RetagViewController: NSViewController {
             guard response == .OK, let url = panel.url else { return }
             self?.adoptOutputDirectoryURL(url)
             self?.refreshOutputFields()
+            self?.setRunning(self?.activeRetagID != nil)
         }
     }
 
@@ -188,7 +206,7 @@ private final class RetagViewController: NSViewController {
         activeOutputSecurityScopedURL = nil
         outputDirectoryURL = nil
         refreshOutputFields()
-        setRunning(false)
+        setRunning(activeRetagID != nil)
     }
 
     @objc private func archiveArchitectureChanged(_ sender: Any?) {
@@ -196,7 +214,7 @@ private final class RetagViewController: NSViewController {
     }
 
     @objc private func startRetag(_ sender: Any?) {
-        guard let inputURL else { return }
+        guard let inputURL, activeRetagID == nil else { return }
 
         do {
             guard let outputDirectoryURL else {
@@ -209,47 +227,52 @@ private final class RetagViewController: NSViewController {
             guard !outputName.isEmpty else {
                 throw RetagUIError.outputNameMissing
             }
+            guard outputName.contains("/") == false, outputName != ".", outputName != ".." else {
+                throw RetagUIError.invalidOutputName(outputName)
+            }
 
             let outputURL = outputDirectoryURL.appendingPathComponent(outputName)
-            retagTask?.cancel()
-            retagTask = Task { [weak self] in
-                guard let self else { return }
-                await MainActor.run {
-                    self.setRunning(true)
-                    self.statusLabel.stringValue = L10n.retagRunningStatus
-                }
+            // The engine writes synchronously and cannot be interrupted, so it writes to a private
+            // staging file. The staged file is only moved into place if the retag was not cancelled.
+            let stagingURL = outputDirectoryURL.appendingPathComponent(".\(outputName).machoknife-retag-\(UUID().uuidString)")
+            let architecture = selectedArchiveArchitecture()
+            let engine = retagEngine
+            let retagID = UUID()
 
+            activeRetagID = retagID
+            lastDiffEntries = []
+            refreshDetectedSummary()
+            setRunning(true)
+            setStatus(.running)
+
+            retagTask = Task.detached(priority: .userInitiated) { [weak self] in
+                let outcome: Result<[DiffEntry], Error>
                 do {
                     try Task.checkCancellation()
-                    // TODO: RetagEngine writes synchronously today, so mid-write cancellation is best-effort only.
-                    let result = try retagEngine.retagPlatform(
+                    let result = try engine.retagPlatform(
                         inputURL: inputURL,
-                        outputURL: outputURL,
+                        outputURL: stagingURL,
                         platform: platform,
                         minimumOS: minimumOS,
                         sdk: sdk,
-                        architecture: selectedArchiveArchitecture()
+                        architecture: architecture
                     )
-                    try Task.checkCancellation()
-
-                    await MainActor.run {
-                        self.retagTask = nil
-                        self.setRunning(false)
-                        self.statusLabel.stringValue = L10n.retagCompletedStatus(path: result.outputURL.path)
-                        self.appendDiffSummary(result.diff.entries)
-                    }
-                } catch is CancellationError {
-                    await MainActor.run {
-                        self.retagTask = nil
-                        self.setRunning(false)
-                        self.statusLabel.stringValue = L10n.retagCancelledStatus
-                    }
+                    outcome = .success(result.diff.entries)
                 } catch {
-                    await MainActor.run {
-                        self.retagTask = nil
-                        self.setRunning(false)
-                        self.showErrorAlert(error)
+                    outcome = .failure(error)
+                }
+
+                await MainActor.run {
+                    guard let self else {
+                        try? FileManager.default.removeItem(at: stagingURL)
+                        return
                     }
+                    self.finishRetag(
+                        retagID: retagID,
+                        outcome: outcome,
+                        stagingURL: stagingURL,
+                        outputURL: outputURL
+                    )
                 }
             }
         } catch {
@@ -257,11 +280,73 @@ private final class RetagViewController: NSViewController {
         }
     }
 
+    private func finishRetag(retagID: UUID, outcome: Result<[DiffEntry], Error>, stagingURL: URL, outputURL: URL) {
+        guard activeRetagID == retagID else {
+            // Cancelled (or superseded) while the engine was running: discard the staged output.
+            try? FileManager.default.removeItem(at: stagingURL)
+            return
+        }
+
+        activeRetagID = nil
+        retagTask = nil
+        setRunning(false)
+
+        switch outcome {
+        case let .success(entries):
+            do {
+                try Self.moveStagedOutput(stagingURL, to: outputURL)
+                setStatus(.completed(outputURL))
+                lastDiffEntries = entries
+                refreshDetectedSummary()
+            } catch {
+                try? FileManager.default.removeItem(at: stagingURL)
+                showErrorAlert(error)
+            }
+        case let .failure(error):
+            try? FileManager.default.removeItem(at: stagingURL)
+            if error is CancellationError {
+                setStatus(.cancelled)
+            } else {
+                showErrorAlert(error)
+            }
+        }
+    }
+
+    private static func moveStagedOutput(_ stagingURL: URL, to outputURL: URL) throws {
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: outputURL.path) {
+            _ = try fileManager.replaceItemAt(outputURL, withItemAt: stagingURL)
+        } else {
+            try fileManager.moveItem(at: stagingURL, to: outputURL)
+        }
+    }
+
     @objc private func cancelRetag(_ sender: Any?) {
+        activeRetagID = nil
         retagTask?.cancel()
         retagTask = nil
         setRunning(false)
-        statusLabel.stringValue = L10n.retagCancelledStatus
+        setStatus(.cancelled)
+    }
+
+    private func setStatus(_ newStatus: RetagStatus) {
+        status = newStatus
+        renderStatus()
+    }
+
+    private func renderStatus() {
+        switch status {
+        case .idle:
+            statusLabel.stringValue = L10n.retagIdleStatus
+        case .running:
+            statusLabel.stringValue = L10n.retagRunningStatus
+        case let .completed(url):
+            statusLabel.stringValue = L10n.retagCompletedStatus(path: url.path)
+        case .cancelled:
+            statusLabel.stringValue = L10n.retagCancelledStatus
+        case let .failed(error):
+            statusLabel.stringValue = error.localizedDescription
+        }
     }
 
     private func buildUI() {
@@ -292,11 +377,11 @@ private final class RetagViewController: NSViewController {
         infoTextView.isSelectable = true
         infoTextView.drawsBackground = false
         infoTextView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        infoTextView.textColor = .textColor
 
-        let infoScrollView = NSScrollView()
         infoScrollView.drawsBackground = false
         infoScrollView.hasVerticalScroller = true
-        infoScrollView.documentView = infoTextView
+        infoScrollView.autohidesScrollers = true
 
         architecturePopUpButton.target = self
         architecturePopUpButton.action = #selector(archiveArchitectureChanged(_:))
@@ -422,12 +507,12 @@ private final class RetagViewController: NSViewController {
         clearOutputDirectoryButton.title = L10n.mergeSplitMergeClear
         startButton.title = L10n.retagStart
         cancelButton.title = L10n.retagCancel
-        refreshOutputFields()
-        if inputURL != nil {
-            refreshDetectedSummary()
-        } else if infoTextView.string.isEmpty {
-            infoTextView.string = L10n.retagNoInputInfo + "\n\n" + L10n.retagUnsupportedPlaceholder
+        if inputURL == nil {
+            inputPathLabel.stringValue = L10n.retagNoInputInfo
         }
+        refreshOutputFields()
+        refreshDetectedSummary()
+        renderStatus()
     }
 
     private func loadInput(_ url: URL) {
@@ -447,9 +532,7 @@ private final class RetagViewController: NSViewController {
             self.inputURL = url
             self.analysis = analysis
             archiveInspection = nil
-            if outputDirectoryURL == nil {
-                adoptOutputDirectoryURL(url.deletingLastPathComponent())
-            }
+            lastDiffEntries = []
 
             inputPathLabel.stringValue = url.path
             clearInputButton.isEnabled = true
@@ -466,7 +549,7 @@ private final class RetagViewController: NSViewController {
             minimumOSTextField.stringValue = firstSlice?.minimumOS?.description ?? "0.0.0"
             sdkTextField.stringValue = firstSlice?.sdkVersion?.description ?? firstSlice?.minimumOS?.description ?? "0.0.0"
             refreshDetectedSummary()
-            statusLabel.stringValue = L10n.retagIdleStatus
+            setStatus(.idle)
             refreshOutputFields()
             setRunning(false)
         } catch {
@@ -483,18 +566,19 @@ private final class RetagViewController: NSViewController {
         archiveInspection = nil
         targetPopUpButton.selectItem(at: 0)
         configureArchitectureSelection(using: nil)
+        lastDiffEntries = []
         inputPathLabel.stringValue = L10n.retagNoInputInfo
-        outputDirectoryField.stringValue = outputDirectoryURL?.path ?? L10n.retagNoInputInfo
+        outputDirectoryField.stringValue = outputDirectoryURL?.path ?? L10n.retagNoOutputDirectory
         outputNameField.stringValue = L10n.retagOutputDefaultName
         infoTextView.string = L10n.retagNoInputInfo + "\n\n" + L10n.retagUnsupportedPlaceholder
-        statusLabel.stringValue = L10n.retagIdleStatus
+        setStatus(.idle)
         clearInputButton.isEnabled = false
         clearOutputDirectoryButton.isEnabled = outputDirectoryURL != nil
         setRunning(false)
     }
 
     private func refreshOutputFields() {
-        outputDirectoryField.stringValue = outputDirectoryURL?.path ?? L10n.retagNoInputInfo
+        outputDirectoryField.stringValue = outputDirectoryURL?.path ?? L10n.retagNoOutputDirectory
         clearOutputDirectoryButton.isEnabled = outputDirectoryURL != nil
         if outputNameField.stringValue.isEmpty, let inputURL {
             outputNameField.stringValue = suggestedOutputName(for: inputURL)
@@ -507,6 +591,7 @@ private final class RetagViewController: NSViewController {
         chooseOutputDirectoryButton.isEnabled = !running
         clearOutputDirectoryButton.isEnabled = !running && outputDirectoryURL != nil
         startButton.isEnabled = !running && inputURL != nil && outputDirectoryURL != nil
+        architecturePopUpButton.isEnabled = !running
         cancelButton.isEnabled = running
         architecturePopUpButton.isEnabled = !running && (archiveInspection?.architectures.count ?? 0) > 1
         targetPopUpButton.isEnabled = !running
@@ -524,16 +609,14 @@ private final class RetagViewController: NSViewController {
         inputURL = url
         analysis = nil
         archiveInspection = inspection
-        if outputDirectoryURL == nil {
-            adoptOutputDirectoryURL(url.deletingLastPathComponent())
-        }
+        lastDiffEntries = []
 
         inputPathLabel.stringValue = url.path
         clearInputButton.isEnabled = true
         outputNameField.stringValue = suggestedOutputName(for: url)
         configureArchitectureSelection(using: inspection)
         refreshDetectedSummary()
-        statusLabel.stringValue = L10n.retagIdleStatus
+        setStatus(.idle)
         refreshOutputFields()
         setRunning(false)
     }
@@ -589,41 +672,44 @@ private final class RetagViewController: NSViewController {
             return
         }
 
+        var summary: String
         if let archiveInspection {
-            infoTextView.string = makeArchiveSummary(
+            summary = makeArchiveSummary(
                 url: inputURL,
                 inspection: archiveInspection,
                 selectedArchitecture: selectedArchiveArchitecture()
             )
-            return
+        } else if let analysis {
+            summary = makeAnalysisSummary(url: inputURL, analysis: analysis)
+        } else {
+            summary = L10n.retagNoInputInfo + "\n\n" + L10n.retagUnsupportedPlaceholder
         }
 
-        if let analysis {
-            infoTextView.string = makeAnalysisSummary(url: inputURL, analysis: analysis)
-            return
+        if let diffSummary = makeDiffSummary(lastDiffEntries) {
+            summary += "\n\n" + diffSummary
         }
-
-        infoTextView.string = L10n.retagNoInputInfo + "\n\n" + L10n.retagUnsupportedPlaceholder
+        infoTextView.string = summary
     }
 
     private func makeAnalysisSummary(url: URL, analysis: DocumentAnalysis) -> String {
+        let notAvailable = L10n.retagSummaryNotAvailable
         var lines = [
-            "File: \(url.path)",
-            "Container: \(analysis.containerKind)",
-            "Slices: \(analysis.slices.count)",
+            "\(L10n.retagSummaryFile): \(url.path)",
+            "\(L10n.retagSummaryContainer): \(analysis.containerKind)",
+            "\(L10n.retagSummarySlices): \(analysis.slices.count)",
         ]
 
         for (index, slice) in analysis.slices.enumerated() {
             let cpuDescription = cpuTypeDescription(slice.header.cpuType)
             let fileTypeDescription = fileTypeDescription(slice.header.fileType)
             lines.append("")
-            lines.append("Slice \(index) (\(cpuDescription))")
-            lines.append("  CPU: \(cpuDescription) (\(String(format: "0x%08X", UInt32(bitPattern: slice.header.cpuType))) / \(slice.header.cpuType))")
-            lines.append("  File Type: \(fileTypeDescription) (\(String(format: "0x%08X", slice.header.fileType)) / \(slice.header.fileType))")
-            lines.append("  Platform: \(slice.platform.map(platformName) ?? "n/a")")
-            lines.append("  Minimum OS: \(slice.minimumOS?.description ?? "n/a")")
-            lines.append("  SDK: \(slice.sdkVersion?.description ?? "n/a")")
-            lines.append("  Install Name: \(slice.installName ?? "(none)")")
+            lines.append("\(L10n.viewerSliceTitle(index)) (\(cpuDescription))")
+            lines.append("  \(L10n.retagSummaryCPU): \(cpuDescription) (\(String(format: "0x%08X", UInt32(bitPattern: slice.header.cpuType))) / \(slice.header.cpuType))")
+            lines.append("  \(L10n.retagSummaryFileType): \(fileTypeDescription) (\(String(format: "0x%08X", slice.header.fileType)) / \(slice.header.fileType))")
+            lines.append("  \(L10n.retagSummaryPlatform): \(slice.platform.map(platformName) ?? notAvailable)")
+            lines.append("  \(L10n.retagMinimumOSLabel): \(slice.minimumOS?.description ?? notAvailable)")
+            lines.append("  \(L10n.retagSDKLabel): \(slice.sdkVersion?.description ?? notAvailable)")
+            lines.append("  \(L10n.retagSummaryInstallName): \(slice.installName ?? L10n.retagSummaryNone)")
         }
 
         lines.append("")
@@ -636,35 +722,36 @@ private final class RetagViewController: NSViewController {
         inspection: ArchiveInspection,
         selectedArchitecture: String?
     ) -> String {
+        let containerName = inspection.kind == .fatArchive ? L10n.retagSummaryFatStaticArchive : L10n.retagSummaryStaticArchive
         var lines = [
-            "File: \(url.path)",
-            "Container: \(inspection.kind == .fatArchive ? "Fat Static Archive" : "Static Archive")",
-            "Architectures: \(inspection.architectures.joined(separator: ", "))",
+            "\(L10n.retagSummaryFile): \(url.path)",
+            "\(L10n.retagSummaryContainer): \(containerName)",
+            "\(L10n.retagSummaryArchitectures): \(inspection.architectures.joined(separator: ", "))",
         ]
 
         if let selectedArchitecture {
-            lines.append("Selected Architecture: \(selectedArchitecture)")
+            lines.append("\(L10n.retagSummarySelectedArchitecture): \(selectedArchitecture)")
         }
 
         lines.append("")
-        lines.append("Retag rewrites object members inside the selected static-archive architecture only.")
+        lines.append(L10n.retagSummaryArchiveNote)
         lines.append("")
         lines.append(L10n.retagUnsupportedPlaceholder)
         return lines.joined(separator: "\n")
     }
 
-    private func appendDiffSummary(_ entries: [DiffEntry]) {
-        guard !entries.isEmpty else { return }
+    private func makeDiffSummary(_ entries: [DiffEntry]) -> String? {
+        guard !entries.isEmpty else { return nil }
         let summary = entries.map { entry in
-            let before = entry.originalValue ?? "(none)"
-            let after = entry.updatedValue ?? "(none)"
+            let before = entry.originalValue ?? L10n.retagSummaryNone
+            let after = entry.updatedValue ?? L10n.retagSummaryNone
             return "[\(entry.sliceOffset)] \(String(describing: entry.kind)): \(before) -> \(after)"
         }.joined(separator: "\n")
-        infoTextView.string += "\n\nDiff\n\(summary)"
+        return "\(L10n.retagSummaryDiff)\n\(summary)"
     }
 
     private func showErrorAlert(_ error: Error) {
-        statusLabel.stringValue = error.localizedDescription
+        setStatus(.failed(error))
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = L10n.retagErrorTitle
@@ -677,19 +764,10 @@ private final class RetagViewController: NSViewController {
     }
 
     private func parseVersion(_ value: String) throws -> MachOVersion {
-        let components = value
-            .split(separator: ".")
-            .map(String.init)
-            .compactMap(Int.init)
-
-        switch components.count {
-        case 2:
-            return MachOVersion(major: components[0], minor: components[1], patch: 0)
-        case 3:
-            return MachOVersion(major: components[0], minor: components[1], patch: components[2])
-        default:
+        guard let version = RetagVersionParser.parse(value) else {
             throw RetagUIError.invalidVersion(value)
         }
+        return version
     }
 
     private func suggestedOutputName(for url: URL) -> String {
@@ -770,93 +848,53 @@ private final class RetagViewController: NSViewController {
     }
 }
 
+/// Strict parser for Mach-O packed versions: 1–3 dot-separated decimal components,
+/// major ≤ 65535 and minor/patch ≤ 255 (the `xxxx.yy.zz` nibble layout of LC_BUILD_VERSION).
+enum RetagVersionParser {
+    static func parse(_ value: String) -> MachOVersion? {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        let parts = trimmed.split(separator: ".", omittingEmptySubsequences: false)
+        guard (1...3).contains(parts.count) else {
+            return nil
+        }
+
+        var numbers: [Int] = []
+        for part in parts {
+            guard part.isEmpty == false,
+                  part.count <= 5,
+                  part.allSatisfy({ $0.isASCII && $0.isNumber }),
+                  let number = Int(part) else {
+                return nil
+            }
+            numbers.append(number)
+        }
+
+        let major = numbers[0]
+        let minor = numbers.count > 1 ? numbers[1] : 0
+        let patch = numbers.count > 2 ? numbers[2] : 0
+        guard major <= 0xFFFF, minor <= 0xFF, patch <= 0xFF else {
+            return nil
+        }
+        return MachOVersion(major: major, minor: minor, patch: patch)
+    }
+}
+
 private enum RetagUIError: LocalizedError {
     case outputDirectoryMissing
     case outputNameMissing
+    case invalidOutputName(String)
     case invalidVersion(String)
 
     var errorDescription: String? {
         switch self {
         case .outputDirectoryMissing:
-            return "Choose an output directory."
+            return L10n.retagErrorOutputDirectoryMissing
         case .outputNameMissing:
-            return "Enter an output file name."
+            return L10n.retagErrorOutputNameMissing
+        case let .invalidOutputName(value):
+            return L10n.retagErrorInvalidOutputName(value)
         case let .invalidVersion(value):
-            return "Invalid version: \(value)"
+            return L10n.retagErrorInvalidVersion(value)
         }
-    }
-}
-
-private final class RetagDropZoneView: AdaptiveBackgroundView {
-    let titleLabel = NSTextField(wrappingLabelWithString: "")
-    private let iconView = NSImageView()
-    var onFileURLDropped: ((URL) -> Void)?
-
-    override init(backgroundColor: NSColor = .controlBackgroundColor) {
-        super.init(backgroundColor: backgroundColor)
-        wantsLayer = true
-        layer?.cornerRadius = 12
-        layer?.borderWidth = 1.5
-        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.82).cgColor
-
-        iconView.image = NSImage(systemSymbolName: "square.and.arrow.down.on.square.dashed", accessibilityDescription: nil)
-        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .medium)
-        iconView.contentTintColor = .secondaryLabelColor
-
-        titleLabel.alignment = .center
-        titleLabel.maximumNumberOfLines = 0
-        titleLabel.textColor = .secondaryLabelColor
-        addSubview(iconView)
-        addSubview(titleLabel)
-        iconView.snp.makeConstraints { make in
-            make.centerX.equalToSuperview()
-            make.bottom.equalTo(titleLabel.snp.top).offset(-8)
-        }
-        titleLabel.snp.makeConstraints { make in
-            make.centerX.equalToSuperview()
-            make.centerY.equalToSuperview()
-            make.leading.greaterThanOrEqualToSuperview().inset(12)
-            make.trailing.lessThanOrEqualToSuperview().inset(12)
-        }
-
-        registerForDraggedTypes([.fileURL])
-        updateBorderAppearance()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        layer?.borderColor = NSColor.controlAccentColor.cgColor
-        return .copy
-    }
-
-    override func draggingExited(_ sender: NSDraggingInfo?) {
-        updateBorderAppearance()
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard
-            let items = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self]),
-            let url = items.first as? URL
-        else {
-            return false
-        }
-
-        updateBorderAppearance()
-        onFileURLDropped?(url)
-        return true
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        updateBorderAppearance()
-    }
-
-    private func updateBorderAppearance() {
-        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        layer?.borderColor = (isDark ? NSColor.separatorColor : NSColor.systemGray.withAlphaComponent(0.7)).cgColor
     }
 }

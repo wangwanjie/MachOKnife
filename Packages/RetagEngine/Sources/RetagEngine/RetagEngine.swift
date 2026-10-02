@@ -2,6 +2,23 @@ import CoreMachO
 import Foundation
 import MachO
 
+public enum RetagEngineError: LocalizedError, Equatable {
+    case architectureNotFound(String, available: [String])
+    case byteSwappedArchiveMember(String)
+    case malformedArchiveMember(String, reason: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .architectureNotFound(architecture, available):
+            return "The file does not contain the architecture \(architecture). Available architectures: \(available.joined(separator: ", "))."
+        case let .byteSwappedArchiveMember(member):
+            return "Archive member \(member) is a byte-swapped (big-endian) Mach-O object, which cannot be retagged."
+        case let .malformedArchiveMember(member, reason):
+            return "Archive member \(member) is malformed: \(reason)"
+        }
+    }
+}
+
 public struct RetagEngine: Sendable {
     private let writer = MachOWriter()
     private let archiveInspector = ArchiveInspector()
@@ -15,20 +32,19 @@ public struct RetagEngine: Sendable {
         sdk: MachOVersion,
         architecture: String? = nil
     ) throws -> RetagPreview {
-        let plan = MachOEditPlan(
-            platformEdit: PlatformEdit(platform: platform, minimumOS: minimumOS, sdk: sdk)
-        )
+        let platformEdit = try validatedPlatformEdit(platform: platform, minimumOS: minimumOS, sdk: sdk)
         if try archiveInspector.inspect(url: inputURL) != nil {
-            let temporaryOutputURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("MachOKnifeRetagPreview-\(UUID().uuidString).a")
+            let temporaryDirectory = try makeTemporaryDirectory(prefix: "MachOKnifeRetagPreview")
+            defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
             let result = try retagArchive(
                 inputURL: inputURL,
-                outputURL: temporaryOutputURL,
-                plan: plan,
+                outputURL: temporaryDirectory.appendingPathComponent("preview.a"),
+                platformEdit: platformEdit,
                 architecture: architecture
             )
             return RetagPreview(diff: result.diff)
         }
+        let plan = try machOPlan(inputURL: inputURL, platformEdit: platformEdit, architecture: architecture)
         return try RetagPreview(diff: writer.preview(inputURL: inputURL, editPlan: plan))
     }
 
@@ -40,19 +56,41 @@ public struct RetagEngine: Sendable {
         sdk: MachOVersion,
         architecture: String? = nil
     ) throws -> RetagResult {
-        let plan = MachOEditPlan(
-            platformEdit: PlatformEdit(platform: platform, minimumOS: minimumOS, sdk: sdk)
-        )
+        let platformEdit = try validatedPlatformEdit(platform: platform, minimumOS: minimumOS, sdk: sdk)
         if try archiveInspector.inspect(url: inputURL) != nil {
             return try retagArchive(
                 inputURL: inputURL,
                 outputURL: outputURL,
-                plan: plan,
+                platformEdit: platformEdit,
                 architecture: architecture
             )
         }
+        let plan = try machOPlan(inputURL: inputURL, platformEdit: platformEdit, architecture: architecture)
         let result = try writer.write(inputURL: inputURL, outputURL: outputURL, editPlan: plan)
         return RetagResult(outputURL: result.outputURL, diff: result.diff)
+    }
+
+    private func validatedPlatformEdit(platform: MachOPlatform, minimumOS: MachOVersion, sdk: MachOVersion) throws -> PlatformEdit {
+        // Reject versions that cannot be encoded before any output is written.
+        _ = try minimumOS.packedValue()
+        _ = try sdk.packedValue()
+        return PlatformEdit(platform: platform, minimumOS: minimumOS, sdk: sdk)
+    }
+
+    /// Builds the Mach-O edit plan, restricting it to the requested architecture's slice.
+    private func machOPlan(inputURL: URL, platformEdit: PlatformEdit, architecture: String?) throws -> MachOEditPlan {
+        guard let architecture else {
+            return MachOEditPlan(platformEdit: platformEdit)
+        }
+
+        let container = try MachOContainer.parse(at: inputURL)
+        let names = container.slices.map {
+            MachOArchitectureNaming.name(cpuType: $0.header.cpuType, cpuSubtype: $0.header.cpuSubtype)
+        }
+        guard let index = names.firstIndex(of: architecture) else {
+            throw RetagEngineError.architectureNotFound(architecture, available: names)
+        }
+        return MachOEditPlan(targetSliceOffset: container.slices[index].offset, platformEdit: platformEdit)
     }
 
     public func rewriteDylibPaths(
@@ -126,64 +164,85 @@ public struct RetagEngine: Sendable {
     private func retagArchive(
         inputURL: URL,
         outputURL: URL,
-        plan: MachOEditPlan,
+        platformEdit: PlatformEdit,
         architecture: String?
     ) throws -> RetagResult {
-        guard let platformEdit = plan.platformEdit else {
-            throw ArchiveInspectorError.unsupportedArchive(inputURL)
-        }
+        let inspection = try archiveInspector.inspect(url: inputURL)
+        let inputPermissions = MachOFileAttributes.posixPermissions(of: inputURL)
 
         let extraction = try archiveInspector.extractThinArchive(
             url: inputURL,
             preferredArchitecture: architecture
         )
-        let members = try archiveInspector.listMembers(in: extraction.archiveURL)
-            .filter { !$0.hasPrefix("__.SYMDEF") }
+        defer { try? FileManager.default.removeItem(at: extraction.archiveURL.deletingLastPathComponent()) }
 
-        let workingDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MachOKnifeArchiveRetag-\(UUID().uuidString)", isDirectory: true)
+        let workingDirectory = try makeTemporaryDirectory(prefix: "MachOKnifeArchiveRetag")
+        defer { try? FileManager.default.removeItem(at: workingDirectory) }
         let extractedDirectory = workingDirectory.appendingPathComponent("members", isDirectory: true)
         let patchedDirectory = workingDirectory.appendingPathComponent("patched", isDirectory: true)
-        try FileManager.default.createDirectory(at: extractedDirectory, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: patchedDirectory, withIntermediateDirectories: true)
-        try archiveInspector.extractMembers(from: extraction.archiveURL, to: extractedDirectory)
+
+        // Indexed extraction keeps members with duplicate names (common in static archives).
+        let members = try archiveInspector.extractIndexedMembers(from: extraction.archiveURL, to: extractedDirectory)
+            .filter { $0.isSymbolTable == false }
 
         var diffEntries = [DiffEntry]()
+        var patchedMembers = [ArchiveMemberSource]()
         for member in members {
-            let sourceMemberURL = extractedDirectory.appendingPathComponent(member)
-            let patchedMemberURL = patchedDirectory.appendingPathComponent(member)
+            let patchedMemberURL = patchedDirectory.appendingPathComponent(member.fileURL.lastPathComponent)
             let wasPatched = try patchArchiveMemberIfNeeded(
-                sourceURL: sourceMemberURL,
+                memberName: member.name,
+                sourceURL: member.fileURL,
                 destinationURL: patchedMemberURL,
                 platformEdit: platformEdit
             )
+            patchedMembers.append(ArchiveMemberSource(name: member.name, fileURL: patchedMemberURL))
             if wasPatched {
                 diffEntries.append(
                     DiffEntry(
                         sliceOffset: 0,
                         kind: .platform,
-                        originalValue: member,
-                        updatedValue: "\(member) -> \(platformEdit.platform) \(platformEdit.minimumOS) \(platformEdit.sdk)"
+                        originalValue: member.name,
+                        updatedValue: "\(member.name) -> \(platformEdit.platform) \(platformEdit.minimumOS) \(platformEdit.sdk)"
                     )
                 )
             }
         }
 
-        try rebuildArchive(
-            outputURL: outputURL,
-            members: members,
-            patchedDirectory: patchedDirectory
-        )
+        if inspection?.kind == .fatArchive {
+            // Retag only the selected slice and keep every other architecture in the output.
+            let thinOutputURL = workingDirectory.appendingPathComponent("retagged-\(extraction.architecture).a")
+            try archiveInspector.writeArchive(outputURL: thinOutputURL, members: patchedMembers)
+            try archiveInspector.rebuildFatArchive(
+                from: inputURL,
+                replacingArchitecture: extraction.architecture,
+                withThinArchiveAt: thinOutputURL,
+                outputURL: outputURL
+            )
+        } else {
+            try archiveInspector.writeArchive(outputURL: outputURL, members: patchedMembers)
+        }
+        try MachOFileAttributes.setPosixPermissions(inputPermissions, on: outputURL)
+
         return RetagResult(outputURL: outputURL, diff: MachODiff(entries: diffEntries))
     }
 
+    private func makeTemporaryDirectory(prefix: String) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
     private func patchArchiveMemberIfNeeded(
+        memberName: String,
         sourceURL: URL,
         destinationURL: URL,
         platformEdit: PlatformEdit
     ) throws -> Bool {
         let data = try Data(contentsOf: sourceURL, options: [.mappedIfSafe])
         guard let patchedData = try patchedArchiveObjectData(
+            memberName: memberName,
             data: data,
             targetPlatformRawValue: rawValue(for: platformEdit.platform),
             minimumOS: platformEdit.minimumOS,
@@ -197,31 +256,59 @@ public struct RetagEngine: Sendable {
         return true
     }
 
-    private func patchedArchiveObjectData(
+    /// Rewrites the platform of a thin, little-endian Mach-O object (32- or 64-bit).
+    /// Returns nil for members that are not Mach-O objects or have no version command, so
+    /// they are copied unchanged.
+    func patchedArchiveObjectData(
+        memberName: String,
         data: Data,
         targetPlatformRawValue: UInt32,
         minimumOS: MachOVersion,
         sdk: MachOVersion
     ) throws -> Data? {
-        guard data.count >= 32 else { return nil }
+        let data = Data(data)
+        guard data.count >= 4 else { return nil }
         let magic = data.readUInt32(at: 0)
-        let fileType = data.readUInt32(at: 12)
-        guard magic == MH_MAGIC_64, fileType == UInt32(MH_OBJECT) else {
+        if magic == MH_CIGAM || magic == MH_CIGAM_64 {
+            throw RetagEngineError.byteSwappedArchiveMember(memberName)
+        }
+        guard magic == MH_MAGIC_64 || magic == MH_MAGIC else {
             return nil
+        }
+
+        let is64Bit = magic == MH_MAGIC_64
+        let headerSize = is64Bit ? 32 : 28
+        guard data.count >= headerSize else {
+            throw RetagEngineError.malformedArchiveMember(memberName, reason: "the Mach-O header is truncated.")
+        }
+        guard data.readUInt32(at: 12) == UInt32(MH_OBJECT) else {
+            return nil
+        }
+
+        func malformed(_ reason: String) -> RetagEngineError {
+            .malformedArchiveMember(memberName, reason: reason)
         }
 
         let commandCount = Int(data.readUInt32(at: 16))
         let sizeofCommands = Int(data.readUInt32(at: 20))
-        var commandOffset = 32
+        guard sizeofCommands <= data.count - headerSize else {
+            throw malformed("sizeofcmds exceeds the file size.")
+        }
+
+        var commandOffset = headerSize
         var versionCommandOffset: Int?
         var versionCommandSize = 0
         var versionCommandKind: UInt32 = 0
 
         for _ in 0..<commandCount {
-            guard commandOffset + 8 <= data.count else { break }
+            guard commandOffset + 8 <= headerSize + sizeofCommands else {
+                throw malformed("a load command extends past sizeofcmds.")
+            }
             let command = data.readUInt32(at: commandOffset)
             let commandSize = Int(data.readUInt32(at: commandOffset + 4))
-            guard commandSize > 0, commandOffset + commandSize <= data.count else { break }
+            guard commandSize >= 8, commandOffset + commandSize <= headerSize + sizeofCommands else {
+                throw malformed("load command 0x\(String(command, radix: 16)) has an invalid size.")
+            }
 
             if supportedVersionCommands.contains(command) || command == UInt32(LC_BUILD_VERSION) {
                 versionCommandOffset = commandOffset
@@ -236,10 +323,13 @@ public struct RetagEngine: Sendable {
             return nil
         }
 
-        let encodedMinimumOS = packedVersion(minimumOS)
-        let encodedSDK = packedVersion(sdk)
+        let encodedMinimumOS = try minimumOS.packedValue()
+        let encodedSDK = try sdk.packedValue()
 
         if versionCommandKind == UInt32(LC_BUILD_VERSION) {
+            guard versionCommandSize >= 24 else {
+                throw malformed("LC_BUILD_VERSION is truncated.")
+            }
             var patched = data
             patched.writeUInt32(targetPlatformRawValue, at: versionCommandOffset + 8)
             patched.writeUInt32(encodedMinimumOS, at: versionCommandOffset + 12)
@@ -260,45 +350,67 @@ public struct RetagEngine: Sendable {
         patched.append(data.subdata(in: (versionCommandOffset + versionCommandSize)..<data.count))
         patched.writeUInt32(UInt32(sizeofCommands + delta), at: 20)
 
-        commandOffset = 32
+        // Everything after the load commands moved by `delta`; fix up file offsets.
+        let segmentCommand = UInt32(is64Bit ? LC_SEGMENT_64 : LC_SEGMENT)
+        let segmentFileOffsetField = is64Bit ? 40 : 32
+        let sectionCountField = is64Bit ? 64 : 48
+        let firstSectionOffset = is64Bit ? 72 : 56
+        let sectionSize = is64Bit ? 80 : 68
+        let sectionOffsetField = is64Bit ? 48 : 40
+        let sectionRelocationOffsetField = is64Bit ? 56 : 48
+        let commandsEnd = headerSize + sizeofCommands + delta
+
+        commandOffset = headerSize
         for _ in 0..<commandCount {
+            guard commandOffset + 8 <= commandsEnd else {
+                throw malformed("a load command extends past sizeofcmds.")
+            }
             let command = patched.readUInt32(at: commandOffset)
             let commandSize = Int(patched.readUInt32(at: commandOffset + 4))
-            if command == UInt32(LC_SEGMENT_64) {
-                patched.addToUInt64IfNonZero(delta, at: commandOffset + 40)
-                let sectionCount = Int(patched.readUInt32(at: commandOffset + 64))
-                var sectionOffset = commandOffset + 72
+            guard commandSize >= 8, commandOffset + commandSize <= commandsEnd else {
+                throw malformed("load command 0x\(String(command, radix: 16)) has an invalid size.")
+            }
+
+            func requireFields(through end: Int) throws {
+                guard end <= commandSize else {
+                    throw malformed("load command 0x\(String(command, radix: 16)) is truncated.")
+                }
+            }
+
+            if command == segmentCommand {
+                try requireFields(through: firstSectionOffset)
+                if is64Bit {
+                    try patched.addToUInt64IfNonZero(delta, at: commandOffset + segmentFileOffsetField)
+                } else {
+                    try patched.addToUInt32IfNonZero(delta, at: commandOffset + segmentFileOffsetField)
+                }
+                let sectionCount = Int(patched.readUInt32(at: commandOffset + sectionCountField))
+                guard sectionCount <= (commandSize - firstSectionOffset) / sectionSize else {
+                    throw malformed("segment section count exceeds its load command.")
+                }
+                var sectionOffset = commandOffset + firstSectionOffset
                 for _ in 0..<sectionCount {
-                    patched.addToUInt32IfNonZero(delta, at: sectionOffset + 48)
-                    patched.addToUInt32IfNonZero(delta, at: sectionOffset + 56)
-                    sectionOffset += 80
+                    try patched.addToUInt32IfNonZero(delta, at: sectionOffset + sectionOffsetField)
+                    try patched.addToUInt32IfNonZero(delta, at: sectionOffset + sectionRelocationOffsetField)
+                    sectionOffset += sectionSize
                 }
             } else if command == UInt32(LC_SYMTAB) {
-                patched.addToUInt32IfNonZero(delta, at: commandOffset + 8)
-                patched.addToUInt32IfNonZero(delta, at: commandOffset + 16)
+                try requireFields(through: 24)
+                try patched.addToUInt32IfNonZero(delta, at: commandOffset + 8)
+                try patched.addToUInt32IfNonZero(delta, at: commandOffset + 16)
             } else if command == UInt32(LC_DYSYMTAB) {
-                [32, 40, 48, 56, 64, 72].forEach {
-                    patched.addToUInt32IfNonZero(delta, at: commandOffset + $0)
+                try requireFields(through: 80)
+                for field in [32, 40, 48, 56, 64, 72] {
+                    try patched.addToUInt32IfNonZero(delta, at: commandOffset + field)
                 }
             } else if linkeditDataCommands.contains(command) {
-                patched.addToUInt32IfNonZero(delta, at: commandOffset + 8)
+                try requireFields(through: 16)
+                try patched.addToUInt32IfNonZero(delta, at: commandOffset + 8)
             }
             commandOffset += commandSize
         }
 
         return patched
-    }
-
-    private func rebuildArchive(
-        outputURL: URL,
-        members: [String],
-        patchedDirectory: URL
-    ) throws {
-        try archiveInspector.writeArchive(
-            outputURL: outputURL,
-            memberNames: members,
-            sourceDirectoryURL: patchedDirectory
-        )
     }
 
     private func rawValue(for platform: MachOPlatform) -> UInt32 {
@@ -334,10 +446,6 @@ public struct RetagEngine: Sendable {
         case let .unknown(value):
             return value
         }
-    }
-
-    private func packedVersion(_ version: MachOVersion) -> UInt32 {
-        UInt32(version.major << 16) | UInt32(version.minor << 8) | UInt32(version.patch)
     }
 
     private func buildVersionCommandData(
@@ -410,15 +518,21 @@ private extension Data {
         }
     }
 
-    mutating func addToUInt32IfNonZero(_ delta: Int, at offset: Int) {
+    mutating func addToUInt32IfNonZero(_ delta: Int, at offset: Int) throws {
         let current = readUInt32(at: offset)
         guard current != 0 else { return }
-        writeUInt32(UInt32(Int(current) + delta), at: offset)
+        guard let updated = UInt32(exactly: Int(current) + delta) else {
+            throw RetagEngineError.malformedArchiveMember("object", reason: "a file offset overflows after inserting LC_BUILD_VERSION.")
+        }
+        writeUInt32(updated, at: offset)
     }
 
-    mutating func addToUInt64IfNonZero(_ delta: Int, at offset: Int) {
+    mutating func addToUInt64IfNonZero(_ delta: Int, at offset: Int) throws {
         let current = readUInt64(at: offset)
         guard current != 0 else { return }
-        writeUInt64(UInt64(Int(current) + delta), at: offset)
+        guard let base = Int(exactly: current), let updated = UInt64(exactly: base + delta) else {
+            throw RetagEngineError.malformedArchiveMember("object", reason: "a file offset overflows after inserting LC_BUILD_VERSION.")
+        }
+        writeUInt64(updated, at: offset)
     }
 }

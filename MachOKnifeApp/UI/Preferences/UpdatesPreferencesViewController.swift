@@ -17,10 +17,28 @@ final class UpdatesPreferencesViewController: NSViewController {
     private let automaticDownloadsHintLabel = NSTextField(wrappingLabelWithString: "")
     private let checkForUpdatesButton = NSButton(title: "", target: nil, action: nil)
     private let contentStack = NSStackView()
+    private var updateStatusObserver: NSObjectProtocol?
 
     init(updateManager: UpdateManager) {
         self.viewModel = UpdatesPreferencesViewModel(updateManager: updateManager)
         super.init(nibName: nil, bundle: nil)
+        // Sparkle disables "Check Now" while a check is running; follow those changes live.
+        updateStatusObserver = NotificationCenter.default.addObserver(
+            forName: UpdateManager.statusDidChangeNotification,
+            object: updateManager,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isViewLoaded else { return }
+                self.refreshState()
+            }
+        }
+    }
+
+    deinit {
+        if let updateStatusObserver {
+            NotificationCenter.default.removeObserver(updateStatusObserver)
+        }
     }
 
     @available(*, unavailable)
@@ -75,7 +93,9 @@ final class UpdatesPreferencesViewController: NSViewController {
         automaticDownloadsButton.title = L10n.preferencesUpdatesAutomaticDownloadsLabel
         automaticDownloadsHintLabel.stringValue = L10n.preferencesUpdatesAutomaticDownloadsHint
         checkForUpdatesButton.title = L10n.preferencesUpdatesCheckNow
-        applyState()
+        // The status and detail texts are produced by the view model, so rebuild its state in
+        // the new language instead of re-applying the previously localized strings.
+        refreshState()
     }
 
     private func buildUI() {

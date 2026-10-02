@@ -6,9 +6,10 @@ struct SplitCommand {
     static let usage = "machoe-cli split <path> --output-dir <path> [--arch <architecture>] [--arch <architecture> ...]"
 
     static func run(arguments: [String]) throws -> String {
-        let inputURL = try CLICommandSupport.requiredPath(arguments, usage: usage)
-        let outputDirectory = URL(filePath: try CLICommandSupport.requiredOption("--output-dir", in: arguments, usage: usage))
-        let architectures = CLICommandSupport.repeatedOptions("--arch", in: arguments)
+        let parsed = try CLICommandSupport.parse(arguments, valueOptions: ["--output-dir", "--arch"], usage: usage)
+        let inputURL = try CLICommandSupport.requiredPath(parsed, usage: usage)
+        let outputDirectory = URL(filePath: try parsed.requiredValue("--output-dir", usage: usage))
+        let architectures = parsed.values("--arch")
 
         let outputs = try MachOMergeSplitService().split(
             inputURL: inputURL,

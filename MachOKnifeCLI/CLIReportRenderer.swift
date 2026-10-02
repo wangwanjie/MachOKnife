@@ -102,10 +102,20 @@ enum CLIReportRenderer {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    static func renderValidation(_ analysis: DocumentAnalysis) -> String {
+    static func renderValidation(_ analysis: DocumentAnalysis, report: CLIValidationReport) -> String {
         var lines = [String]()
-        lines.append("Validation: OK")
+        if report.errors.isEmpty {
+            lines.append(report.warnings.isEmpty ? "Validation: OK" : "Validation: OK (\(report.warnings.count) warning(s))")
+        } else {
+            lines.append("Validation: FAILED (\(report.errors.count) error(s), \(report.warnings.count) warning(s))")
+        }
         lines.append("File: \(analysis.fileURL.path)")
+        for error in report.errors {
+            lines.append("Error: \(error)")
+        }
+        for warning in report.warnings {
+            lines.append("Warning: \(warning)")
+        }
 
         for (index, slice) in analysis.slices.enumerated() {
             lines.append("Slice \(index):")

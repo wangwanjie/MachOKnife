@@ -6,11 +6,8 @@ struct SummaryCommand {
     static let usage = "machoe-cli summary <path>"
 
     static func run(arguments: [String]) throws -> String {
-        guard arguments.count == 1 else {
-            throw CLIError.invalidUsage(usage)
-        }
-
-        let inputURL = try CLICommandSupport.requiredPath(arguments, usage: usage)
+        let parsed = try CLICommandSupport.parse(arguments, valueOptions: [], usage: usage)
+        let inputURL = try CLICommandSupport.requiredPath(parsed, usage: usage)
         let report = try BinarySummaryService().makeReport(for: inputURL)
         return report.renderedText + "\n"
     }

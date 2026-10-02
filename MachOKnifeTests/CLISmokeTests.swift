@@ -7,13 +7,78 @@ struct CLISmokeTests {
     func helpPrintsVersionAuthorAndCommandDescriptions() throws {
         let output = try runCLI(arguments: ["--help"])
 
-        #expect(output.contains("machoe-cli v1.3.0"))
+        #expect(output.contains("machoe-cli v\(try projectMarketingVersion())"))
         #expect(output.contains("VanJay"))
         #expect(output.contains("vanjay.dev@gmail.com"))
         #expect(output.contains("summary"))
         #expect(output.contains("Print a concise Mach-O or archive overview."))
         #expect(output.contains("build-xcframework"))
         #expect(output.contains("Package static libraries and headers into an XCFramework."))
+    }
+
+    @Test("running without arguments prints help and exits with EX_USAGE")
+    func noArgumentsPrintsHelpAndExitsWithUsageStatus() throws {
+        let output = try runCLI(arguments: [], expectedStatus: 64)
+
+        #expect(output.contains("Usage:"))
+        #expect(output.contains("Commands:"))
+    }
+
+    @Test("--version prints the project marketing version")
+    func versionPrintsProjectMarketingVersion() throws {
+        let output = try runCLI(arguments: ["--version"])
+
+        #expect(output.trimmingCharacters(in: .whitespacesAndNewlines) == "machoe-cli v\(try projectMarketingVersion())")
+    }
+
+    @Test("<command> --help prints that command's help")
+    func commandHelpPrintsCommandUsage() throws {
+        let output = try runCLI(arguments: ["retag-platform", "--help"])
+
+        #expect(output.contains("retag-platform: Rewrite platform, minimum OS, and SDK metadata for a binary."))
+        #expect(output.contains("machoe-cli retag-platform <path>"))
+        #expect(output.contains("build-xcframework") == false)
+    }
+
+    @Test("unknown options are rejected with a usage error")
+    func unknownOptionsAreRejected() throws {
+        let fixtureURL = try cliEditableFixtureURL()
+        let output = try runCLI(arguments: ["info", fixtureURL.path, "--bogus"], expectedStatus: 64)
+
+        #expect(output.contains("unknown option '--bogus'"))
+        #expect(output.contains("machoe-cli info <path>"))
+    }
+
+    @Test("an option token is never used as the input path")
+    func optionTokensAreNotTreatedAsInputPath() throws {
+        let outputURL = try makeTemporaryDirectory().appendingPathComponent("stripped.dylib")
+        let fixtureURL = try cliEditableFixtureURL()
+
+        let output = try runCLI(arguments: [
+            "strip-signature",
+            "--output", outputURL.path,
+            fixtureURL.path,
+        ])
+
+        #expect(output.contains("Wrote: \(outputURL.path)"))
+    }
+
+    @Test("build-xcframework refuses an output that is not an .xcframework bundle")
+    func buildXCFrameworkRefusesNonXCFrameworkOutput() throws {
+        let fixture = try makeXCFrameworkFixture()
+        let precious = fixture.directory.appendingPathComponent("precious", isDirectory: true)
+        try FileManager.default.createDirectory(at: precious, withIntermediateDirectories: true)
+        try "keep".write(to: precious.appendingPathComponent("file.txt"), atomically: true, encoding: .utf8)
+
+        let output = try runCLI(arguments: [
+            "build-xcframework",
+            "--library", fixture.deviceLibraryURL.path,
+            "--headers", fixture.headersDirectoryURL.path,
+            "--output", precious.path,
+        ], expectedStatus: 64)
+
+        #expect(output.contains(".xcframework"))
+        #expect(FileManager.default.fileExists(atPath: precious.appendingPathComponent("file.txt").path))
     }
 
     @Test("info prints slice summaries")
@@ -42,8 +107,8 @@ struct CLISmokeTests {
 
         let output = try runCLI(arguments: ["info", fixture.archiveURL.path])
 
-        #expect(output.contains("Kind: Fat Archive"))
-        #expect(output.contains("Architectures: arm64, x86_64"))
+        #expect(output.contains("Container: fat archive"))
+        #expect(architectureList(in: output) == ["arm64", "x86_64"])
     }
 
     @Test("list-dylibs handles fat archive inputs without parse errors")
@@ -64,7 +129,7 @@ struct CLISmokeTests {
         let output = try runCLI(arguments: ["summary", fixture.archiveURL.path])
 
         #expect(output.contains("Kind: Fat Archive"))
-        #expect(output.contains("Architectures: arm64, x86_64"))
+        #expect(architectureList(in: output) == ["arm64", "x86_64"])
         #expect(output.contains("Members:"))
         #expect(output.contains("Sample Object:"))
     }
@@ -78,12 +143,43 @@ struct CLISmokeTests {
             fixture.archiveURL.path,
             "--mode", "architecture",
             "--target", "arm64",
-        ])
+        ], expectedStatus: 1)
 
         #expect(output.contains("Mode: architecture"))
         #expect(output.contains("Target: arm64"))
         #expect(output.contains("Mismatches"))
         #expect(output.contains("x86_64"))
+    }
+
+    @Test("check-contamination exits successfully when every slice matches")
+    func checkContaminationExitsSuccessfullyWithoutMismatches() throws {
+        let fixture = try makeFatArchiveFixture()
+
+        let output = try runCLI(arguments: [
+            "check-contamination",
+            fixture.arm64ArchiveURL.path,
+            "--mode", "architecture",
+            "--target", "arm64",
+        ])
+
+        #expect(output.contains("Target: arm64"))
+    }
+
+    @Test("merge accepts inputs placed after --output")
+    func mergeAcceptsInputsAfterOutputOption() throws {
+        let fixture = try makeFatArchiveFixture()
+        let mergedArchiveURL = try makeTemporaryDirectory().appendingPathComponent("Merged.a")
+
+        let mergeOutput = try runCLI(arguments: [
+            "merge",
+            fixture.arm64ArchiveURL.path,
+            "--output", mergedArchiveURL.path,
+            fixture.x86ArchiveURL.path,
+        ])
+        let infoOutput = try runCLI(arguments: ["info", mergedArchiveURL.path])
+
+        #expect(mergeOutput.contains("Merged output: \(mergedArchiveURL.path)"))
+        #expect(architectureList(in: infoOutput) == ["arm64", "x86_64"])
     }
 
     @Test("merge and split roundtrip archive slices")
@@ -222,6 +318,7 @@ struct CLISmokeTests {
         let validateOutput = try runCLI(arguments: ["validate", unsignedOutputURL.path])
 
         #expect(infoOutput.contains("Install Name: @rpath/libCLISetID.dylib"))
+        #expect(validateOutput.contains("Validation: OK"))
         #expect(validateOutput.contains("Code Signature: absent"))
     }
 
@@ -244,7 +341,7 @@ struct CLISmokeTests {
         #expect(dylibOutput.contains("RPATH @loader_path"))
     }
 
-    private func runCLI(arguments: [String]) throws -> String {
+    private func runCLI(arguments: [String], expectedStatus: Int32 = 0) throws -> String {
         let cliURL = try cliProductURL()
         #expect(FileManager.default.isExecutableFile(atPath: cliURL.path), "machoe-cli executable should exist at \(cliURL.path)")
 
@@ -257,13 +354,31 @@ struct CLISmokeTests {
         process.standardError = outputPipe
 
         try process.run()
+        // Read before waiting so large outputs cannot fill the pipe and deadlock the child.
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: outputData, encoding: .utf8) ?? ""
 
-        #expect(process.terminationStatus == 0, "CLI exited with status \(process.terminationStatus): \(output)")
+        #expect(
+            process.terminationStatus == expectedStatus,
+            "CLI exited with status \(process.terminationStatus) (expected \(expectedStatus)): \(output)"
+        )
         return output
+    }
+
+    private func projectMarketingVersion() throws -> String {
+        let projectURL = repoRoot()
+            .appendingPathComponent("MachOKnife.xcodeproj")
+            .appendingPathComponent("project.pbxproj")
+        let contents = try String(contentsOf: projectURL, encoding: .utf8)
+        guard let range = contents.range(of: #"MARKETING_VERSION = ([^;]+);"#, options: .regularExpression) else {
+            throw CLITestError.fixtureNotFound("MARKETING_VERSION in \(projectURL.path)")
+        }
+        return contents[range]
+            .replacingOccurrences(of: "MARKETING_VERSION = ", with: "")
+            .replacingOccurrences(of: ";", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\" "))
     }
 
     private func cliProductURL() throws -> URL {
@@ -524,4 +639,15 @@ private func makeTemporaryDirectory() throws -> URL {
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     return directory
+}
+
+/// Fat slices are listed in file order (as lipo wrote them), so compare architectures as a set.
+private func architectureList(in output: String) -> [String] {
+    guard let line = output.split(separator: "\n").first(where: { $0.hasPrefix("Architectures: ") }) else {
+        return []
+    }
+    return line.dropFirst("Architectures: ".count)
+        .split(separator: ",")
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .sorted()
 }

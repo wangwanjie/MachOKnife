@@ -63,7 +63,8 @@ final class MachOMergeSplitWindowController: NSWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            // Delivered on the main queue, so refresh synchronously instead of hopping through a Task.
+            MainActor.assumeIsolated {
                 self?.reloadLocalization()
             }
         }
@@ -117,6 +118,8 @@ private final class MergeMachOViewController: NSViewController, NSTableViewDataS
 
     private var inputURLs: [URL] = []
     private var outputURL: URL?
+    private var status: MergeSplitStatus = .idle
+    private var activeOperationID: UUID?
 
     override func loadView() {
         view = AdaptiveBackgroundView(backgroundColor: .windowBackgroundColor)
@@ -139,9 +142,16 @@ private final class MergeMachOViewController: NSViewController, NSTableViewDataS
         chooseOutputButton.title = L10n.mergeSplitMergeChooseOutput
         startButton.title = L10n.mergeSplitMergeStart
         outputField.stringValue = outputURL?.path ?? L10n.xcframeworkNoSelection
-        if statusLabel.stringValue.isEmpty {
-            statusLabel.stringValue = L10n.mergeSplitMergeIdleStatus
-        }
+        renderStatus()
+    }
+
+    private func setStatus(_ newStatus: MergeSplitStatus) {
+        status = newStatus
+        renderStatus()
+    }
+
+    private func renderStatus() {
+        statusLabel.stringValue = status.text(idle: L10n.mergeSplitMergeIdleStatus)
     }
 
     @objc private func addFiles(_ sender: Any?) {
@@ -162,12 +172,12 @@ private final class MergeMachOViewController: NSViewController, NSTableViewDataS
         for row in selectedRows where inputURLs.indices.contains(row) {
             inputURLs.remove(at: row)
         }
-        refreshState()
+        inputsDidChange()
     }
 
     @objc private func clearInputs(_ sender: Any?) {
         inputURLs.removeAll()
-        refreshState()
+        inputsDidChange()
     }
 
     @objc private func chooseOutput(_ sender: Any?) {
@@ -177,19 +187,48 @@ private final class MergeMachOViewController: NSViewController, NSTableViewDataS
         panel.beginSheetModal(for: view.window ?? NSApp.mainWindow ?? NSWindow()) { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
             self?.outputURL = url
-            self?.refreshState()
+            self?.inputsDidChange()
         }
     }
 
     @objc private func startMerge(_ sender: Any?) {
-        guard let outputURL else { return }
-        do {
-            try service.merge(inputURLs: inputURLs, outputURL: outputURL)
-            statusLabel.stringValue = "\(L10n.mergeSplitCompletedStatus) \(outputURL.path)"
-        } catch {
-            statusLabel.stringValue = error.localizedDescription
+        guard let outputURL, activeOperationID == nil else { return }
+        let inputURLs = inputURLs
+        let operationID = UUID()
+        activeOperationID = operationID
+        setStatus(.running)
+        refreshState()
+
+        // Merging copies whole binaries, so it runs off the main thread.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result = Result<Void, Error> {
+                try MachOMergeSplitService().merge(inputURLs: inputURLs, outputURL: outputURL)
+            }
+            await MainActor.run {
+                self?.finishMerge(result, operationID: operationID, outputURL: outputURL)
+            }
+        }
+    }
+
+    private func finishMerge(_ result: Result<Void, Error>, operationID: UUID, outputURL: URL) {
+        guard activeOperationID == operationID else { return }
+        activeOperationID = nil
+        switch result {
+        case .success:
+            setStatus(.completed(outputURL.path))
+        case let .failure(error):
+            setStatus(.failed(error))
             presentMergeSplitAlert(error)
         }
+        refreshState()
+    }
+
+    /// Inputs or the output changed, so any previous "completed" or error status no longer applies.
+    private func inputsDidChange() {
+        if activeOperationID == nil {
+            status = .idle
+        }
+        refreshState()
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
@@ -223,7 +262,7 @@ private final class MergeMachOViewController: NSViewController, NSTableViewDataS
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        removeButton.isEnabled = inputsTableView.selectedRow >= 0
+        removeButton.isEnabled = activeOperationID == nil && inputsTableView.selectedRow >= 0
     }
 
     private func buildUI() {
@@ -241,6 +280,7 @@ private final class MergeMachOViewController: NSViewController, NSTableViewDataS
         statusLabel.maximumNumberOfLines = 2
 
         dropView.onFileURLsDropped = { [weak self] urls in
+            guard self?.activeOperationID == nil else { return }
             self?.appendInputURLs(urls)
         }
 
@@ -303,18 +343,19 @@ private final class MergeMachOViewController: NSViewController, NSTableViewDataS
             return true
         }
         inputURLs.append(contentsOf: newURLs)
-        refreshState()
+        inputsDidChange()
     }
 
     private func refreshState() {
         inputsTableView.reloadData()
         outputField.stringValue = outputURL?.path ?? L10n.xcframeworkNoSelection
-        removeButton.isEnabled = inputsTableView.selectedRow >= 0
-        clearButton.isEnabled = inputURLs.isEmpty == false
-        startButton.isEnabled = inputURLs.count >= 2 && outputURL != nil
-        if inputURLs.isEmpty {
-            statusLabel.stringValue = L10n.mergeSplitMergeIdleStatus
-        }
+        let running = activeOperationID != nil
+        removeButton.isEnabled = !running && inputsTableView.selectedRow >= 0
+        clearButton.isEnabled = !running && inputURLs.isEmpty == false
+        addFilesButton.isEnabled = !running
+        chooseOutputButton.isEnabled = !running
+        startButton.isEnabled = !running && inputURLs.count >= 2 && outputURL != nil
+        renderStatus()
     }
 
     private func presentMergeSplitAlert(_ error: Error) {
@@ -347,6 +388,8 @@ private final class SplitMachOViewController: NSViewController {
     private var inputURL: URL?
     private var outputDirectoryURL: URL?
     private var architectures: [String] = []
+    private var status: MergeSplitStatus = .idle
+    private var activeOperationID: UUID?
 
     override func loadView() {
         view = AdaptiveBackgroundView(backgroundColor: .windowBackgroundColor)
@@ -372,9 +415,24 @@ private final class SplitMachOViewController: NSViewController {
         inputPathLabel.stringValue = inputURL?.path ?? L10n.xcframeworkNoSelection
         outputDirectoryField.stringValue = outputDirectoryURL?.path ?? L10n.xcframeworkNoSelection
         architecturesValueLabel.stringValue = architectures.isEmpty ? L10n.xcframeworkNoSelection : architectures.joined(separator: ", ")
-        if statusLabel.stringValue.isEmpty {
-            statusLabel.stringValue = L10n.mergeSplitSplitIdleStatus
+        renderStatus()
+    }
+
+    private func setStatus(_ newStatus: MergeSplitStatus) {
+        status = newStatus
+        renderStatus()
+    }
+
+    private func renderStatus() {
+        statusLabel.stringValue = status.text(idle: L10n.mergeSplitSplitIdleStatus)
+    }
+
+    /// Input or output changed, so any previous "completed" or error status no longer applies.
+    private func inputsDidChange() {
+        if activeOperationID == nil {
+            status = .idle
         }
+        refreshState()
     }
 
     @objc private func chooseInput(_ sender: Any?) {
@@ -391,7 +449,7 @@ private final class SplitMachOViewController: NSViewController {
     @objc private func clearInput(_ sender: Any?) {
         inputURL = nil
         architectures = []
-        refreshState()
+        inputsDidChange()
     }
 
     @objc private func chooseDirectory(_ sender: Any?) {
@@ -403,28 +461,49 @@ private final class SplitMachOViewController: NSViewController {
         panel.beginSheetModal(for: view.window ?? NSApp.mainWindow ?? NSWindow()) { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
             self?.outputDirectoryURL = url
-            self?.refreshState()
+            self?.inputsDidChange()
         }
     }
 
     @objc private func clearOutputDirectory(_ sender: Any?) {
         outputDirectoryURL = nil
-        refreshState()
+        inputsDidChange()
     }
 
     @objc private func startSplit(_ sender: Any?) {
-        guard let inputURL, let outputDirectoryURL else { return }
-        do {
-            let outputs = try service.split(
-                inputURL: inputURL,
-                architectures: architectures,
-                outputDirectoryURL: outputDirectoryURL
-            )
-            statusLabel.stringValue = "\(L10n.mergeSplitCompletedStatus) \(outputs.map(\.lastPathComponent).joined(separator: ", "))"
-        } catch {
-            statusLabel.stringValue = error.localizedDescription
+        guard let inputURL, let outputDirectoryURL, activeOperationID == nil else { return }
+        let architectures = architectures
+        let operationID = UUID()
+        activeOperationID = operationID
+        setStatus(.running)
+        refreshState()
+
+        // Splitting writes one file per architecture, so it runs off the main thread.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result = Result<[URL], Error> {
+                try MachOMergeSplitService().split(
+                    inputURL: inputURL,
+                    architectures: architectures,
+                    outputDirectoryURL: outputDirectoryURL
+                )
+            }
+            await MainActor.run {
+                self?.finishSplit(result, operationID: operationID)
+            }
+        }
+    }
+
+    private func finishSplit(_ result: Result<[URL], Error>, operationID: UUID) {
+        guard activeOperationID == operationID else { return }
+        activeOperationID = nil
+        switch result {
+        case let .success(outputs):
+            setStatus(.completed(outputs.map(\.lastPathComponent).joined(separator: ", ")))
+        case let .failure(error):
+            setStatus(.failed(error))
             presentMergeSplitAlert(error)
         }
+        refreshState()
     }
 
     private func buildUI() {
@@ -442,6 +521,7 @@ private final class SplitMachOViewController: NSViewController {
         statusLabel.maximumNumberOfLines = 2
 
         dropView.onFileURLDropped = { [weak self] url in
+            guard self?.activeOperationID == nil else { return }
             self?.loadInput(url)
         }
 
@@ -484,10 +564,10 @@ private final class SplitMachOViewController: NSViewController {
         inputURL = url
         do {
             architectures = try service.availableArchitectures(for: url)
-            refreshState()
+            inputsDidChange()
         } catch {
             architectures = []
-            refreshState()
+            inputsDidChange()
             presentMergeSplitAlert(error)
         }
     }
@@ -496,12 +576,13 @@ private final class SplitMachOViewController: NSViewController {
         inputPathLabel.stringValue = inputURL?.path ?? L10n.xcframeworkNoSelection
         outputDirectoryField.stringValue = outputDirectoryURL?.path ?? L10n.xcframeworkNoSelection
         architecturesValueLabel.stringValue = architectures.isEmpty ? L10n.xcframeworkNoSelection : architectures.joined(separator: ", ")
-        clearInputButton.isEnabled = inputURL != nil
-        clearOutputDirectoryButton.isEnabled = outputDirectoryURL != nil
-        startButton.isEnabled = inputURL != nil && outputDirectoryURL != nil && architectures.isEmpty == false
-        if inputURL == nil {
-            statusLabel.stringValue = L10n.mergeSplitSplitIdleStatus
-        }
+        let running = activeOperationID != nil
+        chooseInputButton.isEnabled = !running
+        chooseDirectoryButton.isEnabled = !running
+        clearInputButton.isEnabled = !running && inputURL != nil
+        clearOutputDirectoryButton.isEnabled = !running && outputDirectoryURL != nil
+        startButton.isEnabled = !running && inputURL != nil && outputDirectoryURL != nil && architectures.isEmpty == false
+        renderStatus()
     }
 
     private func presentMergeSplitAlert(_ error: Error) {
@@ -510,6 +591,29 @@ private final class SplitMachOViewController: NSViewController {
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
         alert.beginSheetModal(for: view.window ?? NSWindow())
+    }
+}
+
+/// Status shown under the merge and split forms. Rendered from state (not stored as text)
+/// so a language change re-localizes it.
+private enum MergeSplitStatus {
+    case idle
+    case running
+    case completed(String)
+    case failed(Error)
+
+    @MainActor
+    func text(idle idleText: String) -> String {
+        switch self {
+        case .idle:
+            return idleText
+        case .running:
+            return L10n.mergeSplitRunningStatus
+        case let .completed(detail):
+            return "\(L10n.mergeSplitCompletedStatus) \(detail)"
+        case let .failed(error):
+            return error.localizedDescription
+        }
     }
 }
 

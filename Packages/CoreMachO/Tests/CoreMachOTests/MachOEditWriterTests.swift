@@ -261,3 +261,178 @@ private enum FixtureCommand {
 private enum FixtureCommandError: Error {
     case commandFailed(launchPath: String, arguments: [String], output: String)
 }
+
+struct MachOWriterHardeningTests {
+    @Test("added dylib commands use timestamp 2 and the requested versions instead of copying another dylib")
+    func addedDylibUsesConventionalMetadata() throws {
+        let fixture = try WriterFixtureFactory.makeSignedDynamicLibraryFixture()
+        let outputURL = fixture.directory.appendingPathComponent("added-dylib.dylib")
+
+        _ = try MachOWriter().write(
+            inputURL: fixture.binaryURL,
+            outputURL: outputURL,
+            editPlan: MachOEditPlan(
+                dylibEdits: [
+                    .add(path: "@rpath/libDefaultVersions.dylib", command: UInt32(LC_LOAD_DYLIB)),
+                    .add(
+                        path: "@rpath/libExplicitVersions.dylib",
+                        command: UInt32(LC_LOAD_WEAK_DYLIB),
+                        currentVersion: MachOVersion(major: 3, minor: 2, patch: 1),
+                        compatibilityVersion: MachOVersion(major: 1, minor: 0, patch: 0)
+                    ),
+                ]
+            )
+        )
+
+        let slice = try #require(try MachOContainer.parse(at: outputURL).slices.first)
+        let defaulted = try #require(slice.dylibReferences.first(where: { $0.path == "@rpath/libDefaultVersions.dylib" }))
+        let explicit = try #require(slice.dylibReferences.first(where: { $0.path == "@rpath/libExplicitVersions.dylib" }))
+
+        #expect(defaulted.timestamp == 2)
+        #expect(defaulted.currentVersion == MachOVersion(major: 0, minor: 0, patch: 0))
+        #expect(defaulted.compatibilityVersion == MachOVersion(major: 0, minor: 0, patch: 0))
+        #expect(explicit.timestamp == 2)
+        #expect(explicit.command == UInt32(LC_LOAD_WEAK_DYLIB))
+        #expect(explicit.currentVersion == MachOVersion(major: 3, minor: 2, patch: 1))
+        #expect(explicit.compatibilityVersion == MachOVersion(major: 1, minor: 0, patch: 0))
+    }
+
+    @Test("rejects versions that do not fit the packed encoding")
+    func rejectsOutOfRangeVersions() throws {
+        let fixture = try WriterFixtureFactory.makeSignedDynamicLibraryFixture()
+        let outputURL = fixture.directory.appendingPathComponent("invalid-version.dylib")
+
+        #expect(throws: MachOWriteError.self) {
+            try MachOWriter().write(
+                inputURL: fixture.binaryURL,
+                outputURL: outputURL,
+                editPlan: MachOEditPlan(
+                    platformEdit: PlatformEdit(
+                        platform: .macOS,
+                        minimumOS: MachOVersion(major: 14, minor: 256, patch: 0),
+                        sdk: MachOVersion(major: 14, minor: 0, patch: 0)
+                    )
+                )
+            )
+        }
+        #expect(FileManager.default.fileExists(atPath: outputURL.path) == false)
+    }
+
+    @Test("preserves the input file permissions on the output")
+    func preservesPermissions() throws {
+        let fixture = try WriterFixtureFactory.makeSignedDynamicLibraryFixture()
+        try FileManager.default.setAttributes([.posixPermissions: 0o750], ofItemAtPath: fixture.binaryURL.path)
+        let outputURL = fixture.directory.appendingPathComponent("permissions.dylib")
+
+        _ = try MachOWriter().write(
+            inputURL: fixture.binaryURL,
+            outputURL: outputURL,
+            editPlan: MachOEditPlan(rpathEdits: [.add("@executable_path/Libs")])
+        )
+
+        let permissions = try FileManager.default.attributesOfItem(atPath: outputURL.path)[.posixPermissions] as? Int
+        #expect(permissions == 0o750)
+    }
+
+    @Test("install name edits fail clearly when the slice has no LC_ID_DYLIB")
+    func installNameEditRequiresIDCommand() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let sourceURL = directory.appendingPathComponent("tool.c")
+        let binaryURL = directory.appendingPathComponent("tool")
+        try "int main(void) { return 0; }\n".write(to: sourceURL, atomically: true, encoding: .utf8)
+        try FixtureCommand.run(
+            launchPath: "/usr/bin/clang",
+            arguments: ["-target", "x86_64-apple-macos13.0", sourceURL.path, "-o", binaryURL.path]
+        )
+
+        #expect {
+            try MachOWriter().write(
+                inputURL: binaryURL,
+                outputURL: directory.appendingPathComponent("tool-out"),
+                editPlan: MachOEditPlan(installName: "@rpath/tool")
+            )
+        } throws: { error in
+            guard case .missingInstallNameCommand = error as? MachOWriteError else { return false }
+            return true
+        }
+    }
+
+    @Test("refuses to edit byte-swapped (big-endian) slices")
+    func refusesByteSwappedSlices() throws {
+        var data = Data()
+        func appendBigEndian(_ value: UInt32) {
+            withUnsafeBytes(of: value.bigEndian) { data.append(contentsOf: $0) }
+        }
+        appendBigEndian(MH_MAGIC_64)
+        appendBigEndian(UInt32(bitPattern: CPU_TYPE_POWERPC64))
+        appendBigEndian(0)
+        appendBigEndian(UInt32(MH_DYLIB))
+        appendBigEndian(0)
+        appendBigEndian(0)
+        appendBigEndian(0)
+        appendBigEndian(0)
+        data.append(Data(count: 64))
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let inputURL = directory.appendingPathComponent("big-endian")
+        try data.write(to: inputURL)
+
+        #expect {
+            try MachOWriter().write(
+                inputURL: inputURL,
+                outputURL: directory.appendingPathComponent("out"),
+                editPlan: MachOEditPlan(rpathEdits: [.add("@loader_path")])
+            )
+        } throws: { error in
+            guard case .byteSwappedSliceUnsupported = error as? MachOWriteError else { return false }
+            return true
+        }
+    }
+
+    @Test("rejects load command areas that overlap file content")
+    func rejectsMalformedLoadCommandArea() throws {
+        // One LC_SEGMENT_64 whose file offset (40) lies inside its own load command.
+        var data = Data()
+        func append<T: FixedWidthInteger>(_ value: T) {
+            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+        }
+        append(MH_MAGIC_64)
+        append(UInt32(bitPattern: CPU_TYPE_X86_64))
+        append(UInt32(3))
+        append(UInt32(MH_DYLIB))
+        append(UInt32(1))
+        append(UInt32(72))
+        append(UInt32(0))
+        append(UInt32(0))
+        append(UInt32(LC_SEGMENT_64))
+        append(UInt32(72))
+        data.append(Data("__DATA".utf8) + Data(count: 10))
+        append(UInt64(0x1000))
+        append(UInt64(0x1000))
+        append(UInt64(40))
+        append(UInt64(16))
+        append(Int32(3))
+        append(Int32(3))
+        append(UInt32(0))
+        append(UInt32(0))
+        data.append(Data(count: 256))
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let inputURL = directory.appendingPathComponent("overlap")
+        try data.write(to: inputURL)
+
+        #expect {
+            try MachOWriter().write(
+                inputURL: inputURL,
+                outputURL: directory.appendingPathComponent("out"),
+                editPlan: MachOEditPlan(rpathEdits: [.add("@loader_path")])
+            )
+        } throws: { error in
+            guard case .malformedLoadCommandArea = error as? MachOWriteError else { return false }
+            return true
+        }
+    }
+}

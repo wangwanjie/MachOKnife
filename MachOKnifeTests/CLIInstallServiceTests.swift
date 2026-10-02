@@ -93,7 +93,7 @@ struct CLIInstallServiceTests {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
 
-        let root = FileManager.default.temporaryDirectory
+        let root = FileManager.default.canonicalTemporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let bundledCLIURL = root.appendingPathComponent("machoe-cli")
         let installDirectory = root.appendingPathComponent("bin", isDirectory: true)

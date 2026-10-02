@@ -7,11 +7,12 @@ struct XCFrameworkBuildAppearanceTests {
     func dropFieldUsesReadableContentInsets() {
         let insets = DropReceivingPathLabelLayoutMetrics.contentInsets
 
-        #expect(insets.top >= 6)
+        // The compact single-line drop field (since 4705a35) uses 4pt vertical insets and a 34pt minimum height.
+        #expect(insets.top >= 4)
         #expect(insets.left >= 8)
-        #expect(insets.bottom >= 6)
+        #expect(insets.bottom >= 4)
         #expect(insets.right >= 8)
-        #expect(DropReceivingPathLabelLayoutMetrics.minimumHeight >= 46)
+        #expect(DropReceivingPathLabelLayoutMetrics.minimumHeight >= 34)
     }
 
     @Test("XCFramework 拖放框在浅色空态使用有对比度的强调底色")

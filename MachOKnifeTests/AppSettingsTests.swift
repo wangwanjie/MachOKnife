@@ -36,7 +36,7 @@ struct AppSettingsTests {
     @Test("CLI install directory persists across settings instances")
     func cliInstallDirectoryPersistsAcrossSettingsInstances() throws {
         let defaults = makeDefaults()
-        let installDirectory = FileManager.default.temporaryDirectory
+        let installDirectory = FileManager.default.canonicalTemporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: installDirectory, withIntermediateDirectories: true)
 
