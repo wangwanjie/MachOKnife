@@ -13,11 +13,11 @@ target 'MachOKnife' do
   pod 'ViewScopeServer', :git => 'https://github.com/wangwanjie/ViewScope.git', :branch => 'main', :configurations => ['Debug']
 
   target 'MachOKnifeTests' do
-    inherit! :search_paths
+    inherit! :complete
   end
 
   target 'MachOKnifeUITests' do
-    inherit! :search_paths
+    inherit! :complete
   end
 end
 
