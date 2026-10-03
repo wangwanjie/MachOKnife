@@ -161,6 +161,7 @@ ensure_sparkle_tool() {
         -configuration Release \
         -derivedDataPath "$SPARKLE_DERIVED_DATA" \
         -destination 'generic/platform=macOS' \
+        MACOSX_DEPLOYMENT_TARGET=13.0 \
         CODE_SIGNING_ALLOWED=NO \
         build >&2
 
