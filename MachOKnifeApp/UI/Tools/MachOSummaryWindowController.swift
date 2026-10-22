@@ -7,6 +7,7 @@ final class MachOSummaryWindowController: NSWindowController {
     private static let autosaveName = NSWindow.FrameAutosaveName("MachOKnifeSummaryWindowFrame")
     private let summaryViewController: MachOSummaryViewController
     private var settingsObserver: NSObjectProtocol?
+    private var workspaceHandOff = WorkspaceToolHandOff()
 
     convenience init() {
         self.init(viewController: MachOSummaryViewController())
@@ -57,6 +58,39 @@ final class MachOSummaryWindowController: NSWindowController {
         summaryViewController.reloadLocalization()
     }
 
+    /// 载入并在后台分析指定文件（与拖放/选择文件的效果相同）。
+    func loadInput(_ url: URL) {
+        _ = window
+        summaryViewController.loadInput(url)
+    }
+
+    /// 用主工作区当前打开的文件预填输入；用户已在本窗口手动选择了其他文件时保持不变。
+    func prefill(withWorkspaceDocument url: URL) {
+        _ = window
+        guard let target = workspaceHandOff.inputToPrefill(
+            workspaceDocumentURL: url,
+            currentInputURL: summaryViewController.inputURL
+        ) else {
+            return
+        }
+        summaryViewController.loadInput(target)
+    }
+
+    /// 当前分析的输入文件。
+    var inputURL: URL? {
+        summaryViewController.inputURL
+    }
+
+    /// 是否有后台分析尚未完成。
+    var isAnalyzing: Bool {
+        summaryViewController.isAnalyzing
+    }
+
+    /// 报告区当前显示的文本。
+    var reportText: String {
+        summaryViewController.reportText
+    }
+
     private func observeSettings() {
         settingsObserver = NotificationCenter.default.addObserver(
             forName: AppSettings.didChangeNotification,
@@ -73,8 +107,6 @@ final class MachOSummaryWindowController: NSWindowController {
 
 @MainActor
 private final class MachOSummaryViewController: NSViewController {
-    private let summaryService = BinarySummaryService()
-
     private let inputLabel = makeSectionLabel("")
     private let chooseButton = NSButton(title: "", target: nil, action: nil)
     private let clearButton = NSButton(title: "", target: nil, action: nil)
@@ -83,11 +115,23 @@ private final class MachOSummaryViewController: NSViewController {
     private let reportLabel = NSTextField(labelWithString: "")
     private let reportTextView = NSTextView()
 
-    private var inputURL: URL?
+    private(set) var inputURL: URL?
     private var report: ToolTextReport?
     /// The last analysis failure for `inputURL`, kept so a language change can re-render it
     /// without re-running the analysis or presenting the alert again.
     private var reportError: Error?
+    /// 每次发起分析都会递增，用于丢弃已被新输入（或清除）取代的旧分析结果。
+    private var analysisGeneration = 0
+    private var analysisTask: Task<Void, Never>?
+
+    /// 是否有后台分析正在进行（供测试和界面状态使用）。
+    var isAnalyzing: Bool {
+        analysisTask != nil
+    }
+
+    var reportText: String {
+        reportTextView.string
+    }
 
     override func loadView() {
         view = AdaptiveBackgroundView(backgroundColor: .windowBackgroundColor)
@@ -113,6 +157,8 @@ private final class MachOSummaryViewController: NSViewController {
     private func renderReport() {
         if inputURL == nil {
             reportTextView.string = L10n.summaryIdleStatus
+        } else if analysisTask != nil {
+            reportTextView.string = L10n.summaryRunningStatus
         } else if let report {
             reportTextView.string = report.renderedText
         } else if let reportError {
@@ -135,6 +181,7 @@ private final class MachOSummaryViewController: NSViewController {
     }
 
     @objc private func clearInput(_ sender: Any?) {
+        cancelAnalysis()
         inputURL = nil
         report = nil
         reportError = nil
@@ -207,14 +254,21 @@ private final class MachOSummaryViewController: NSViewController {
         }
     }
 
-    private func loadInput(_ url: URL) {
+    func loadInput(_ url: URL) {
         inputURL = url
         pathLabel.stringValue = url.path
         clearButton.isEnabled = true
         analyzeCurrentInput()
     }
 
+    private func cancelAnalysis() {
+        analysisTask?.cancel()
+        analysisTask = nil
+        analysisGeneration += 1
+    }
+
     private func analyzeCurrentInput() {
+        cancelAnalysis()
         report = nil
         reportError = nil
         guard let inputURL else {
@@ -222,10 +276,36 @@ private final class MachOSummaryViewController: NSViewController {
             return
         }
 
-        do {
-            report = try summaryService.makeReport(for: inputURL)
+        let generation = analysisGeneration
+        // 汇总报告需要遍历整个二进制/包（可能包含大量架构或静态库成员），
+        // 放到后台执行，避免在主线程同步分析导致界面卡死。
+        analysisTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let result: Result<ToolTextReport, Error>
+            do {
+                result = .success(try BinarySummaryService().makeReport(for: inputURL))
+            } catch {
+                result = .failure(error)
+            }
+            guard Task.isCancelled == false else {
+                return
+            }
+            await self?.applyAnalysisResult(result, generation: generation)
+        }
+        renderReport()
+    }
+
+    private func applyAnalysisResult(_ result: Result<ToolTextReport, Error>, generation: Int) {
+        // 结果已过期（期间更换或清除了输入）则直接丢弃。
+        guard generation == analysisGeneration else {
+            return
+        }
+        analysisTask = nil
+
+        switch result {
+        case let .success(newReport):
+            report = newReport
             renderReport()
-        } catch {
+        case let .failure(error):
             reportError = error
             renderReport()
             presentSummaryAlert(error)
@@ -244,6 +324,11 @@ private final class MachOSummaryViewController: NSViewController {
         alert.messageText = L10n.summaryErrorTitle
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
-        alert.beginSheetModal(for: view.window ?? NSWindow())
+        guard let window = view.window, window.isVisible else {
+            // 分析在后台完成，届时窗口可能已关闭：错误原因已写入报告区，不再弹出无处附着的提示框
+            // （原实现附着到临时创建的 NSWindow 上，实际上永远不可见）。
+            return
+        }
+        alert.beginSheetModal(for: window)
     }
 }

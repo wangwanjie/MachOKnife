@@ -361,7 +361,8 @@ extension MachOLayoutBuilder {
             case 2:
                 let pointer = slice.resolvePointer(at: base + 2 * p)
                 let flags = slice.u32(base + p)
-                let length = Int(slice.pointer(base + 3 * p))
+                // length 字段来自文件，`Int(UInt64)` 在超过 Int.max 时会崩溃，这里用 clamping 转换（下方再限制到 1 MiB）。
+                let length = Int(clamping: slice.pointer(base + 3 * p))
                 var text: String?
                 if let target = pointer.address.flatMap({ slice.fileOffset(forVM: $0) }) {
                     // 0x7D0 marks UTF-16 contents stored in __ustring; 0x7C8 is 8-bit.
@@ -534,7 +535,7 @@ extension MachOLayoutBuilder {
         return factory.indexedNode(
             id: id("section", "\(section.ordinal)", "relocations"),
             title: "Relocations (\(relocations.count))",
-            range: linkEditRange(section.reloff, section.nreloc * 8),
+            range: linkEditRange(section.reloff, saturatingTableSize(section.nreloc, 8)),
             rowCount: relocations.count * rowsPerEntry,
             row: { index in
                 Self.relocationRow(slice, relocations[index / rowsPerEntry], field: index % rowsPerEntry, group: UInt(index / rowsPerEntry), addressBase: section.addr)

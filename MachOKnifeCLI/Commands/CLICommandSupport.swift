@@ -39,10 +39,15 @@ struct CLIParsedArguments {
 
 enum CLICommandSupport {
     /// Parses `arguments`, rejecting any option that is not declared in `valueOptions` or `flagOptions`.
+    ///
+    /// 只有列在 `repeatableOptions` 中的取值选项允许重复出现（例如 `split --arch a --arch b`）；
+    /// 其余取值选项重复出现时直接报用法错误，避免 `--output a --output b` 这类输入被静默地只取第一个值，
+    /// 让用户误以为结果写到了最后一个路径。
     static func parse(
         _ arguments: [String],
         valueOptions: Set<String>,
         flagOptions: Set<String> = [],
+        repeatableOptions: Set<String> = [],
         usage: String
     ) throws -> CLIParsedArguments {
         var positionals: [String] = []
@@ -82,6 +87,10 @@ enum CLICommandSupport {
                     value = arguments[index]
                     index += 1
                 }
+                // 非可重复选项第二次出现时拒绝，而不是悄悄忽略后面的值。
+                if optionValues[name] != nil, repeatableOptions.contains(name) == false {
+                    throw CLIError.invalidUsage(usage, detail: "option '\(name)' may only be specified once")
+                }
                 optionValues[name, default: []].append(value)
             } else if flagOptions.contains(name), inlineValue == nil {
                 flags.insert(name)
@@ -114,10 +123,22 @@ enum CLICommandSupport {
     /// Returns true when `arguments` asks for command help before any `--` terminator.
     static func containsHelpFlag(_ arguments: [String]) -> Bool {
         for argument in arguments {
-            if argument == "--" { return false }
-            if argument == "--help" || argument == "-h" { return true }
+            if argument == "--" {
+                return false
+            }
+            if argument == "--help" || argument == "-h" {
+                return true
+            }
         }
         return false
+    }
+
+    /// 判断两个文件 URL 是否指向同一路径（先标准化 `..`、`.` 并解析符号链接再比较）。
+    /// 用于在写出前拦截“输出覆盖输入”的情况。
+    static func referToSameFile(_ lhs: URL, _ rhs: URL) -> Bool {
+        let lhsPath = lhs.standardizedFileURL.resolvingSymlinksInPath().path
+        let rhsPath = rhs.standardizedFileURL.resolvingSymlinksInPath().path
+        return lhsPath == rhsPath
     }
 
     static func parseVersion(_ value: String, usage: String) throws -> MachOVersion {

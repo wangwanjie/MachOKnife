@@ -10,6 +10,8 @@ protocol MainWindowControlling: AnyObject {
     var hasLoadedDocument: Bool { get }
     var canCopyOrExportSelectedNodeInfo: Bool { get }
     var hasCurrentFileURL: Bool { get }
+    /// 工作区中已成功载入的文档；没有文档、载入中或载入失败时为 nil。
+    var loadedDocumentURL: URL? { get }
 
     func present(_ sender: Any?)
     func promptForDocument(_ sender: Any?)
@@ -170,6 +172,14 @@ final class MainWindowController: NSWindowController {
 
     var hasCurrentFileURL: Bool {
         viewModel.currentFileURL != nil
+    }
+
+    var loadedDocumentURL: URL? {
+        // 只交接已成功载入的文档：后台载入尚未完成或载入失败时 currentFileURL 也可能非空。
+        guard viewModel.hasLoadedDocument else {
+            return nil
+        }
+        return viewModel.currentFileURL
     }
 
     func copySelectedNodeInfo() {

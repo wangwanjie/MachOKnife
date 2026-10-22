@@ -128,6 +128,35 @@ func padded(_ value: UInt64, width: Int) -> String {
     return digits.count >= target ? digits : String(repeating: "0", count: target - digits.count) + digits
 }
 
+/// 计算 `count * entrySize` 形式的表大小。两个值都来自（可能畸形的）文件，直接相乘溢出会触发崩溃；
+/// 这里溢出时饱和为 `UInt32.max`，再交给 `linkEditRange` 等按文件实际大小截断。
+func saturatingTableSize(_ count: UInt32, _ entrySize: UInt32) -> UInt32 {
+    let (product, overflow) = count.multipliedReportingOverflow(by: entrySize)
+    if overflow {
+        return .max
+    }
+    return product
+}
+
+/// 多个 UInt32 大小求和，溢出时饱和为 `UInt32.max`。
+func saturatingSum(_ values: [UInt32]) -> UInt32 {
+    var total: UInt32 = 0
+    for value in values {
+        let (sum, overflow) = total.addingReportingOverflow(value)
+        if overflow {
+            return .max
+        }
+        total = sum
+    }
+    return total
+}
+
+/// `start <= value < start + length` 的无溢出判断：段/节的地址和大小都来自文件，`start + length`
+/// 在畸形输入下可能超过 UInt64 而崩溃，改用减法比较。
+func rangeContains(start: UInt64, length: UInt64, _ value: UInt64) -> Bool {
+    value >= start && value - start < length
+}
+
 func byteCount(_ value: UInt64) -> String {
     "\(value) (\(hex(value)))"
 }

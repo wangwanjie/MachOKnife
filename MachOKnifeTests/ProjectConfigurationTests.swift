@@ -20,7 +20,7 @@ struct ProjectConfigurationTests {
         #expect(plist["SUAllowsAutomaticUpdates"] as? Bool == true)
         #expect(plist["MachOKnifeGitHubURL"] as? String == "https://github.com/wangwanjie/MachOKnife")
 
-        let projectContents = try String(contentsOf: repositoryRoot.appendingPathComponent("MachOKnife.xcodeproj/project.pbxproj"))
+        let projectContents = try String(contentsOf: repositoryRoot.appendingPathComponent("MachOKnife.xcodeproj/project.pbxproj"), encoding: .utf8)
         #expect(projectContents.contains("INFOPLIST_FILE = MachOKnife/Info.plist;"))
         #expect(projectContents.contains("GENERATE_INFOPLIST_FILE = NO;"))
     }

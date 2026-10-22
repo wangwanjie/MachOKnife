@@ -192,7 +192,15 @@ final class UpdateManager {
     }
 
     private func activeClient() -> UpdateClient? {
-        let client = injectedClientProvider?() ?? defaultClient
+        // 注入了 provider 时以其结果为准（返回 nil 表示 Sparkle 不可用）；
+        // 原先 nil 会回退到真实的 Sparkle 客户端，导致 `.sparkleUnavailable` 永远无法出现，
+        // 测试中也会意外启动真实的更新器。
+        let client: UpdateClient?
+        if let injectedClientProvider {
+            client = injectedClientProvider()
+        } else {
+            client = defaultClient
+        }
         observeIfNeeded(client)
         return client
     }

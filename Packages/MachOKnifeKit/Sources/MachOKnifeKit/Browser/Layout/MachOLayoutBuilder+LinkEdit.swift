@@ -11,7 +11,8 @@ extension MachOLayoutBuilder {
 
         if let info = slice.dyldInfo {
             let starts = [info.rebaseOff, info.bindOff, info.weakBindOff, info.lazyBindOff, info.exportOff].filter { $0 > 0 }
-            let total = info.rebaseSize + info.bindSize + info.weakBindSize + info.lazyBindSize + info.exportSize
+            // 各段大小来自文件，直接相加可能 UInt32 溢出崩溃，使用饱和求和。
+            let total = saturatingSum([info.rebaseSize, info.bindSize, info.weakBindSize, info.lazyBindSize, info.exportSize])
             add(starts.min() ?? 0, total) { dyldInfoNode(info) }
         }
         for data in slice.linkEditData {
@@ -33,17 +34,18 @@ extension MachOLayoutBuilder {
             }
         }
         if let symtab = slice.symtab {
-            add(symtab.symoff, symtab.nsyms * UInt32(slice.nlistSize)) { symbolTableNode(symtab) }
+            // nsyms * nlist 大小在畸形文件中可能溢出 UInt32，统一使用饱和乘法。
+            add(symtab.symoff, saturatingTableSize(symtab.nsyms, UInt32(slice.nlistSize))) { symbolTableNode(symtab) }
             add(symtab.stroff, symtab.strsize) { stringTableNode(symtab) }
         }
         if let dysymtab = slice.dysymtab {
             let pieces: [(UInt32, UInt32)] = [
-                (dysymtab.indirectsymoff, dysymtab.nindirectsyms * 4),
-                (dysymtab.extreloff, dysymtab.nextrel * 8),
-                (dysymtab.locreloff, dysymtab.nlocrel * 8),
-                (dysymtab.tocoff, dysymtab.ntoc * 8),
-                (dysymtab.extrefsymoff, dysymtab.nextrefsyms * 4),
-                (dysymtab.modtaboff, dysymtab.nmodtab * (slice.is64 ? 56 : 52)),
+                (dysymtab.indirectsymoff, saturatingTableSize(dysymtab.nindirectsyms, 4)),
+                (dysymtab.extreloff, saturatingTableSize(dysymtab.nextrel, 8)),
+                (dysymtab.locreloff, saturatingTableSize(dysymtab.nlocrel, 8)),
+                (dysymtab.tocoff, saturatingTableSize(dysymtab.ntoc, 8)),
+                (dysymtab.extrefsymoff, saturatingTableSize(dysymtab.nextrefsyms, 4)),
+                (dysymtab.modtaboff, saturatingTableSize(dysymtab.nmodtab, slice.is64 ? 56 : 52)),
             ].filter { $0.1 > 0 }
             if let first = pieces.map(\.0).min() {
                 add(first, 1) { dynamicSymbolTableNode(dysymtab) }
@@ -85,14 +87,17 @@ extension MachOLayoutBuilder {
 
     func symbolTableNode(_ symtab: RawMachOImage.Symtab) -> BrowserNode {
         let slice = slice
-        let count = Int(symtab.nsyms)
+        // 行数按文件中实际存在的 nlist 条目截断：畸形的 nsyms 不应生成数十亿个“Invalid Symbol”行。
+        let count = slice.absolute(UInt64(symtab.symoff)).map {
+            slice.availableEntryCount(from: $0, entrySize: slice.nlistSize, declared: UInt64(symtab.nsyms))
+        } ?? 0
         let rowsPerSymbol = 5
         let dylibs = slice.dylibs
         let twoLevel = slice.flags & 0x80 != 0
         return factory.indexedNode(
             id: id("symtab"),
             title: "Symbol Table (\(count))",
-            range: linkEditRange(symtab.symoff, symtab.nsyms * UInt32(slice.nlistSize)),
+            range: linkEditRange(symtab.symoff, saturatingTableSize(symtab.nsyms, UInt32(slice.nlistSize))),
             rowCount: count * rowsPerSymbol,
             row: { index in
                 let group = UInt(index / rowsPerSymbol)
@@ -211,7 +216,7 @@ extension MachOLayoutBuilder {
         }
         if dysymtab.nmodtab > 0 {
             children.append {
-                let size = UInt32(slice.is64 ? 56 : 52) * dysymtab.nmodtab
+                let size = saturatingTableSize(dysymtab.nmodtab, slice.is64 ? 56 : 52)
                 let dataRange = linkEditRange(dysymtab.modtaboff, size)
                 let content = dataRange.map { hexDumpContent(start: $0.offset, length: $0.length) } ?? .empty
                 return factory.indexedNode(id: id("dysymtab", "modtab"), title: "Module Table (\(dysymtab.nmodtab))", range: dataRange, rowCount: content.count, row: content.row)
@@ -227,7 +232,8 @@ extension MachOLayoutBuilder {
                 func symbolRange(_ key: String, _ first: UInt32, _ count: UInt32) {
                     var value = "\(count) from index \(first)"
                     if count > 0 {
-                        let names = [slice.symbol(at: Int(first))?.name, count > 1 ? slice.symbol(at: Int(first + count - 1))?.name : nil].compactMap { $0 }
+                        // first + count 都来自文件，先转成 Int 再相加，避免 UInt32 加法溢出崩溃。
+                        let names = [slice.symbol(at: Int(first))?.name, count > 1 ? slice.symbol(at: Int(first) + Int(count) - 1)?.name : nil].compactMap { $0 }
                         if names.isEmpty == false { value += " (\(names.joined(separator: " … ")))" }
                     }
                     rows.note(key, value)
@@ -261,8 +267,10 @@ extension MachOLayoutBuilder {
         return factory.indexedNode(
             id: id("dysymtab", "indirect"),
             title: "Indirect Symbols (\(dysymtab.nindirectsyms))",
-            range: linkEditRange(dysymtab.indirectsymoff, dysymtab.nindirectsyms * 4),
-            rowCount: Int(dysymtab.nindirectsyms),
+            range: linkEditRange(dysymtab.indirectsymoff, saturatingTableSize(dysymtab.nindirectsyms, 4)),
+            rowCount: slice.absolute(UInt64(dysymtab.indirectsymoff)).map {
+                slice.availableEntryCount(from: $0, entrySize: 4, declared: UInt64(dysymtab.nindirectsyms))
+            } ?? 0,
             row: { index in
                 guard let entry = slice.indirectSymbolEntry(index) else {
                     return BrowserDetailRow(key: "Invalid Entry", value: "")
@@ -291,7 +299,7 @@ extension MachOLayoutBuilder {
         return factory.indexedNode(
             id: id("dysymtab", key),
             title: "\(title) (\(relocations.count))",
-            range: linkEditRange(offset, count * 8),
+            range: linkEditRange(offset, saturatingTableSize(count, 8)),
             rowCount: relocations.count * rowsPerEntry,
             row: { index in
                 Self.relocationRow(slice, relocations[index / rowsPerEntry], field: index % rowsPerEntry, group: UInt(index / rowsPerEntry), addressBase: base)
@@ -304,8 +312,10 @@ extension MachOLayoutBuilder {
         return factory.indexedNode(
             id: id("dysymtab", "toc"),
             title: "Table of Contents (\(dysymtab.ntoc))",
-            range: linkEditRange(dysymtab.tocoff, dysymtab.ntoc * 8),
-            rowCount: Int(dysymtab.ntoc) * 2,
+            range: linkEditRange(dysymtab.tocoff, saturatingTableSize(dysymtab.ntoc, 8)),
+            rowCount: (slice.absolute(UInt64(dysymtab.tocoff)).map {
+                slice.availableEntryCount(from: $0, entrySize: 8, declared: UInt64(dysymtab.ntoc))
+            } ?? 0) * 2,
             row: { index in
                 guard let entry = slice.absolute(UInt64(dysymtab.tocoff) + UInt64(index / 2 * 8)) else {
                     return BrowserDetailRow(key: "Invalid Entry", value: "")
@@ -324,8 +334,10 @@ extension MachOLayoutBuilder {
         return factory.indexedNode(
             id: id("dysymtab", "extref"),
             title: "External References (\(dysymtab.nextrefsyms))",
-            range: linkEditRange(dysymtab.extrefsymoff, dysymtab.nextrefsyms * 4),
-            rowCount: Int(dysymtab.nextrefsyms),
+            range: linkEditRange(dysymtab.extrefsymoff, saturatingTableSize(dysymtab.nextrefsyms, 4)),
+            rowCount: slice.absolute(UInt64(dysymtab.extrefsymoff)).map {
+                slice.availableEntryCount(from: $0, entrySize: 4, declared: UInt64(dysymtab.nextrefsyms))
+            } ?? 0,
             row: { index in
                 guard let entry = slice.absolute(UInt64(dysymtab.extrefsymoff) + UInt64(index * 4)) else {
                     return BrowserDetailRow(key: "Invalid Entry", value: "")

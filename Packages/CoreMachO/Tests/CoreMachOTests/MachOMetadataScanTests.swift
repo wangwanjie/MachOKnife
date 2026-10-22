@@ -41,6 +41,10 @@ struct MachOMetadataScanTests {
         #expect(page.symbols.count == 5)
         #expect(page.totalSymbolCount >= page.startIndex + page.symbols.count)
         #expect(page.symbols.contains(where: { $0.name.contains("scan_fixture_symbol_") }))
+        // 分页结果必须与完整解析得到的同一区间完全一致。
+        let fullSymbols = try #require(try MachOContainer.parse(at: fixture.binaryURL).slices.first).symbols
+        #expect(page.symbols.map(\.name) == fullSymbols[2..<7].map(\.name))
+        #expect(page.symbols.map(\.value) == fullSymbols[2..<7].map(\.value))
 
         do {
             _ = try reader.readPage(
@@ -79,6 +83,15 @@ struct MachOMetadataScanTests {
         #expect(batch.entries.isEmpty == false)
         #expect(batch.totalStringTableSize == Int(slice.symbolTable?.stringTableSize ?? 0))
         #expect(batch.entries.contains(where: { $0.string.contains("scan_fixture_symbol_") }))
+        // 每个符号的 n_strx 都应能在批次中找到同名条目（字符串表偏移与内容一致）。
+        let fullBatch = try reader.readBatch(url: fixture.binaryURL, slice: slice, startIndex: 0, maximumCount: 10_000)
+        let entriesByOffset = Dictionary(fullBatch.entries.map { ($0.stringTableIndex, $0.string) }, uniquingKeysWith: { first, _ in
+            first
+        })
+        let fullSymbols = try #require(try MachOContainer.parse(at: fixture.binaryURL).slices.first).symbols
+        for symbol in fullSymbols where symbol.stringTableIndex != 0 {
+            #expect(entriesByOffset[Int(symbol.stringTableIndex)] == symbol.name)
+        }
 
         do {
             _ = try reader.readBatch(

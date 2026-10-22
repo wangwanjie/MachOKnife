@@ -36,6 +36,52 @@ public struct ToolTextReport: Sendable {
 
         return blocks.joined(separator: "\n\n")
     }
+
+    /// 机器可读的 JSON 形式（键按字母排序、带缩进），供 CLI 的 `--json` 之类输出或脚本消费。
+    ///
+    /// 结构为 `{"title": ..., "summary": [...], "sections": [{"title": ..., "lines": [...]}]}`；
+    /// 与 `renderedText` 不同，空 section 也会保留，调用方可以据此区分“无结果”和“缺少该部分”。
+    public var renderedJSON: String {
+        renderJSON(ToolTextReportJSON(report: self))
+    }
+}
+
+/// `ToolTextReport` 的 JSON 编码模型。
+private struct ToolTextReportJSON: Encodable {
+    struct Section: Encodable {
+        let title: String
+        let lines: [String]
+    }
+
+    let title: String
+    let summary: [String]
+    let sections: [Section]
+
+    init(report: ToolTextReport) {
+        title = report.title
+        summary = report.summaryLines
+        sections = report.sections.map { Section(title: $0.title, lines: $0.lines) }
+    }
+}
+
+/// `BinaryContaminationReport` 的 JSON 编码模型：在报告文本之外附带结构化的计数。
+private struct BinaryContaminationReportJSON: Encodable {
+    let mode: String
+    let target: String
+    let okCount: Int
+    let mismatchCount: Int
+    let uncheckedCount: Int
+    let report: ToolTextReportJSON
+}
+
+/// 以稳定的格式（排序键、缩进、不转义斜杠）编码 JSON；这些模型只含字符串和整数，编码不会失败。
+private func renderJSON<Value: Encodable>(_ value: Value) -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    guard let data = try? encoder.encode(value) else {
+        return "{}"
+    }
+    return String(decoding: data, as: UTF8.self)
 }
 
 public enum BinaryContaminationCheckMode: String, CaseIterable, Sendable {
@@ -68,6 +114,20 @@ public struct BinaryContaminationReport: Sendable {
     }
 
     public var renderedText: String { textReport.renderedText }
+
+    /// 机器可读的 JSON 形式：包含模式、目标、各类计数以及完整的报告内容。
+    public var renderedJSON: String {
+        renderJSON(
+            BinaryContaminationReportJSON(
+                mode: mode.rawValue,
+                target: target,
+                okCount: okCount,
+                mismatchCount: mismatchCount,
+                uncheckedCount: uncheckedCount,
+                report: ToolTextReportJSON(report: textReport)
+            )
+        )
+    }
 }
 
 public enum MachOToolServiceError: LocalizedError {
@@ -78,6 +138,10 @@ public enum MachOToolServiceError: LocalizedError {
     case architectureNotFound(String, available: [String])
     case mergeNeedsMultipleInputs
     case processFailed(String)
+    /// 移除架构后不会剩下任何切片（例如要求移除全部架构）。
+    case cannotRemoveAllArchitectures(URL)
+    /// 输入不是通用（fat）二进制或 fat 静态库，无法移除其中的架构。
+    case notUniversal(URL)
 
     public var errorDescription: String? {
         switch self {
@@ -95,6 +159,10 @@ public enum MachOToolServiceError: LocalizedError {
             return "Choose at least two input files to merge."
         case let .processFailed(message):
             return message
+        case let .cannotRemoveAllArchitectures(url):
+            return "Removing the selected architectures would leave \(url.lastPathComponent) without any architecture."
+        case let .notUniversal(url):
+            return "\(url.lastPathComponent) is not a universal binary or fat archive."
         }
     }
 }
@@ -549,17 +617,23 @@ public final class MachOMergeSplitService {
                 throw MachOToolServiceError.architectureNotFound(missing, available: available)
             }
             return try requestedArchitectures.map { architecture in
-                let extraction = try archiveInspector.extractThinArchive(
-                    url: inputURL,
-                    preferredArchitecture: archiveInspection.kind == .fatArchive ? architecture : nil
-                )
-                defer { try? fileManager.removeItem(at: extraction.archiveURL.deletingLastPathComponent()) }
-
                 let outputURL = outputDirectoryURL.appendingPathComponent(composeOutputName(baseName: baseName, architecture: architecture, pathExtension: ext))
-                if fileManager.fileExists(atPath: outputURL.path) {
-                    try fileManager.removeItem(at: outputURL)
+                if ArchiveArchitectureMembers.filtersMembersByArchitecture(archiveInspection) {
+                    // 非 fat 但混有多个架构目标文件的静态库：只保留该架构的成员重新打包，
+                    // 而不是把整个混合归档原样复制成“某架构”的输出。
+                    try writeArchitectureMembers(architecture, of: inputURL, inspection: archiveInspection, to: outputURL)
+                } else {
+                    let extraction = try archiveInspector.extractThinArchive(
+                        url: inputURL,
+                        preferredArchitecture: archiveInspection.kind == .fatArchive ? architecture : nil
+                    )
+                    defer {
+                        try? fileManager.removeItem(at: extraction.archiveURL.deletingLastPathComponent())
+                    }
+                    try writeReplacingOutput(at: outputURL) { temporaryURL in
+                        try fileManager.copyItem(at: extraction.archiveURL, to: temporaryURL)
+                    }
                 }
-                try fileManager.copyItem(at: extraction.archiveURL, to: outputURL)
                 return outputURL
             }
         }
@@ -572,14 +646,14 @@ public final class MachOMergeSplitService {
 
         return try requestedArchitectures.map { architecture in
             let outputURL = outputDirectoryURL.appendingPathComponent(composeOutputName(baseName: baseName, architecture: architecture, pathExtension: ext))
-            if fileManager.fileExists(atPath: outputURL.path) {
-                try fileManager.removeItem(at: outputURL)
-            }
-            if container.kind == .fat {
-                try runResolvedTool(named: "lipo", arguments: ["-thin", architecture, inputURL.path, "-output", outputURL.path])
-            } else {
-                // `lipo -thin` rejects thin inputs; a thin file already is the requested slice.
-                try fileManager.copyItem(at: inputURL, to: outputURL)
+            // 先写临时文件再替换：lipo 失败时不会删掉用户已有的同名输出文件。
+            try writeReplacingOutput(at: outputURL) { temporaryURL in
+                if container.kind == .fat {
+                    try runResolvedTool(named: "lipo", arguments: ["-thin", architecture, inputURL.path, "-output", temporaryURL.path])
+                } else {
+                    // `lipo -thin` rejects thin inputs; a thin file already is the requested slice.
+                    try fileManager.copyItem(at: inputURL, to: temporaryURL)
+                }
             }
             return outputURL
         }
@@ -590,13 +664,46 @@ public final class MachOMergeSplitService {
             throw MachOToolServiceError.mergeNeedsMultipleInputs
         }
 
-        if fileManager.fileExists(atPath: outputURL.path) {
-            try fileManager.removeItem(at: outputURL)
+        // 旧实现会先删除 outputURL 再运行 lipo：当输出路径正好是某个输入文件时会把输入删掉，
+        // lipo 失败时也会丢失已有的输出文件。现在 lipo 写入同目录的临时文件，成功后再替换。
+        try writeReplacingOutput(at: outputURL) { temporaryURL in
+            try runResolvedTool(
+                named: "lipo",
+                arguments: ["-create"] + inputURLs.map(\.path) + ["-output", temporaryURL.path]
+            )
         }
-        try runResolvedTool(
-            named: "lipo",
-            arguments: ["-create"] + inputURLs.map(\.path) + ["-output", outputURL.path]
-        )
+    }
+
+    /// 从通用（fat）Mach-O 或 fat 静态库中移除指定架构，结果写入 `outputURL`（可以与输入相同）。
+    ///
+    /// 典型用途是在提交 App Store 之前去掉 x86_64 / i386 模拟器切片。
+    /// - Throws: 输入不是 fat 容器、请求的架构不存在，或移除后不剩任何架构时抛出 `MachOToolServiceError`。
+    public func removeArchitectures(_ architectures: [String], from inputURL: URL, outputURL: URL) throws {
+        let isFatArchive = try archiveInspector.inspect(url: inputURL)?.kind == .fatArchive
+        let isFatMachO = isFatArchive == false && (try? MachOContainer.parse(at: inputURL))?.kind == .fat
+        guard isFatArchive || isFatMachO else {
+            throw MachOToolServiceError.notUniversal(inputURL)
+        }
+
+        let available = try availableArchitectures(for: inputURL)
+        let removed = Set(architectures)
+        if let missing = architectures.first(where: { available.contains($0) == false }) {
+            throw MachOToolServiceError.architectureNotFound(missing, available: available)
+        }
+        guard available.contains(where: { removed.contains($0) == false }) else {
+            throw MachOToolServiceError.cannotRemoveAllArchitectures(inputURL)
+        }
+
+        try writeReplacingOutput(at: outputURL) { temporaryURL in
+            if removed.isEmpty {
+                // 没有需要移除的架构时直接复制，保持输出语义一致。
+                try fileManager.copyItem(at: inputURL, to: temporaryURL)
+                return
+            }
+            // lipo 的 -remove 可以重复出现，每个参数移除一个架构；对 fat 静态库同样适用。
+            let removeArguments = removed.sorted(by: architectureSort).flatMap { ["-remove", $0] }
+            try runResolvedTool(named: "lipo", arguments: [inputURL.path] + removeArguments + ["-output", temporaryURL.path])
+        }
     }
 
     public func suggestedMergedOutputFileName(for inputURLs: [URL]) -> String {
@@ -657,85 +764,53 @@ public final class MachOMergeSplitService {
         return prefix
     }
 
-    private func mergeSlices(for inputURLs: [URL]) throws -> [MergedContainerSlice] {
-        try inputURLs.flatMap { inputURL in
-            if let archiveInspection = try archiveInspector.inspect(url: inputURL) {
-                let architectures = archiveInspection.architectures
-                guard architectures.isEmpty == false else {
-                    throw MachOToolServiceError.noArchitectures(inputURL)
-                }
-                return try architectures.map { architecture in
-                    let extraction = try archiveInspector.extractThinArchive(
-                        url: inputURL,
-                        preferredArchitecture: archiveInspection.kind == .fatArchive ? architecture : nil
-                    )
-                    defer { try? fileManager.removeItem(at: extraction.archiveURL.deletingLastPathComponent()) }
-                    return try MergedContainerSlice(
-                        architecture: extraction.architecture,
-                        data: Data(contentsOf: extraction.archiveURL, options: [.mappedIfSafe])
-                    )
-                }
+    /// 把 `produce` 写出的临时文件安全地放到 `outputURL`。
+    ///
+    /// 临时文件位于输出目录中（同一卷，替换是原子的）；`produce` 或替换失败时临时文件会被删除，
+    /// 已有的输出文件保持不变。输出路径与某个输入相同也是安全的，因为输入在替换前一直存在。
+    private func writeReplacingOutput(at outputURL: URL, _ produce: (URL) throws -> Void) throws {
+        let temporaryURL = outputURL.deletingLastPathComponent()
+            .appendingPathComponent(".\(outputURL.lastPathComponent).\(UUID().uuidString).tmp")
+        defer {
+            if fileManager.fileExists(atPath: temporaryURL.path) {
+                try? fileManager.removeItem(at: temporaryURL)
             }
+        }
 
-            let container = try MachOContainer.parse(at: inputURL)
-            guard container.slices.count == 1 else {
-                throw MachOToolServiceError.unsupportedInput(inputURL)
-            }
+        try produce(temporaryURL)
 
-            let slice = container.slices[0]
-            return [
-                try MergedContainerSlice(
-                    cpuType: slice.header.cpuType,
-                    cpuSubtype: slice.header.cpuSubtype,
-                    architecture: architectureName(cpuType: slice.header.cpuType, cpuSubtype: slice.header.cpuSubtype),
-                    data: Data(contentsOf: inputURL, options: [.mappedIfSafe])
-                ),
-            ]
+        if fileManager.fileExists(atPath: outputURL.path) {
+            _ = try fileManager.replaceItemAt(outputURL, withItemAt: temporaryURL)
+        } else {
+            try fileManager.moveItem(at: temporaryURL, to: outputURL)
         }
     }
 
-    private func writeFatContainer(slices: [MergedContainerSlice], to outputURL: URL) throws {
-        var data = Data()
-        let count = UInt32(slices.count)
-        data.append(contentsOf: FAT_MAGIC.bigEndian.bytes)
-        data.append(contentsOf: count.bigEndian.bytes)
-
-        let alignment: UInt32 = 14
-        let fatArchSize = MemoryLayout<fat_arch>.size
-        let headerSize = MemoryLayout<fat_header>.size + fatArchSize * slices.count
-        var currentOffset = alignedOffset(headerSize, alignment: Int(alignment))
-        var sliceOffsets = [Int]()
-
-        for slice in slices {
-            sliceOffsets.append(currentOffset)
-            currentOffset = alignedOffset(currentOffset + slice.data.count, alignment: Int(alignment))
-        }
-
-        for (index, slice) in slices.enumerated() {
-            data.append(contentsOf: UInt32(bitPattern: slice.cpuType).bigEndian.bytes)
-            data.append(contentsOf: UInt32(bitPattern: slice.cpuSubtype).bigEndian.bytes)
-            data.append(contentsOf: UInt32(sliceOffsets[index]).bigEndian.bytes)
-            data.append(contentsOf: UInt32(slice.data.count).bigEndian.bytes)
-            data.append(contentsOf: alignment.bigEndian.bytes)
-        }
-
-        if data.count < headerSize {
-            data.append(Data(repeating: 0, count: headerSize - data.count))
-        }
-
-        for (index, slice) in slices.enumerated() {
-            if data.count < sliceOffsets[index] {
-                data.append(Data(repeating: 0, count: sliceOffsets[index] - data.count))
+    /// 把混合架构静态库中属于 `architecture` 的成员重新打包成一个单架构静态库，并生成新的符号表。
+    private func writeArchitectureMembers(
+        _ architecture: String,
+        of archiveURL: URL,
+        inspection: ArchiveInspection,
+        to outputURL: URL
+    ) throws {
+        try ArchiveArchitectureMembers.withMembers(
+            architecture: architecture,
+            in: archiveURL,
+            inspection: inspection,
+            archiveInspector: archiveInspector,
+            fileManager: fileManager
+        ) { members in
+            guard members.isEmpty == false else {
+                throw MachOToolServiceError.architectureNotFound(architecture, available: inspection.architectures)
             }
-            data.append(slice.data)
+            try writeReplacingOutput(at: outputURL) { temporaryURL in
+                try archiveInspector.writeArchive(
+                    outputURL: temporaryURL,
+                    members: members.map { ArchiveMemberSource(name: $0.name, fileURL: $0.fileURL) },
+                    generateSymbolTable: true
+                )
+            }
         }
-
-        try data.write(to: outputURL, options: [.atomic])
-    }
-
-    private func alignedOffset(_ offset: Int, alignment: Int) -> Int {
-        let mask = (1 << alignment) - 1
-        return (offset + mask) & ~mask
     }
 }
 
@@ -765,28 +840,6 @@ private struct InspectionUnit {
     let label: String
     let architectures: [String]
     let platforms: [String]
-}
-
-private struct MergedContainerSlice {
-    let cpuType: Int32
-    let cpuSubtype: Int32
-    let architecture: String
-    let data: Data
-
-    init(architecture: String, data: Data) throws {
-        let cpu = try cpuDescription(for: architecture)
-        self.cpuType = cpu.cpuType
-        self.cpuSubtype = cpu.cpuSubtype
-        self.architecture = architecture
-        self.data = data
-    }
-
-    init(cpuType: Int32, cpuSubtype: Int32, architecture: String, data: Data) {
-        self.cpuType = cpuType
-        self.cpuSubtype = cpuSubtype
-        self.architecture = architecture
-        self.data = data
-    }
 }
 
 private func platformIdentifier(for platform: MachOPlatform?) -> String? {
@@ -849,35 +902,6 @@ private func normalizedPlatformTarget(_ target: String) -> String {
         return "xrsimulator"
     default:
         return target.lowercased()
-    }
-}
-
-private func cpuDescription(for architecture: String) throws -> (cpuType: Int32, cpuSubtype: Int32) {
-    switch architecture.lowercased() {
-    case "arm64":
-        return (CPU_TYPE_ARM64, 0)
-    case "arm64e":
-        return (CPU_TYPE_ARM64, MachOArchitectureNaming.cpuSubtypeARM64E)
-    case "arm64_32":
-        return (MachOArchitectureNaming.cpuTypeARM64_32, 1)
-    case "x86_64":
-        return (CPU_TYPE_X86_64, 3)
-    case "x86_64h":
-        return (CPU_TYPE_X86_64, MachOArchitectureNaming.cpuSubtypeX86_64H)
-    case "i386":
-        return (CPU_TYPE_X86, 3)
-    case "armv6":
-        return (CPU_TYPE_ARM, 6)
-    case "armv7":
-        return (CPU_TYPE_ARM, 9)
-    case "armv7f":
-        return (CPU_TYPE_ARM, 10)
-    case "armv7s":
-        return (CPU_TYPE_ARM, 11)
-    case "armv7k":
-        return (CPU_TYPE_ARM, 12)
-    default:
-        throw MachOToolServiceError.processFailed("Unsupported architecture for merge: \(architecture)")
     }
 }
 
@@ -1099,9 +1123,3 @@ private let mergeNameNoiseTokens: Set<String> = [
     "universal",
     "fat",
 ]
-
-private extension FixedWidthInteger {
-    var bytes: [UInt8] {
-        withUnsafeBytes(of: self) { Array($0) }
-    }
-}

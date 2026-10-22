@@ -8,7 +8,7 @@ source "$SCRIPT_DIR/common.sh"
 DEFAULT_DMG_DIR="$PROJECT_DIR/build/dmg"
 GITHUB_API_BASE="https://api.github.com"
 
-DMG_PATH=""
+DMG_PATHS=()
 REPO=""
 TAG=""
 TITLE=""
@@ -21,42 +21,27 @@ PRERELEASE=false
 usage() {
     cat <<EOF
 Usage:
-  ./Scripts/publish_github_release.sh [--dmg PATH] [--repo OWNER/REPO] [--tag TAG]
+  ./Scripts/publish_github_release.sh [--dmg PATH ...] [--repo OWNER/REPO] [--tag TAG]
                                       [--title TITLE] [--notes TEXT | --notes-file FILE | --generate-notes]
                                       [--draft] [--prerelease]
+
+--dmg may be repeated (one per architecture). Without --dmg, every
+build/dmg/${APP_NAME}_V_<MARKETING_VERSION>_<arch>.dmg is published.
 EOF
 }
 
-find_latest_dmg() {
-    local latest_path=""
-    local latest_mtime=0
-    local file_path
-    local file_mtime
+# 未指定 --dmg 时，按当前工程版本收集 build/dmg 下所有架构的安装包
+find_version_dmgs() {
+    local version="$1"
+    local arch
+    local candidate
 
-    shopt -s nullglob
-    for file_path in "$DEFAULT_DMG_DIR"/${APP_NAME}_V_*.dmg; do
-        [[ -f "$file_path" ]] || continue
-        file_mtime="$(stat -f '%m' "$file_path")"
-        if [[ -z "$latest_path" || "$file_mtime" -gt "$latest_mtime" ]]; then
-            latest_path="$file_path"
-            latest_mtime="$file_mtime"
+    for arch in "${SUPPORTED_ARCHS[@]}"; do
+        candidate="$DEFAULT_DMG_DIR/$(dmg_file_name "$version" "$arch")"
+        if [[ -f "$candidate" ]]; then
+            printf '%s\n' "$candidate"
         fi
     done
-    shopt -u nullglob
-
-    printf '%s\n' "$latest_path"
-}
-
-infer_version_from_dmg() {
-    local dmg_name
-    dmg_name="$(basename "$1")"
-
-    if [[ "$dmg_name" =~ ^${APP_NAME}_V_(.+)\.dmg$ ]]; then
-        printf '%s\n' "${BASH_REMATCH[1]}"
-        return 0
-    fi
-
-    return 1
 }
 
 resolve_github_token() {
@@ -190,6 +175,7 @@ PY
 }
 
 publish_with_github_api() {
+    local dmg_path
     local dmg_name
     local release_json
     local release_id
@@ -198,7 +184,6 @@ publish_with_github_api() {
     local asset_id
     local notes_content
     local payload
-    local upload_name
     local encoded_name
     local upload_url
 
@@ -208,10 +193,8 @@ publish_with_github_api() {
         exit 1
     fi
 
-    dmg_name="$(basename "$DMG_PATH")"
-
     if release_json="$(github_api_request GET "$GITHUB_API_BASE/repos/$REPO/releases/tags/$TAG" 2>/dev/null)"; then
-        echo "release exists; replacing asset"
+        echo "release exists; replacing assets"
     else
         echo "creating release"
 
@@ -233,18 +216,22 @@ publish_with_github_api() {
     release_url="$(printf '%s' "$release_json" | json_get "html_url")"
     release_body="$(printf '%s' "$release_json" | json_get "body" 2>/dev/null || true)"
 
-    asset_id="$(printf '%s' "$release_json" | json_find_release_asset_id "$dmg_name")"
-    if [[ -n "$asset_id" ]]; then
-        github_api_request DELETE "$GITHUB_API_BASE/repos/$REPO/releases/assets/$asset_id" >/dev/null
-    fi
+    for dmg_path in "${DMG_PATHS[@]}"; do
+        dmg_name="$(basename "$dmg_path")"
+        # 同名资源已存在时先删除再上传，便于重新发布某个架构的安装包
+        asset_id="$(printf '%s' "$release_json" | json_find_release_asset_id "$dmg_name")"
+        if [[ -n "$asset_id" ]]; then
+            github_api_request DELETE "$GITHUB_API_BASE/repos/$REPO/releases/assets/$asset_id" >/dev/null
+        fi
 
-    upload_name="$dmg_name"
-    encoded_name="$(url_encode "$upload_name")"
-    upload_url="https://uploads.github.com/repos/$REPO/releases/$release_id/assets?name=$encoded_name"
+        encoded_name="$(url_encode "$dmg_name")"
+        upload_url="https://uploads.github.com/repos/$REPO/releases/$release_id/assets?name=$encoded_name"
 
-    github_api_request POST "$upload_url" \
-        -H "Content-Type: application/octet-stream" \
-        --data-binary @"$DMG_PATH" >/dev/null
+        github_api_request POST "$upload_url" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @"$dmg_path" >/dev/null
+        echo "uploaded: $dmg_name"
+    done
 
     echo "published: $release_url"
 
@@ -258,7 +245,7 @@ publish_with_github_api() {
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dmg)
-            DMG_PATH="${2:-}"
+            DMG_PATHS+=("${2:-}")
             shift 2
             ;;
         --repo)
@@ -323,16 +310,41 @@ else
     HAS_GH=false
 fi
 
-if [[ -n "$DMG_PATH" ]]; then
-    DMG_PATH="$(resolve_existing_path "$DMG_PATH")"
-else
-    DMG_PATH="$(find_latest_dmg)"
+if [[ ${#DMG_PATHS[@]} -eq 0 ]]; then
+    MARKETING_VERSION_VALUE="$(read_marketing_version)"
+    while IFS= read -r dmg_path; do
+        DMG_PATHS+=("$dmg_path")
+    done < <(find_version_dmgs "$MARKETING_VERSION_VALUE")
 fi
 
-if [[ -z "$DMG_PATH" || ! -f "$DMG_PATH" ]]; then
-    echo "error: DMG not found" >&2
+if [[ ${#DMG_PATHS[@]} -eq 0 ]]; then
+    echo "error: no DMG found; run Scripts/build_dmg.sh first or pass --dmg" >&2
     exit 1
 fi
+
+# 校验所有安装包存在且版本一致，版本号从文件名中解析
+VERSION=""
+for index in "${!DMG_PATHS[@]}"; do
+    resolved_path="$(resolve_existing_path "${DMG_PATHS[$index]}")"
+    if [[ -z "$resolved_path" || ! -f "$resolved_path" ]]; then
+        echo "error: DMG not found: ${DMG_PATHS[$index]}" >&2
+        exit 1
+    fi
+    DMG_PATHS[$index]="$resolved_path"
+
+    if ! parsed="$(parse_dmg_file_name "$resolved_path")"; then
+        echo "error: unexpected DMG name: $(basename "$resolved_path")" >&2
+        exit 1
+    fi
+    read -r dmg_version _dmg_arch <<<"$parsed"
+
+    if [[ -z "$VERSION" ]]; then
+        VERSION="$dmg_version"
+    elif [[ "$VERSION" != "$dmg_version" ]]; then
+        echo "error: DMGs have different versions: $VERSION vs $dmg_version" >&2
+        exit 1
+    fi
+done
 
 if [[ -n "$NOTES_FILE" ]]; then
     NOTES_FILE="$(resolve_existing_path "$NOTES_FILE")"
@@ -346,15 +358,6 @@ if [[ -z "$REPO" ]]; then
     REPO="$(detect_repo)"
 fi
 
-VERSION="$(infer_version_from_dmg "$DMG_PATH" || true)"
-if [[ -z "$VERSION" ]]; then
-    VERSION="$(read_marketing_version)"
-fi
-if [[ -z "$VERSION" ]]; then
-    echo "error: failed to infer version" >&2
-    exit 1
-fi
-
 if [[ -z "$TAG" ]]; then
     TAG="v$VERSION"
 fi
@@ -366,12 +369,12 @@ fi
 echo "repo: $REPO"
 echo "tag: $TAG"
 echo "title: $TITLE"
-echo "dmg: $DMG_PATH"
+printf "dmg: %s\n" "${DMG_PATHS[@]}"
 
 if [[ "$HAS_GH" == true ]]; then
     if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
-        echo "release exists; uploading asset"
-        gh release upload "$TAG" "$DMG_PATH" -R "$REPO" --clobber
+        echo "release exists; uploading assets"
+        gh release upload "$TAG" "${DMG_PATHS[@]}" -R "$REPO" --clobber
 
         if [[ -n "$NOTES_FILE" ]]; then
             gh release edit "$TAG" -R "$REPO" --notes-file "$NOTES_FILE"
@@ -380,7 +383,7 @@ if [[ "$HAS_GH" == true ]]; then
         fi
     else
         echo "creating release"
-        create_args=(release create "$TAG" "$DMG_PATH" -R "$REPO" --title "$TITLE")
+        create_args=(release create "$TAG" "${DMG_PATHS[@]}" -R "$REPO" --title "$TITLE")
 
         if [[ "$GENERATE_NOTES" == true ]]; then
             create_args+=(--generate-notes)
@@ -406,7 +409,10 @@ else
     publish_with_github_api
 fi
 
-APPCAST_ARGS=(--repo "$REPO" --archive "$DMG_PATH")
+APPCAST_ARGS=(--repo "$REPO")
+for dmg_path in "${DMG_PATHS[@]}"; do
+    APPCAST_ARGS+=(--archive "$dmg_path")
+done
 if [[ -n "${APPCAST_NOTES:-}" ]]; then
     APPCAST_ARGS+=(--notes "$APPCAST_NOTES")
 fi

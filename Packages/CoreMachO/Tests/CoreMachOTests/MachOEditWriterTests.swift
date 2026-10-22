@@ -28,6 +28,9 @@ struct MachOEditWriterTests {
 
         #expect(slice.installName == "@rpath/libWriterFixturePatched.dylib")
         #expect(slice.dylibReferences.contains(where: { $0.path == "@rpath/libAbsoluteDependency.dylib" }))
+        #expect(slice.dylibReferences.contains(where: { $0.path == fixture.dependencyInstallName }) == false)
+        #expect(slice.codeSignature == nil)
+        #expect(result.removedCodeSignature)
         #expect(result.diff.entries.contains(where: { $0.kind == .installName }))
         #expect(result.diff.entries.contains(where: { $0.kind == .dylib }))
     }
@@ -434,5 +437,206 @@ struct MachOWriterHardeningTests {
             guard case .malformedLoadCommandArea = error as? MachOWriteError else { return false }
             return true
         }
+    }
+}
+
+struct MachOWriterSignatureAndPlatformTests {
+    @Test("edits that change nothing keep the code signature and the file bytes")
+    func noOpEditKeepsCodeSignature() throws {
+        let fixture = try WriterFixtureFactory.makeSignedDynamicLibraryFixture()
+        let outputURL = fixture.directory.appendingPathComponent("noop.dylib")
+
+        let result = try MachOWriter().write(
+            inputURL: fixture.binaryURL,
+            outputURL: outputURL,
+            editPlan: MachOEditPlan(rpathEdits: [.remove("@executable_path/DoesNotExist")])
+        )
+
+        #expect(result.diff.entries.isEmpty)
+        #expect(result.removedCodeSignature == false)
+        #expect(try Data(contentsOf: outputURL) == Data(contentsOf: fixture.binaryURL))
+        try FixtureCommand.run(launchPath: "/usr/bin/codesign", arguments: ["-v", outputURL.path])
+    }
+
+    @Test("real edits drop the now-invalid signature")
+    func realEditDropsSignature() throws {
+        let fixture = try WriterFixtureFactory.makeSignedDynamicLibraryFixture()
+        let outputURL = fixture.directory.appendingPathComponent("edited.dylib")
+
+        let result = try MachOWriter().write(
+            inputURL: fixture.binaryURL,
+            outputURL: outputURL,
+            editPlan: MachOEditPlan(rpathEdits: [.add("@executable_path/Frameworks")])
+        )
+
+        let slice = try #require(try MachOContainer.parse(at: outputURL).slices.first)
+        #expect(result.removedCodeSignature)
+        #expect(slice.codeSignature == nil)
+        #expect(result.diff.entries.contains(where: { $0.kind == .codeSignature }))
+    }
+
+    @Test("stripping a thin signature truncates it like codesign --remove-signature")
+    func stripTruncatesThinSignature() throws {
+        let fixture = try WriterFixtureFactory.makeSignedDynamicLibraryFixture()
+        let original = try #require(try MachOContainer.parse(at: fixture.binaryURL).slices.first)
+        let signature = try #require(original.codeSignature)
+        let originalLinkEdit = try #require(original.segments.first(where: { $0.name == "__LINKEDIT" }))
+        let outputURL = fixture.directory.appendingPathComponent("stripped.dylib")
+
+        _ = try MachOWriter().write(
+            inputURL: fixture.binaryURL,
+            outputURL: outputURL,
+            editPlan: MachOEditPlan(stripCodeSignature: true)
+        )
+
+        let stripped = try #require(try MachOContainer.parse(at: outputURL).slices.first)
+        let linkEdit = try #require(stripped.segments.first(where: { $0.name == "__LINKEDIT" }))
+        let outputSize = try Data(contentsOf: outputURL).count
+        #expect(outputSize == Int(signature.dataOffset))
+        #expect(linkEdit.fileOffset + linkEdit.fileSize == UInt64(signature.dataOffset))
+        #expect(linkEdit.vmSize == originalLinkEdit.vmSize)
+
+        // codesign 还会去掉签名前用于 16 字节对齐的少量填充，因此结果只会比我们小不超过 16 字节；
+        // 输出必须可以重新签名并通过严格校验。
+        let reference = fixture.directory.appendingPathComponent("reference.dylib")
+        try FileManager.default.copyItem(at: fixture.binaryURL, to: reference)
+        try FixtureCommand.run(launchPath: "/usr/bin/codesign", arguments: ["--remove-signature", reference.path])
+        let referenceSize = try Data(contentsOf: reference).count
+        #expect(referenceSize <= outputSize)
+        #expect(outputSize - referenceSize < 16)
+        try FixtureCommand.run(launchPath: "/usr/bin/codesign", arguments: ["-s", "-", outputURL.path])
+        try FixtureCommand.run(launchPath: "/usr/bin/codesign", arguments: ["-v", "--strict", outputURL.path])
+    }
+
+    @Test("stripping fat signatures updates fat_arch sizes and keeps slices re-signable")
+    func stripUpdatesFatSliceSizes() throws {
+        let fixture = try WriterFixtureFactory.makeSignedFatDynamicLibraryFixture()
+        let outputURL = fixture.directory.appendingPathComponent("stripped-fat.dylib")
+
+        let result = try MachOWriter().write(
+            inputURL: fixture.binaryURL,
+            outputURL: outputURL,
+            editPlan: MachOEditPlan(stripCodeSignature: true)
+        )
+
+        let data = try Data(contentsOf: outputURL)
+        let container = try MachOContainer.parse(at: outputURL)
+        let entries = try MachOFileParser(data: data).fatArchitectureEntries()
+        #expect(result.removedCodeSignature)
+        #expect(container.slices.count == 2)
+        for slice in container.slices {
+            let entry = try #require(entries.first(where: { $0.offset == slice.offset }))
+            let linkEdit = try #require(slice.segments.first(where: { $0.name == "__LINKEDIT" }))
+            #expect(slice.codeSignature == nil)
+            #expect(entry.size == linkEdit.fileOffset + linkEdit.fileSize)
+        }
+        // 文件末尾即最后一个切片的末尾，旧签名不再残留。
+        let lastEntry = try #require(entries.max(by: { $0.offset < $1.offset }))
+        #expect(data.count == lastEntry.offset + Int(lastEntry.size))
+
+        try FixtureCommand.run(launchPath: "/usr/bin/codesign", arguments: ["-s", "-", outputURL.path])
+        try FixtureCommand.run(launchPath: "/usr/bin/codesign", arguments: ["-v", "--strict", "--all-architectures", outputURL.path])
+    }
+
+    @Test("duplicate segment protection edits do not crash and the last one wins")
+    func duplicateSegmentProtectionEditsUseLastValue() throws {
+        let fixture = try WriterFixtureFactory.makeSignedDynamicLibraryFixture()
+        let outputURL = fixture.directory.appendingPathComponent("duplicate-segment-edits.dylib")
+
+        _ = try MachOWriter().write(
+            inputURL: fixture.binaryURL,
+            outputURL: outputURL,
+            editPlan: MachOEditPlan(
+                segmentProtectionEdits: [
+                    SegmentProtectionEdit(segmentName: "__DATA_CONST", initialProtection: [.read, .write]),
+                    SegmentProtectionEdit(segmentName: "__DATA_CONST", initialProtection: [.read]),
+                ]
+            )
+        )
+
+        let slice = try #require(try MachOContainer.parse(at: outputURL).slices.first)
+        let segment = try #require(slice.segments.first(where: { $0.name == "__DATA_CONST" }))
+        #expect(segment.initialProtection == [.read])
+    }
+
+    @Test("platform edits never leave duplicate version commands behind")
+    func platformEditCollapsesVersionCommands() throws {
+        let fixture = try WriterFixtureFactory.makeSignedDynamicLibraryFixture()
+        let slice = try #require(try MachOContainer.parse(at: fixture.binaryURL).slices.first)
+        let buildVersion = try #require(slice.buildVersion)
+        let data = try Data(contentsOf: fixture.binaryURL)
+
+        // 追加一条 LC_VERSION_MIN_MACOSX 和一条重复的 LC_BUILD_VERSION（模拟 zippered 二进制）。
+        var versionMin = Data()
+        versionMin.appendLittleEndian(UInt32(LC_VERSION_MIN_MACOSX))
+        versionMin.appendLittleEndian(UInt32(16))
+        versionMin.appendLittleEndian(UInt32(0x000D_0000))
+        versionMin.appendLittleEndian(UInt32(0x000D_0000))
+        let duplicateBuildVersion = data.subdata(in: buildVersion.commandOffset..<(buildVersion.commandOffset + 32))
+        try WriterFixtureFactory.appendLoadCommands([versionMin, duplicateBuildVersion], to: fixture.binaryURL)
+
+        let prepared = try #require(try MachOContainer.parse(at: fixture.binaryURL).slices.first)
+        #expect(prepared.loadCommands.filter { $0.command == UInt32(LC_BUILD_VERSION) }.count == 2)
+        #expect(prepared.versionMin != nil)
+
+        let outputURL = fixture.directory.appendingPathComponent("collapsed.dylib")
+        _ = try MachOWriter().write(
+            inputURL: fixture.binaryURL,
+            outputURL: outputURL,
+            editPlan: MachOEditPlan(
+                platformEdit: PlatformEdit(
+                    platform: .macCatalyst,
+                    minimumOS: MachOVersion(major: 15, minor: 0, patch: 0),
+                    sdk: MachOVersion(major: 15, minor: 0, patch: 0)
+                )
+            )
+        )
+
+        let rewritten = try #require(try MachOContainer.parse(at: outputURL).slices.first)
+        let versionCommands = rewritten.loadCommands.filter {
+            [UInt32(LC_BUILD_VERSION), UInt32(LC_VERSION_MIN_MACOSX), UInt32(LC_VERSION_MIN_IPHONEOS)].contains($0.command)
+        }
+        #expect(versionCommands.count == 1)
+        #expect(rewritten.buildVersion?.platform == .macCatalyst)
+        #expect(rewritten.buildVersion?.minimumOS == MachOVersion(major: 15, minor: 0, patch: 0))
+    }
+}
+
+extension WriterFixtureFactory {
+    static func makeSignedFatDynamicLibraryFixture() throws -> WriterFixture {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let sourceURL = directory.appendingPathComponent("fat.c")
+        let binaryURL = directory.appendingPathComponent("libFatSigned.dylib")
+        try "int fat_signed_value(void) { return 5; }\n".write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        try FixtureCommand.run(
+            launchPath: "/usr/bin/clang",
+            arguments: [
+                "-arch", "arm64", "-arch", "x86_64",
+                "-mmacosx-version-min=13.0",
+                "-dynamiclib", sourceURL.path,
+                "-o", binaryURL.path,
+            ]
+        )
+        try FixtureCommand.run(launchPath: "/usr/bin/codesign", arguments: ["-f", "-s", "-", binaryURL.path])
+        return WriterFixture(directory: directory, binaryURL: binaryURL, dependencyInstallName: "")
+    }
+
+    /// 把若干加载命令追加到 thin 文件的加载命令区（使用 headerpad 预留的空间）。
+    static func appendLoadCommands(_ commands: [Data], to url: URL) throws {
+        var data = try Data(contentsOf: url)
+        let commandCount = data.readLittleEndian(UInt32.self, at: 16)
+        let sizeofCommands = data.readLittleEndian(UInt32.self, at: 20)
+        var cursor = 32 + Int(sizeofCommands)
+        for command in commands {
+            data.replaceSubrange(cursor..<(cursor + command.count), with: command)
+            cursor += command.count
+        }
+        let added = commands.reduce(0) { $0 + $1.count }
+        data.writeLittleEndian(commandCount + UInt32(commands.count), at: 16)
+        data.writeLittleEndian(sizeofCommands + UInt32(added), at: 20)
+        try data.write(to: url, options: [.atomic])
     }
 }

@@ -23,7 +23,6 @@ struct MachOLayoutDocument {
     func document() -> BrowserDocument? {
         let name = url.lastPathComponent
         if isArchive(at: 0) {
-            let node = archiveNode(start: 0, end: reader.size, idPrefix: "archive/0")
             let root = factory.node(
                 id: "archive-root",
                 title: "Static Library",
@@ -37,7 +36,8 @@ struct MachOLayoutDocument {
                         BrowserDetailRow(key: "Targets", value: "1"),
                     ]
                 },
-                children: [{ node }]
+                // 归档节点在用户展开时才构建，初次打开只创建根节点。
+                children: [{ archiveNode(start: 0, end: reader.size, idPrefix: "archive/0") }]
             )
             return BrowserDocument(sourceName: name, kind: .archive, rootNodes: [root], hexSource: hexSource)
         }
@@ -95,11 +95,19 @@ struct MachOLayoutDocument {
         for index in 0..<Int(count) {
             let entry = 8 + index * entrySize
             guard reader.contains(entry, count: entrySize) else { return nil }
-            let offset = is64 ? Int(reader.u64BigEndian(at: entry + 8) ?? 0) : Int(reader.u32BigEndian(at: entry + 8) ?? 0)
-            let size = is64 ? Int(reader.u64BigEndian(at: entry + 16) ?? 0) : Int(reader.u32BigEndian(at: entry + 12) ?? 0)
+            let rawOffset = is64 ? reader.u64BigEndian(at: entry + 8) ?? 0 : UInt64(reader.u32BigEndian(at: entry + 8) ?? 0)
+            let rawSize = is64 ? reader.u64BigEndian(at: entry + 16) ?? 0 : UInt64(reader.u32BigEndian(at: entry + 12) ?? 0)
             let align = reader.u32BigEndian(at: entry + (is64 ? 24 : 16)) ?? 0
+            // fat_arch_64 的 offset/size 是 64 位：`Int(UInt64)` 超过 Int.max 会崩溃，`offset + size` 也可能溢出，
+            // 这里用 Int(exactly:) 和无溢出加法校验，不合法时整体按“非 fat 文件”处理。
+            guard let offset = Int(exactly: rawOffset), let size = Int(exactly: rawSize),
+                  let sliceEnd = MachOByteReader.offset(offset, adding: rawSize) else {
+                return nil
+            }
             // Java class files share 0xCAFEBABE; require every slice to fit inside the file.
-            guard offset >= entry + entrySize, size > 0, offset + size <= reader.size else { return nil }
+            guard offset >= entry + entrySize, size > 0, sliceEnd <= reader.size else {
+                return nil
+            }
             arches.append(FatArch(
                 index: index,
                 entryOffset: entry,
@@ -257,10 +265,15 @@ struct MachOLayoutDocument {
             let memberID = idPrefix + "/member/\(index)"
             if member.isSymbolTable {
                 children.append { memberHeaderNode(member, id: memberID + "/header", title: "Symtab Header") }
-                let table = symbolTable(member, archiveStart: start, members: members, swapped: swapped)
-                symbolCount += table.entries.count
-                children.append { symbolTableNode(table, id: memberID + "/symbols") }
-                children.append { archiveStringTableNode(table, id: memberID + "/strings") }
+                // 初次构建归档节点时只读取符号表头部的条目数，不解码任何符号名；
+                // 完整的符号表在对应子节点被展开时才构建，且按行惰性解码。
+                symbolCount += symbolTableLayout(member, swapped: swapped).count
+                children.append {
+                    symbolTableNode(symbolTable(member, archiveStart: start, members: members, swapped: swapped), id: memberID + "/symbols")
+                }
+                children.append {
+                    archiveStringTableNode(symbolTable(member, archiveStart: start, members: members, swapped: swapped), id: memberID + "/strings")
+                }
             } else if member.name == "//" {
                 children.append {
                     let lines = reader.bytes(at: member.dataOffset, count: member.dataSize).map { String(decoding: $0, as: UTF8.self) } ?? ""
@@ -318,7 +331,7 @@ struct MachOLayoutDocument {
         return rows.rows
     }
 
-    nonisolated(unsafe) static let dateFormatter: DateFormatter = {
+    static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
@@ -375,43 +388,47 @@ struct MachOLayoutDocument {
         let isGNU: Bool
         let swapped: Bool
         let entrySize: Int
-        let entries: [Entry]
+        /// 条目数（已按成员数据大小截断）。
+        let count: Int
         let tableStart: Int
+        let tableSize: Int
+        let stringsSizeOffset: Int?
+        let stringsStart: Int
+        let stringsSize: Int
+        /// 归档内成员头偏移 → 成员名，用于把 ran_off 显示成成员名。
+        let memberNames: [UInt64: String]
+        /// GNU 符号表的名字按顺序以 NUL 分隔存放；这里只记录每个名字的起始偏移（memchr 扫描，不解码字符串）。
+        let gnuNameOffsets: [Int32]
+    }
+
+    /// 符号表的固定布局（格式、条目数、各区域偏移），只读取少量头部字段，开销与符号数量无关。
+    struct ArchiveSymbolTableLayout {
+        let is64: Bool
+        let isGNU: Bool
+        let entrySize: Int
+        let count: Int
         let tableSize: Int
         let stringsSizeOffset: Int?
         let stringsStart: Int
         let stringsSize: Int
     }
 
-    func symbolTable(_ member: ArchiveMember, archiveStart: Int, members: [ArchiveMember], swapped: Bool) -> ArchiveSymbolTable {
-        let memberNames = Dictionary(members.map { (UInt64($0.headerOffset - archiveStart), $0.name) }, uniquingKeysWith: { first, _ in first })
+    func symbolTableLayout(_ member: ArchiveMember, swapped: Bool) -> ArchiveSymbolTableLayout {
         let start = member.dataOffset
         let end = start + member.dataSize
-        var entries: [ArchiveSymbolTable.Entry] = []
 
         if member.name == "/" || member.name == "/SYM64/" {
             // GNU: big-endian count, member offsets, then NUL-separated names.
             let is64 = member.name == "/SYM64/"
             let width = is64 ? 8 : 4
-            let count = Int(min(UInt64(is64 ? reader.u64BigEndian(at: start) ?? 0 : UInt64(reader.u32BigEndian(at: start) ?? 0)), UInt64(member.dataSize / width)))
+            let declared = is64 ? reader.u64BigEndian(at: start) ?? 0 : UInt64(reader.u32BigEndian(at: start) ?? 0)
+            // 头部之后最多能容纳的偏移项数；用 max(0, ...) 防止 dataSize 小于头部宽度时出现负数。
+            let fitting = UInt64(max(0, member.dataSize - width) / width)
+            let count = Int(min(declared, fitting))
             let stringsStart = start + width + count * width
-            var nameCursor = stringsStart
-            for index in 0..<count {
-                let offset = start + width + index * width
-                let memberOffset = is64 ? reader.u64BigEndian(at: offset) ?? 0 : UInt64(reader.u32BigEndian(at: offset) ?? 0)
-                let name = reader.cString(at: nameCursor, limit: end)
-                entries.append(.init(
-                    offset: offset,
-                    stringIndex: UInt64(nameCursor - stringsStart),
-                    memberOffset: memberOffset,
-                    name: name?.string ?? "",
-                    memberName: memberNames[memberOffset] ?? hex(memberOffset)
-                ))
-                nameCursor += (name?.length ?? 0) + 1
-            }
-            return ArchiveSymbolTable(
-                member: member, is64: is64, isGNU: true, swapped: false, entrySize: width, entries: entries,
-                tableStart: start, tableSize: width + count * width,
+            return ArchiveSymbolTableLayout(
+                is64: is64, isGNU: true, entrySize: width, count: count,
+                tableSize: width + count * width,
                 stringsSizeOffset: nil, stringsStart: stringsStart, stringsSize: max(0, end - stringsStart)
             )
         }
@@ -423,36 +440,70 @@ struct MachOLayoutDocument {
         func read(_ offset: Int) -> UInt64 {
             is64 ? reader.u64(at: offset, swapped: swapped) ?? 0 : UInt64(reader.u32(at: offset, swapped: swapped) ?? 0)
         }
-        let arraySize = Int(min(read(start), UInt64(member.dataSize)))
+        // ranlib 数组大小不能超过成员数据去掉头部宽度后的剩余字节，否则条目会读到成员之外。
+        let arraySize = Int(min(read(start), UInt64(max(0, member.dataSize - width))))
         let count = arraySize / entrySize
         let stringsSizeOffset = start + width + arraySize
         let stringsSize = Int(min(read(stringsSizeOffset), UInt64(max(0, end - stringsSizeOffset - width))))
-        let stringsStart = stringsSizeOffset + width
-        for index in 0..<count {
-            let offset = start + width + index * entrySize
-            let strx = read(offset)
-            let memberOffset = read(offset + width)
-            let name = strx < UInt64(stringsSize) ? reader.cString(at: stringsStart + Int(strx), limit: stringsStart + stringsSize)?.string : nil
-            entries.append(.init(
+        return ArchiveSymbolTableLayout(
+            is64: is64, isGNU: false, entrySize: entrySize, count: count,
+            tableSize: width + arraySize,
+            stringsSizeOffset: stringsSizeOffset, stringsStart: stringsSizeOffset + width, stringsSize: stringsSize
+        )
+    }
+
+    func symbolTable(_ member: ArchiveMember, archiveStart: Int, members: [ArchiveMember], swapped: Bool) -> ArchiveSymbolTable {
+        let layout = symbolTableLayout(member, swapped: swapped)
+        let memberNames = Dictionary(members.map { (UInt64($0.headerOffset - archiveStart), $0.name) }, uniquingKeysWith: { first, _ in first })
+        let gnuNameOffsets = layout.isGNU && layout.stringsSize > 0
+            ? reader.stringOffsets(from: layout.stringsStart, to: layout.stringsStart + layout.stringsSize)
+            : []
+        return ArchiveSymbolTable(
+            member: member, is64: layout.is64, isGNU: layout.isGNU, swapped: layout.isGNU ? false : swapped,
+            entrySize: layout.entrySize, count: layout.count,
+            tableStart: member.dataOffset, tableSize: layout.tableSize,
+            stringsSizeOffset: layout.stringsSizeOffset, stringsStart: layout.stringsStart, stringsSize: layout.stringsSize,
+            memberNames: memberNames, gnuNameOffsets: gnuNameOffsets
+        )
+    }
+
+    /// 按需解码第 `index` 个符号表条目（名字与所属成员）。
+    func symbolTableEntry(_ table: ArchiveSymbolTable, at index: Int) -> ArchiveSymbolTable.Entry {
+        let width = table.is64 ? 8 : 4
+        let stringsEnd = table.stringsStart + table.stringsSize
+        if table.isGNU {
+            let offset = table.tableStart + width + index * width
+            let memberOffset = table.is64 ? reader.u64BigEndian(at: offset) ?? 0 : UInt64(reader.u32BigEndian(at: offset) ?? 0)
+            // 第 index 个名字就是字符串区里的第 index 个 NUL 结尾字符串；名字不足时显示为空。
+            let relative = index < table.gnuNameOffsets.count ? Int(table.gnuNameOffsets[index]) : nil
+            let name = relative.flatMap { reader.cString(at: table.stringsStart + $0, limit: stringsEnd)?.string }
+            return .init(
                 offset: offset,
-                stringIndex: strx,
+                stringIndex: UInt64(relative ?? table.stringsSize),
                 memberOffset: memberOffset,
                 name: name ?? "",
-                memberName: memberNames[memberOffset] ?? hex(memberOffset)
-            ))
+                memberName: table.memberNames[memberOffset] ?? hex(memberOffset)
+            )
         }
-        return ArchiveSymbolTable(
-            member: member, is64: is64, isGNU: false, swapped: swapped, entrySize: entrySize, entries: entries,
-            tableStart: start, tableSize: width + arraySize,
-            stringsSizeOffset: stringsSizeOffset, stringsStart: stringsStart, stringsSize: stringsSize
+
+        let offset = table.tableStart + width + index * table.entrySize
+        let strx = reader.unsigned(at: offset, size: width, swapped: table.swapped) ?? 0
+        let memberOffset = reader.unsigned(at: offset + width, size: width, swapped: table.swapped) ?? 0
+        let name = strx < UInt64(table.stringsSize) ? reader.cString(at: table.stringsStart + Int(strx), limit: stringsEnd)?.string : nil
+        return .init(
+            offset: offset,
+            stringIndex: strx,
+            memberOffset: memberOffset,
+            name: name ?? "",
+            memberName: table.memberNames[memberOffset] ?? hex(memberOffset)
         )
     }
 
     func symbolTableNode(_ table: ArchiveSymbolTable, id: String) -> BrowserNode {
-        let entries = table.entries
         let width = table.is64 ? 8 : 4
         let rowsPerEntry = table.isGNU ? 1 : 2
         let reader = reader
+        let document = self
         func data(_ offset: Int) -> String? {
             let value: UInt64?
             if table.isGNU {
@@ -466,18 +517,19 @@ struct MachOLayoutDocument {
             id: id,
             title: "Symbol Table",
             range: BrowserDataRange(start: table.tableStart, length: table.tableSize, within: reader.size),
-            rowCount: 1 + entries.count * rowsPerEntry,
+            rowCount: 1 + table.count * rowsPerEntry,
             row: { index in
                 if index == 0 {
                     return BrowserDetailRow(
                         key: table.isGNU ? "Number of Symbols" : "Size",
-                        value: table.isGNU ? "\(entries.count)" : byteCount(UInt64(entries.count * table.entrySize)),
+                        value: table.isGNU ? "\(table.count)" : byteCount(UInt64(table.count * table.entrySize)),
                         dataPreview: data(table.tableStart),
                         rawAddress: UInt64(table.tableStart)
                     )
                 }
                 let entryIndex = (index - 1) / rowsPerEntry
-                let entry = entries[entryIndex]
+                // 每行只解码自己对应的条目，展开大型归档的符号表不会一次性解码全部符号名。
+                let entry = document.symbolTableEntry(table, at: entryIndex)
                 let group = UInt(entryIndex + 1)
                 if table.isGNU {
                     return BrowserDetailRow(

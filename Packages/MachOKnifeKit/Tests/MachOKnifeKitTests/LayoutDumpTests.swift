@@ -3,10 +3,17 @@ import Testing
 @testable import MachOKnifeKit
 
 /// Debug helper: `LAYOUT_DUMP_INPUT=/path LAYOUT_DUMP_OUTPUT=/tmp/out.txt swift test --filter LayoutDumpTests`.
+/// 未设置环境变量时该测试显示为“跳过”，而不是不做任何断言却报告“通过”。
 @Suite struct LayoutDumpTests {
-    @Test func dumpWhenRequested() throws {
+    @Test(
+        "dumps the layout tree of LAYOUT_DUMP_INPUT",
+        .enabled(if: ProcessInfo.processInfo.environment["LAYOUT_DUMP_INPUT"] != nil
+            && ProcessInfo.processInfo.environment["LAYOUT_DUMP_OUTPUT"] != nil)
+    )
+    func dumpWhenRequested() throws {
         let environment = ProcessInfo.processInfo.environment
-        guard let input = environment["LAYOUT_DUMP_INPUT"], let output = environment["LAYOUT_DUMP_OUTPUT"] else { return }
+        let input = try #require(environment["LAYOUT_DUMP_INPUT"])
+        let output = try #require(environment["LAYOUT_DUMP_OUTPUT"])
         let maxRows = Int(environment["LAYOUT_DUMP_ROWS"] ?? "") ?? 40
         let document = try BrowserDocumentService().load(url: URL(fileURLWithPath: input))
         var text = ""

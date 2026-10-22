@@ -6,6 +6,8 @@ struct ArchiveArchitectureMember {
     let name: String
     /// Slices of the member that match the architecture. Nil when the member is not a Mach-O.
     let slices: [CoreMachO.MachOSlice]?
+    /// 解压到临时目录中的成员文件；只在 `withMembers` 的闭包执行期间有效，返回后即被删除。
+    let fileURL: URL
 }
 
 /// Collects the members of a static library that belong to a single architecture.
@@ -23,29 +25,53 @@ enum ArchiveArchitectureMembers {
         archiveInspector: ArchiveInspector = ArchiveInspector(),
         fileManager: FileManager = .default
     ) throws -> [ArchiveArchitectureMember] {
+        try withMembers(
+            architecture: architecture,
+            in: archiveURL,
+            inspection: inspection,
+            archiveInspector: archiveInspector,
+            fileManager: fileManager
+        ) { members in
+            members
+        }
+    }
+
+    /// 与 `collect` 相同，但在临时成员文件仍然存在时调用 `body`，
+    /// 便于调用方（如按架构拆分混合架构的静态库）继续读取成员内容。临时目录在返回前统一清理。
+    static func withMembers<Result>(
+        architecture: String,
+        in archiveURL: URL,
+        inspection: ArchiveInspection,
+        archiveInspector: ArchiveInspector = ArchiveInspector(),
+        fileManager: FileManager = .default,
+        body: ([ArchiveArchitectureMember]) throws -> Result
+    ) throws -> Result {
         let extraction = try archiveInspector.extractThinArchive(
             url: archiveURL,
             preferredArchitecture: inspection.kind == .fatArchive ? architecture : nil
         )
-        defer { try? fileManager.removeItem(at: extraction.archiveURL.deletingLastPathComponent()) }
+        defer {
+            try? fileManager.removeItem(at: extraction.archiveURL.deletingLastPathComponent())
+        }
 
         let membersDirectory = fileManager.temporaryDirectory
             .appendingPathComponent("MachOKnifeArchiveMembers-\(UUID().uuidString)", isDirectory: true)
-        defer { try? fileManager.removeItem(at: membersDirectory) }
+        defer {
+            try? fileManager.removeItem(at: membersDirectory)
+        }
 
         let extractedMembers = try archiveInspector.extractIndexedMembers(from: extraction.archiveURL, to: membersDirectory)
             .filter { $0.isSymbolTable == false }
 
-        let filtersByArchitecture = inspection.kind == .archive
-            && Set(inspection.architectures.filter { $0 != "unknown" }).count > 1
+        let filtersByArchitecture = filtersMembersByArchitecture(inspection)
 
-        return extractedMembers.compactMap { member in
+        let members: [ArchiveArchitectureMember] = extractedMembers.compactMap { member in
             guard let container = try? MachOContainer.parse(at: member.fileURL), container.slices.isEmpty == false else {
-                return filtersByArchitecture ? nil : ArchiveArchitectureMember(name: member.name, slices: nil)
+                return filtersByArchitecture ? nil : ArchiveArchitectureMember(name: member.name, slices: nil, fileURL: member.fileURL)
             }
 
             guard filtersByArchitecture else {
-                return ArchiveArchitectureMember(name: member.name, slices: container.slices)
+                return ArchiveArchitectureMember(name: member.name, slices: container.slices, fileURL: member.fileURL)
             }
 
             let matchingSlices = container.slices.filter {
@@ -54,8 +80,14 @@ enum ArchiveArchitectureMembers {
             guard matchingSlices.isEmpty == false else {
                 return nil
             }
-            return ArchiveArchitectureMember(name: member.name, slices: matchingSlices)
+            return ArchiveArchitectureMember(name: member.name, slices: matchingSlices, fileURL: member.fileURL)
         }
+        return try body(members)
+    }
+
+    /// 非 fat 的静态库里混有多个架构的目标文件时，需要按成员自身的架构过滤。
+    static func filtersMembersByArchitecture(_ inspection: ArchiveInspection) -> Bool {
+        inspection.kind == .archive && Set(inspection.architectures.filter { $0 != "unknown" }).count > 1
     }
 }
 

@@ -40,6 +40,7 @@ struct RetagOperationTests {
         let slice = try #require(container.slices.first)
 
         #expect(slice.dylibReferences.contains(where: { $0.path == "@rpath/libAbsoluteDependency.dylib" }))
+        #expect(slice.dylibReferences.contains(where: { $0.path.hasPrefix(fixture.directory.path + "/") }) == false)
         #expect(result.diff.entries.contains(where: { $0.kind == .dylib }))
     }
 
@@ -105,7 +106,7 @@ struct RetagOperationTests {
         let outputURL = fixture.directory.appendingPathComponent("rewritten-fat.a")
         let engine = RetagEngine()
 
-        #expect(throws: ArchiveInspectorError.self) {
+        #expect {
             try engine.retagPlatform(
                 inputURL: fixture.binaryURL,
                 outputURL: outputURL,
@@ -113,7 +114,13 @@ struct RetagOperationTests {
                 minimumOS: MachOVersion(major: 14, minor: 0, patch: 0),
                 sdk: MachOVersion(major: 14, minor: 4, patch: 0)
             )
+        } throws: { error in
+            guard case let .architectureSelectionRequired(architectures)? = error as? ArchiveInspectorError else {
+                return false
+            }
+            return Set(architectures) == ["arm64", "x86_64"]
         }
+        #expect(FileManager.default.fileExists(atPath: outputURL.path) == false)
     }
 
     @Test("platform retag rewrites the selected fat static archive architecture and keeps the others")
@@ -307,6 +314,56 @@ struct RetagOperationTests {
     }
 }
 
+struct DyldCacheFixTests {
+    @Test("fix-dyld-cache-dylib works on executables that have no LC_ID_DYLIB")
+    func fixDyldCacheDylibHandlesExecutables() throws {
+        let fixture = try RetagFixtureFactory.makeExecutableWithAbsoluteDependencyFixture()
+        let outputURL = fixture.directory.appendingPathComponent("fixed-tool")
+
+        let result = try RetagEngine().fixDyldCacheDylib(inputURL: fixture.binaryURL, outputURL: outputURL)
+
+        let slice = try #require(try MachOContainer.parse(at: outputURL).slices.first)
+        #expect(slice.installNameInfo == nil)
+        #expect(result.diff.entries.contains(where: { $0.kind == .installName }) == false)
+        #expect(slice.dylibReferences.contains(where: { $0.path == "@rpath/libToolDependency.dylib" }))
+        #expect(slice.rpaths == ["@loader_path"])
+    }
+
+    @Test("fix-dyld-cache-dylib rewrites every slice of a fat dylib exactly once")
+    func fixDyldCacheDylibRewritesEveryFatSlice() throws {
+        let fixture = try RetagFixtureFactory.makeFatDyldCacheStyleFixture()
+        let outputURL = fixture.directory.appendingPathComponent("fixed-fat.dylib")
+        let engine = RetagEngine()
+
+        let preview = try engine.previewFixDyldCacheDylib(inputURL: fixture.binaryURL)
+        let result = try engine.fixDyldCacheDylib(inputURL: fixture.binaryURL, outputURL: outputURL)
+
+        let container = try MachOContainer.parse(at: outputURL)
+        #expect(container.slices.count == 2)
+        for slice in container.slices {
+            #expect(slice.installName == "@rpath/libFatCacheStyle.dylib")
+            #expect(slice.dylibReferences.contains(where: { $0.path == "@rpath/libFatCacheDependency.dylib" }))
+            #expect(slice.rpaths == ["@loader_path"])
+        }
+        // 预览与实际写入的修改项一致：每个切片各一条 install name / dylib / rpath 修改。
+        let previewKinds = preview.diff.entries.filter { $0.kind != .codeSignature }.map(\.kind)
+        let resultKinds = result.diff.entries.filter { $0.kind != .codeSignature }.map(\.kind)
+        #expect(previewKinds == resultKinds)
+        #expect(resultKinds.filter { $0 == .installName }.count == 2)
+    }
+
+    @Test("fix-dyld-cache-dylib leaves @rpath install names alone")
+    func fixDyldCacheDylibSkipsRPathInstallNames() throws {
+        let fixture = try RetagFixtureFactory.makeAbsolutePathFixture()
+
+        let preview = try RetagEngine().previewFixDyldCacheDylib(inputURL: fixture.binaryURL)
+
+        #expect(preview.diff.entries.contains(where: { $0.kind == .installName }) == false)
+        #expect(preview.diff.entries.contains(where: { $0.kind == .dylib }) == false)
+        #expect(preview.diff.entries.contains(where: { $0.kind == .rpath && $0.updatedValue == "@loader_path" }))
+    }
+}
+
 private enum RetagArchiveReader {
     /// Thins `archiveURL` (when fat) and returns the first object member's slice for `architecture`.
     static func firstObjectSlice(in archiveURL: URL, architecture: String, scratch: URL) throws -> MachOSlice {
@@ -409,6 +466,72 @@ private enum RetagFixtureFactory {
             ]
         )
 
+        return RetagFixture(directory: directory, binaryURL: mainBinaryURL)
+    }
+
+    static func makeExecutableWithAbsoluteDependencyFixture() throws -> RetagFixture {
+        let directory = try makeFixtureDirectory()
+        let dependencySourceURL = directory.appendingPathComponent("dependency.c")
+        let dependencyBinaryURL = directory.appendingPathComponent("libToolDependency.dylib")
+        let mainSourceURL = directory.appendingPathComponent("tool.c")
+        let toolURL = directory.appendingPathComponent("tool")
+
+        try "int tool_dependency(void) { return 4; }\n".write(to: dependencySourceURL, atomically: true, encoding: .utf8)
+        try "extern int tool_dependency(void);\nint main(void) { return tool_dependency() - 4; }\n"
+            .write(to: mainSourceURL, atomically: true, encoding: .utf8)
+
+        try RetagShell.run(
+            launchPath: "/usr/bin/clang",
+            arguments: [
+                "-target", "x86_64-apple-macos13.0",
+                "-dynamiclib", dependencySourceURL.path,
+                "-Wl,-install_name,\(dependencyBinaryURL.path)",
+                "-o", dependencyBinaryURL.path,
+            ]
+        )
+        try RetagShell.run(
+            launchPath: "/usr/bin/clang",
+            arguments: [
+                "-target", "x86_64-apple-macos13.0",
+                mainSourceURL.path,
+                "-L\(directory.path)", "-lToolDependency",
+                "-Wl,-headerpad,0x1000",
+                "-o", toolURL.path,
+            ]
+        )
+        return RetagFixture(directory: directory, binaryURL: toolURL)
+    }
+
+    static func makeFatDyldCacheStyleFixture() throws -> RetagFixture {
+        let directory = try makeFixtureDirectory()
+        let dependencySourceURL = directory.appendingPathComponent("dependency.c")
+        let dependencyBinaryURL = directory.appendingPathComponent("libFatCacheDependency.dylib")
+        let mainSourceURL = directory.appendingPathComponent("main.c")
+        let mainBinaryURL = directory.appendingPathComponent("libFatCacheStyle.dylib")
+
+        try "int fat_cache_dependency(void) { return 2; }\n".write(to: dependencySourceURL, atomically: true, encoding: .utf8)
+        try "extern int fat_cache_dependency(void);\nint fat_cache_entry(void) { return fat_cache_dependency(); }\n"
+            .write(to: mainSourceURL, atomically: true, encoding: .utf8)
+
+        let architectures = ["-arch", "arm64", "-arch", "x86_64", "-mmacosx-version-min=13.0"]
+        try RetagShell.run(
+            launchPath: "/usr/bin/clang",
+            arguments: architectures + [
+                "-dynamiclib", dependencySourceURL.path,
+                "-Wl,-install_name,/usr/lib/libFatCacheDependency.dylib",
+                "-o", dependencyBinaryURL.path,
+            ]
+        )
+        try RetagShell.run(
+            launchPath: "/usr/bin/clang",
+            arguments: architectures + [
+                "-dynamiclib", mainSourceURL.path,
+                "-L\(directory.path)", "-lFatCacheDependency",
+                "-Wl,-headerpad,0x1000",
+                "-Wl,-install_name,/usr/lib/libFatCacheStyle.dylib",
+                "-o", mainBinaryURL.path,
+            ]
+        )
         return RetagFixture(directory: directory, binaryURL: mainBinaryURL)
     }
 
@@ -572,7 +695,8 @@ private enum RetagFixtureFactory {
         let container = try MachOContainer.parse(at: objectURL)
         let slice = try #require(container.slices.first)
         guard let buildVersion = slice.buildVersion else {
-            // Newer toolchains may already emit LC_VERSION_MIN_IPHONEOS for these fixtures.
+            // 部分工具链会直接生成 LC_VERSION_MIN_*；此时夹具已满足要求，否则夹具本身有问题。
+            _ = try #require(slice.versionMin, "fixture object has neither LC_BUILD_VERSION nor LC_VERSION_MIN_*")
             return
         }
 
@@ -581,6 +705,11 @@ private enum RetagFixtureFactory {
         writeUInt32(packedVersion(MachOVersion(major: 11, minor: 0, patch: 0)), into: &data, at: buildVersion.commandOffset + 8)
         writeUInt32(packedVersion(MachOVersion(major: 16, minor: 5, patch: 0)), into: &data, at: buildVersion.commandOffset + 12)
         try data.write(to: objectURL, options: [.atomic])
+
+        // 确认改写确实生效，避免后续“version-min → build-version”测试变成空测试。
+        let rewritten = try #require(try MachOContainer.parse(at: objectURL).slices.first)
+        _ = try #require(rewritten.versionMin)
+        #expect(rewritten.buildVersion == nil)
     }
 
     private static func packedVersion(_ version: MachOVersion) -> UInt32 {

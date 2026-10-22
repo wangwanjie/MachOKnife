@@ -144,7 +144,7 @@ struct MachOLayoutBuilder {
                 segments.enumerated().map { index, segment in
                     BrowserDetailRow(
                         key: segment.name.isEmpty ? "(unnamed)" : segment.name,
-                        value: "\(hex(segment.vmaddr))-\(hex(segment.vmaddr + segment.vmsize))  \(MachOConstants.vmProtectionShort(segment.initprot))/\(MachOConstants.vmProtectionShort(segment.maxprot))  file \(hex(segment.fileoff))+\(hex(segment.filesize))",
+                        value: "\(hex(segment.vmaddr))-\(hex(segment.vmaddr &+ segment.vmsize))  \(MachOConstants.vmProtectionShort(segment.initprot))/\(MachOConstants.vmProtectionShort(segment.maxprot))  file \(hex(segment.fileoff))+\(hex(segment.filesize))",
                         rawAddress: slice.absolute(segment.fileoff).map { UInt64($0) },
                         rvaAddress: segment.vmaddr,
                         groupIdentifier: UInt(index)

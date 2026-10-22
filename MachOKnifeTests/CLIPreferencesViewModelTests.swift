@@ -69,21 +69,71 @@ struct CLIPreferencesViewModelTests {
 
         #expect(viewModel.state == .readyToInstall(installDirectory: installDirectory))
     }
+
+    @Test("refresh shows not-configured state when no install directory is chosen")
+    func refreshShowsNotConfiguredState() throws {
+        let service = StubCLIInstallService(
+            currentStatus: CLIInstallStatus(installDirectoryURL: nil, installedCLIURL: nil, isInstalled: false)
+        )
+        let viewModel = CLIPreferencesViewModel(installService: service)
+
+        try viewModel.refresh()
+
+        #expect(viewModel.state == .notConfigured)
+    }
+
+    @Test("an installed status without an executable URL falls back to ready-to-install")
+    func installedStatusWithoutURLFallsBackToReadyToInstall() throws {
+        let installDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let service = StubCLIInstallService(
+            currentStatus: CLIInstallStatus(installDirectoryURL: installDirectory, installedCLIURL: nil, isInstalled: true)
+        )
+        let viewModel = CLIPreferencesViewModel(installService: service)
+
+        try viewModel.refresh()
+
+        #expect(viewModel.state == .readyToInstall(installDirectory: installDirectory))
+    }
+
+    @Test("service errors propagate and keep the previous state")
+    func serviceErrorsPropagateAndKeepState() throws {
+        let installDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let service = StubCLIInstallService(
+            currentStatus: CLIInstallStatus(
+                installDirectoryURL: installDirectory,
+                installedCLIURL: installDirectory.appendingPathComponent("machoe-cli"),
+                isInstalled: false
+            ),
+            installError: CLIInstallError.bundledCLINotFound
+        )
+        let viewModel = CLIPreferencesViewModel(installService: service)
+        try viewModel.refresh()
+
+        #expect(throws: CLIInstallError.bundledCLINotFound) {
+            try viewModel.installCLI()
+        }
+        #expect(viewModel.state == .readyToInstall(installDirectory: installDirectory))
+    }
 }
 
 private final class StubCLIInstallService: CLIInstallServicing {
     private let currentStatus: CLIInstallStatus
     private let installStatus: CLIInstallStatus?
     private let uninstallStatus: CLIInstallStatus?
+    private let installError: Error?
 
     init(
         currentStatus: CLIInstallStatus,
         installStatus: CLIInstallStatus? = nil,
-        uninstallStatus: CLIInstallStatus? = nil
+        uninstallStatus: CLIInstallStatus? = nil,
+        installError: Error? = nil
     ) {
         self.currentStatus = currentStatus
         self.installStatus = installStatus
         self.uninstallStatus = uninstallStatus
+        self.installError = installError
     }
 
     func status() throws -> CLIInstallStatus {
@@ -91,7 +141,10 @@ private final class StubCLIInstallService: CLIInstallServicing {
     }
 
     func install() throws -> CLIInstallStatus {
-        installStatus ?? currentStatus
+        if let installError {
+            throw installError
+        }
+        return installStatus ?? currentStatus
     }
 
     func uninstall() throws -> CLIInstallStatus {

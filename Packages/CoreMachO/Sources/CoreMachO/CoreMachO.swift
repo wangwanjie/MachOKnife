@@ -11,12 +11,25 @@ public enum MachOParseError: Error {
 struct MachOFileParser {
     let data: Data
 
+    init(data: Data) {
+        // 解析代码统一按 0 起始的下标访问 Data；传入切片（startIndex != 0）时先复制一份，
+        // 避免 `data[a..<b]` 这类绝对下标访问与 `withUnsafeBytes` 的相对偏移不一致。
+        if data.startIndex == 0 {
+            self.data = data
+        } else {
+            self.data = Data(data)
+        }
+    }
+
     func parseContainer() throws -> MachOContainer {
         let magic = try read(UInt32.self, at: 0)
 
         switch magic {
         case FAT_MAGIC, FAT_CIGAM, FAT_MAGIC_64, FAT_CIGAM_64:
-            return try parseFatContainer(magic: magic)
+            let slices = try fatArchitectureEntries().map { entry in
+                try parseSlice(at: entry.offset, magic: try thinSliceMagic(at: entry.offset))
+            }
+            return MachOContainer(kind: .fat, slices: slices)
         case MH_MAGIC, MH_CIGAM, MH_MAGIC_64, MH_CIGAM_64:
             return MachOContainer(kind: .thin, slices: [try parseSlice(at: 0, magic: magic)])
         default:
@@ -29,7 +42,15 @@ struct MachOFileParser {
 
         switch magic {
         case FAT_MAGIC, FAT_CIGAM, FAT_MAGIC_64, FAT_CIGAM_64:
-            return try parseFatMetadataScan(fileURL: fileURL, fileSize: fileSize, magic: magic)
+            let slices = try fatArchitectureEntries().map { entry in
+                try scanSlice(at: entry.offset, magic: try thinSliceMagic(at: entry.offset))
+            }
+            return MachOMetadataScan(
+                fileURL: fileURL,
+                fileSize: fileSize,
+                kind: .fat,
+                slices: slices
+            )
         case MH_MAGIC, MH_CIGAM, MH_MAGIC_64, MH_CIGAM_64:
             return MachOMetadataScan(
                 fileURL: fileURL,
@@ -42,68 +63,95 @@ struct MachOFileParser {
         }
     }
 
-    private func parseFatContainer(magic: UInt32) throws -> MachOContainer {
+    /// 只读取每个切片的 Mach-O 头部（CPU 类型/子类型），不解析加载命令和符号表。
+    /// 用于静态库成员等只需要识别架构的场景，避免对每个成员做完整解析。
+    func sliceCPUTypes() throws -> [(cpuType: Int32, cpuSubtype: Int32)] {
+        let magic = try read(UInt32.self, at: 0)
+
+        switch magic {
+        case FAT_MAGIC, FAT_CIGAM, FAT_MAGIC_64, FAT_CIGAM_64:
+            return try fatArchitectureEntries().map { entry in
+                let header = try parseHeader(at: entry.offset, magic: try thinSliceMagic(at: entry.offset))
+                return (header.info.cpuType, header.info.cpuSubtype)
+            }
+        case MH_MAGIC, MH_CIGAM, MH_MAGIC_64, MH_CIGAM_64:
+            let header = try parseHeader(at: 0, magic: magic)
+            return [(header.info.cpuType, header.info.cpuSubtype)]
+        default:
+            throw MachOParseError.unsupportedMagic(magic)
+        }
+    }
+
+    /// 解析 fat 头中的全部 `fat_arch` / `fat_arch_64` 条目。
+    /// 调用方需保证文件以 fat magic 开头；`nfat_arch` 与切片偏移都来自不可信输入，这里统一做边界校验。
+    func fatArchitectureEntries() throws -> [FatArchitectureEntry] {
+        let magic = try read(UInt32.self, at: 0)
         let swapped = magic == FAT_CIGAM || magic == FAT_CIGAM_64
         let is64Bit = magic == FAT_MAGIC_64 || magic == FAT_CIGAM_64
         let header = try read(fat_header.self, at: 0)
-        let architectureCount = normalize(header.nfat_arch, swapped: swapped)
+        let architectureCount = Int(normalize(header.nfat_arch, swapped: swapped))
+        let entrySize = is64Bit ? MemoryLayout<fat_arch_64>.size : MemoryLayout<fat_arch>.size
+        let entriesStart = MemoryLayout<fat_header>.size
 
-        let slices = try (0..<Int(architectureCount)).map { index in
-            if is64Bit {
-                let architectureOffset = MemoryLayout<fat_header>.size + index * MemoryLayout<fat_arch_64>.size
-                let architecture = try read(fat_arch_64.self, at: architectureOffset)
-                let sliceOffset = try fatSliceOffset(normalize(architecture.offset, swapped: swapped))
-                let sliceMagic = try read(UInt32.self, at: sliceOffset)
-                return try parseSlice(at: sliceOffset, magic: sliceMagic)
-            } else {
-                let architectureOffset = MemoryLayout<fat_header>.size + index * MemoryLayout<fat_arch>.size
-                let architecture = try read(fat_arch.self, at: architectureOffset)
-                let sliceOffset = Int(normalize(architecture.offset, swapped: swapped))
-                let sliceMagic = try read(UInt32.self, at: sliceOffset)
-                return try parseSlice(at: sliceOffset, magic: sliceMagic)
-            }
+        // 先确认所有条目都位于文件内，避免 nfat_arch 被篡改成超大值时按其数量预分配数组导致内存耗尽。
+        guard architectureCount <= (data.count - entriesStart) / entrySize else {
+            throw MachOParseError.outOfBounds(offset: entriesStart, size: architectureCount * entrySize)
         }
 
-        return MachOContainer(kind: .fat, slices: slices)
-    }
-
-    private func parseFatMetadataScan(fileURL: URL, fileSize: Int, magic: UInt32) throws -> MachOMetadataScan {
-        let swapped = magic == FAT_CIGAM || magic == FAT_CIGAM_64
-        let is64Bit = magic == FAT_MAGIC_64 || magic == FAT_CIGAM_64
-        let header = try read(fat_header.self, at: 0)
-        let architectureCount = normalize(header.nfat_arch, swapped: swapped)
-
-        let slices = try (0..<Int(architectureCount)).map { index in
+        var entries = [FatArchitectureEntry]()
+        entries.reserveCapacity(architectureCount)
+        for index in 0..<architectureCount {
+            let entryOffset = entriesStart + index * entrySize
             if is64Bit {
-                let architectureOffset = MemoryLayout<fat_header>.size + index * MemoryLayout<fat_arch_64>.size
-                let architecture = try read(fat_arch_64.self, at: architectureOffset)
-                let sliceOffset = try fatSliceOffset(normalize(architecture.offset, swapped: swapped))
-                let sliceMagic = try read(UInt32.self, at: sliceOffset)
-                return try scanSlice(at: sliceOffset, magic: sliceMagic)
+                let architecture = try read(fat_arch_64.self, at: entryOffset)
+                entries.append(
+                    FatArchitectureEntry(
+                        entryOffset: entryOffset,
+                        is64Bit: true,
+                        isByteSwapped: swapped,
+                        cpuType: normalize(architecture.cputype, swapped: swapped),
+                        cpuSubtype: normalize(architecture.cpusubtype, swapped: swapped),
+                        offset: try fatSliceOffset(normalize(architecture.offset, swapped: swapped)),
+                        size: normalize(architecture.size, swapped: swapped)
+                    )
+                )
             } else {
-                let architectureOffset = MemoryLayout<fat_header>.size + index * MemoryLayout<fat_arch>.size
-                let architecture = try read(fat_arch.self, at: architectureOffset)
-                let sliceOffset = Int(normalize(architecture.offset, swapped: swapped))
-                let sliceMagic = try read(UInt32.self, at: sliceOffset)
-                return try scanSlice(at: sliceOffset, magic: sliceMagic)
+                let architecture = try read(fat_arch.self, at: entryOffset)
+                entries.append(
+                    FatArchitectureEntry(
+                        entryOffset: entryOffset,
+                        is64Bit: false,
+                        isByteSwapped: swapped,
+                        cpuType: normalize(architecture.cputype, swapped: swapped),
+                        cpuSubtype: normalize(architecture.cpusubtype, swapped: swapped),
+                        offset: try fatSliceOffset(UInt64(normalize(architecture.offset, swapped: swapped))),
+                        size: UInt64(normalize(architecture.size, swapped: swapped))
+                    )
+                )
             }
         }
-
-        return MachOMetadataScan(
-            fileURL: fileURL,
-            fileSize: fileSize,
-            kind: .fat,
-            slices: slices
-        )
+        return entries
     }
 
-    /// Converts a 64-bit fat slice offset to `Int`, throwing instead of trapping when the
+    /// Converts a fat slice offset to `Int`, throwing instead of trapping when the
     /// recorded value does not fit or lies beyond the end of the file.
     private func fatSliceOffset(_ rawOffset: UInt64) throws -> Int {
         guard let offset = Int(exactly: rawOffset), offset <= data.count else {
             throw MachOParseError.outOfBounds(offset: Int(clamping: rawOffset), size: MemoryLayout<UInt32>.size)
         }
         return offset
+    }
+
+    /// 读取 fat 切片的 magic，并要求它是 thin Mach-O。
+    /// 以前任何 magic 都会被当成 32 位小端头解析，fat 静态库切片或损坏文件会产出垃圾结果。
+    private func thinSliceMagic(at offset: Int) throws -> UInt32 {
+        let magic = try read(UInt32.self, at: offset)
+        switch magic {
+        case MH_MAGIC, MH_CIGAM, MH_MAGIC_64, MH_CIGAM_64:
+            return magic
+        default:
+            throw MachOParseError.unsupportedMagic(magic)
+        }
     }
 
     private func parseSlice(at offset: Int, magic: UInt32) throws -> MachOSlice {
@@ -168,7 +216,10 @@ struct MachOFileParser {
 
         var cursor = commandsStart
         var loadCommands = [MachOLoadCommandInfo]()
-        loadCommands.reserveCapacity(Int(parsedHeader.info.numberOfCommands))
+        // ncmds 来自不可信文件：每条加载命令至少 8 字节，预分配数量不超过 sizeofcmds 能容纳的上限，
+        // 防止 ncmds 被篡改为超大值时一次性申请巨量内存。
+        let maximumCommandCount = Int(parsedHeader.info.sizeofCommands) / MemoryLayout<load_command>.size
+        loadCommands.reserveCapacity(min(Int(parsedHeader.info.numberOfCommands), maximumCommandCount))
         var installNameInfo: DylibCommandInfo?
         var dylibReferences = [DylibCommandInfo]()
         var rpathCommands = [RPathCommandInfo]()
@@ -284,13 +335,18 @@ struct MachOFileParser {
         commandOffset: Int,
         swapped: Bool
     ) throws -> MachOLoadCommandInfo.Payload? {
+        // 已知命令的 cmdsize 必须能容纳其固定结构体，否则读取的字段会越过本命令、落到后续命令或文件内容上。
+        if let minimumSize = minimumCommandSize(for: commandType), Int(commandSize) < minimumSize {
+            throw MachOParseError.invalidLoadCommandSize(commandSize)
+        }
+
         switch commandType {
         case UInt32(LC_ID_DYLIB), UInt32(LC_LOAD_DYLIB), UInt32(LC_LOAD_WEAK_DYLIB), UInt32(LC_REEXPORT_DYLIB), UInt32(LC_LOAD_UPWARD_DYLIB):
             return .dylib(try parseDylibCommand(at: commandOffset, swapped: swapped))
         case UInt32(LC_RPATH):
             return .rpath(try parseRPathCommand(at: commandOffset, swapped: swapped))
         case UInt32(LC_BUILD_VERSION):
-            return .buildVersion(try parseBuildVersionCommand(at: commandOffset, swapped: swapped))
+            return .buildVersion(try parseBuildVersionCommand(at: commandOffset, commandSize: commandSize, swapped: swapped))
         case UInt32(LC_VERSION_MIN_MACOSX), UInt32(LC_VERSION_MIN_IPHONEOS), UInt32(LC_VERSION_MIN_TVOS), UInt32(LC_VERSION_MIN_WATCHOS):
             return .versionMin(try parseVersionMinCommand(at: commandOffset, command: commandType, swapped: swapped))
         case UInt32(LC_SEGMENT):
@@ -307,6 +363,36 @@ struct MachOFileParser {
             return .encryptionInfo(try parseEncryptionInfo32(at: commandOffset, command: commandType, swapped: swapped))
         case UInt32(LC_ENCRYPTION_INFO_64):
             return .encryptionInfo(try parseEncryptionInfo64(at: commandOffset, command: commandType, swapped: swapped))
+        default:
+            return nil
+        }
+    }
+
+    /// 返回会被解析出 payload 的加载命令所需的最小 cmdsize；未知命令返回 nil。
+    private func minimumCommandSize(for commandType: UInt32) -> Int? {
+        switch commandType {
+        case UInt32(LC_ID_DYLIB), UInt32(LC_LOAD_DYLIB), UInt32(LC_LOAD_WEAK_DYLIB), UInt32(LC_REEXPORT_DYLIB), UInt32(LC_LOAD_UPWARD_DYLIB):
+            return MemoryLayout<dylib_command>.size
+        case UInt32(LC_RPATH):
+            return MemoryLayout<rpath_command>.size
+        case UInt32(LC_BUILD_VERSION):
+            return MemoryLayout<build_version_command>.size
+        case UInt32(LC_VERSION_MIN_MACOSX), UInt32(LC_VERSION_MIN_IPHONEOS), UInt32(LC_VERSION_MIN_TVOS), UInt32(LC_VERSION_MIN_WATCHOS):
+            return MemoryLayout<version_min_command>.size
+        case UInt32(LC_SEGMENT):
+            return MemoryLayout<segment_command>.size
+        case UInt32(LC_SEGMENT_64):
+            return MemoryLayout<segment_command_64>.size
+        case UInt32(LC_SYMTAB):
+            return MemoryLayout<symtab_command>.size
+        case UInt32(LC_UUID):
+            return MemoryLayout<uuid_command>.size
+        case UInt32(LC_CODE_SIGNATURE):
+            return MemoryLayout<linkedit_data_command>.size
+        case UInt32(LC_ENCRYPTION_INFO):
+            return MemoryLayout<encryption_info_command>.size
+        case UInt32(LC_ENCRYPTION_INFO_64):
+            return MemoryLayout<encryption_info_command_64>.size
         default:
             return nil
         }
@@ -342,10 +428,16 @@ struct MachOFileParser {
         )
     }
 
-    private func parseBuildVersionCommand(at offset: Int, swapped: Bool) throws -> BuildVersionInfo {
+    private func parseBuildVersionCommand(at offset: Int, commandSize: UInt32, swapped: Bool) throws -> BuildVersionInfo {
         let command = try read(build_version_command.self, at: offset)
         let toolCount = Int(normalize(command.ntools, swapped: swapped))
         let toolsStart = offset + MemoryLayout<build_version_command>.size
+        // ntools 不可信：工具条目必须全部落在本命令 cmdsize 范围内。
+        // 以前既不校验也会按 ntools 预分配，篡改后的 ntools 会读到后续命令甚至耗尽内存。
+        let maximumToolCount = (Int(commandSize) - MemoryLayout<build_version_command>.size) / MemoryLayout<build_tool_version>.size
+        guard toolCount <= maximumToolCount else {
+            throw MachOParseError.invalidLoadCommandSize(commandSize)
+        }
         var tools = [BuildToolVersionInfo]()
         tools.reserveCapacity(toolCount)
 
@@ -536,7 +628,8 @@ struct MachOFileParser {
             )
         }
 
-        let endIndex = min(totalSymbolCount, startIndex + maximumCount)
+        // 用剩余数量做比较而不是 startIndex + maximumCount，避免 maximumCount 很大（如 Int.max）时整数溢出崩溃。
+        let endIndex = startIndex + min(maximumCount, totalSymbolCount - startIndex)
         let symbols = try parseSymbols(
             using: symbolTable,
             sliceOffset: slice.offset,
@@ -571,19 +664,30 @@ struct MachOFileParser {
             throw MachOParseError.outOfBounds(offset: stringTableStart, size: stringTableSize)
         }
 
+        guard startIndex >= 0 else {
+            throw MachOStringTableReaderError.startIndexOutOfBounds(
+                startIndex: startIndex,
+                totalEntryCount: 0
+            )
+        }
+
         var entries = [MachOStringTableEntry]()
-        entries.reserveCapacity(maximumCount)
+        // 预分配不超过字符串表字节数（每条至少 1 字节），避免调用方传入超大 maximumCount 时申请巨量内存。
+        entries.reserveCapacity(min(maximumCount, stringTableSize))
 
         var totalEntryCount = 0
         var cursor = stringTableStart
         while cursor < stringTableEnd {
             let entryOffset = cursor - stringTableStart
-            let string = String(decoding: data[cursor..<stringTableEnd].prefix { $0 != 0 }, as: UTF8.self)
+            // 按原始字节查找 NUL 结尾：以前用解码后字符串的 utf8.count 推进游标，
+            // 非法 UTF-8 字节会被替换为 3 字节的 U+FFFD，导致游标错位、后续条目全部解析错误。
+            let terminator = data[cursor..<stringTableEnd].firstIndex(of: 0) ?? stringTableEnd
             if totalEntryCount >= startIndex, entries.count < maximumCount {
+                let string = String(decoding: data[cursor..<terminator], as: UTF8.self)
                 entries.append(MachOStringTableEntry(stringTableIndex: entryOffset, string: string))
             }
             totalEntryCount += 1
-            cursor += max(string.utf8.count, 0) + 1
+            cursor = terminator + 1
         }
 
         guard startIndex < totalEntryCount else {
@@ -815,4 +919,18 @@ private struct ParsedSliceComponents {
     let codeSignature: LinkEditDataInfo?
     let encryptionInfo: EncryptionInfo?
     let swapped: Bool
+}
+
+/// fat 头中的一个架构条目（字段均已转换为主机字节序）。
+struct FatArchitectureEntry {
+    /// `fat_arch` / `fat_arch_64` 条目本身在文件中的偏移，写回 size 等字段时使用。
+    let entryOffset: Int
+    let is64Bit: Bool
+    let isByteSwapped: Bool
+    let cpuType: Int32
+    let cpuSubtype: Int32
+    /// 切片在文件中的起始偏移。
+    let offset: Int
+    /// fat 头记录的切片大小（未校验，可能超出文件末尾）。
+    let size: UInt64
 }

@@ -57,6 +57,13 @@ final class RecentFilesController {
         return records.map(resolveRecentFileURL(for:))
     }
 
+    /// 清空最近文件列表：删除数据库中的全部记录，并丢弃为这些文件保存的安全作用域书签，
+    /// 避免已从菜单移除的文件仍保留沙盒访问凭据。
+    func clearRecentFiles() throws {
+        try makeStore().removeAll()
+        defaults.removeObject(forKey: Keys.recentFileBookmarks)
+    }
+
     private func makeStore() -> RecentFilesStore {
         RecentFilesStore(appDatabase: database, maxEntries: settings.recentFilesLimit)
     }
@@ -73,7 +80,9 @@ final class RecentFilesController {
             }
             return resolved.url
         } catch {
-            removeBookmark(forPath: record.path)
+            // 解析失败不一定代表书签已失效：书签以 `.withoutMounting` 解析，文件所在的外接/网络卷
+            // 暂未挂载时同样会失败。保留书签以便卷重新挂载后恢复沙盒访问权限；
+            // 书签会随记录被淘汰时由 `pruneBookmarks` 清理。
             return URL(fileURLWithPath: record.path)
         }
     }
@@ -94,12 +103,6 @@ final class RecentFilesController {
         }
         var bookmarks = recentFileBookmarks()
         bookmarks[pathKey] = refreshedData
-        defaults.set(bookmarks, forKey: Keys.recentFileBookmarks)
-    }
-
-    private func removeBookmark(forPath path: String) {
-        var bookmarks = recentFileBookmarks()
-        bookmarks.removeValue(forKey: path)
         defaults.set(bookmarks, forKey: Keys.recentFileBookmarks)
     }
 
@@ -163,9 +166,11 @@ final class RecentFilesController {
 
     nonisolated static func resolveBookmarkData(_ data: Data) throws -> BookmarkResolutionResult {
         var isStale = false
+        // 最近文件菜单在主线程上构建：禁止解析过程弹出界面或挂载网络/外接卷，
+        // 否则一个指向离线网络卷的条目就可能让菜单刷新长时间阻塞主线程。
         let url = try URL(
             resolvingBookmarkData: data,
-            options: [.withSecurityScope],
+            options: [.withSecurityScope, .withoutUI, .withoutMounting],
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         )

@@ -134,12 +134,30 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
         addressModeSelector.setLabel(L10n.workspaceAddressRVA, forSegment: 1)
         displayModeSelector.setLabel(L10n.workspaceDetailsTab, forSegment: 0)
         displayModeSelector.setLabel(L10n.workspaceHexTab, forSegment: 1)
-        detailEmptyLabel.stringValue = L10n.workspaceDetailEmpty
-        dataEmptyLabel.stringValue = hexEmptyMessage.isEmpty ? L10n.workspaceDataEmpty : hexEmptyMessage
         refreshColumnTitles()
         reloadContextMenuLocalization()
+        if let errorMessage = viewModel.errorMessage {
+            // 打开失败时两个面板都显示错误原因；语言切换不能用“请选择节点”等占位文案把它覆盖掉。
+            showErrorMessage(errorMessage)
+            return
+        }
+        detailEmptyLabel.stringValue = L10n.workspaceDetailEmpty
+        dataEmptyLabel.stringValue = hexEmptyMessage.isEmpty ? L10n.workspaceDataEmpty : hexEmptyMessage
         refreshSelection(viewModel.browserSelectedNode)
         refreshHexPresentation(document: browserDocument, node: viewModel.browserSelectedNode)
+    }
+
+    private func showErrorMessage(_ errorMessage: String) {
+        browserDocument = nil
+        detailNode = nil
+        hexDataSource = nil
+        hexEmptyMessage = errorMessage
+        detailEmptyLabel.stringValue = errorMessage
+        detailEmptyLabel.isHidden = false
+        dataEmptyLabel.stringValue = errorMessage
+        dataEmptyLabel.isHidden = false
+        detailTableView.reloadData()
+        dataTableView.reloadData()
     }
 
     private func buildUI() {
@@ -241,6 +259,10 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
         detailTableView.onPrepareContextMenu = { [weak self] row in
             self?.prepareDetailContextMenu(forRow: row)
         }
+        // ⌘C 复制选中详情行的完整信息（与右键“拷贝行信息”一致）。
+        detailTableView.onCopy = { [weak self] in
+            self?.copyDetailRowInfo(nil)
+        }
 
         detailTableScrollView.drawsBackground = false
         detailTableScrollView.hasVerticalScroller = true
@@ -287,6 +309,10 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
         dataTableView.onPrepareContextMenu = { [weak self] row in
             self?.prepareDataContextMenu(forRow: row)
         }
+        // ⌘C 复制选中十六进制行的完整信息（与右键“拷贝行信息”一致）。
+        dataTableView.onCopy = { [weak self] in
+            self?.copyDataRowInfo(nil)
+        }
 
         dataTableScrollView.drawsBackground = false
         dataTableScrollView.hasVerticalScroller = true
@@ -324,14 +350,7 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
             emptyStateTitleLabel.superview?.isHidden = showContent
 
             if let errorMessage {
-                self.browserDocument = nil
-                detailNode = nil
-                hexDataSource = nil
-                hexEmptyMessage = errorMessage
-                detailEmptyLabel.stringValue = errorMessage
-                dataEmptyLabel.stringValue = errorMessage
-                detailTableView.reloadData()
-                dataTableView.reloadData()
+                showErrorMessage(errorMessage)
             } else {
                 detailEmptyLabel.stringValue = L10n.workspaceDetailEmpty
                 refreshSelection(selectedNode)
@@ -475,7 +494,8 @@ final class DetailViewController: NSViewController, NSTableViewDataSource, NSTab
             return
         }
 
-        switch document.hexSource {
+        // 与 WorkspaceViewModel 保持一致：优先使用节点自身的数据源，缺省时才回退到文档级数据源。
+        switch node?.hexSource ?? document.hexSource {
         case let .unavailable(reason):
             hexDataSource = nil
             hexEmptyMessage = reason
@@ -823,6 +843,23 @@ private final class BrowserDetailTableRowView: NSTableRowView {
 
 private final class BrowserContextMenuTableView: NSTableView {
     var onPrepareContextMenu: ((Int) -> Void)?
+    /// 响应标准的 `copy:` 动作（⌘C）；为 nil 时该动作不可用。
+    var onCopy: (() -> Void)?
+
+    @objc func copy(_ sender: Any?) {
+        guard selectedRow >= 0 else {
+            return
+        }
+        onCopy?()
+    }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(copy(_:)) {
+            // 只有存在选中行且设置了拷贝回调时才启用“拷贝”菜单项。
+            return onCopy != nil && selectedRow >= 0
+        }
+        return super.validateUserInterfaceItem(item)
+    }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)

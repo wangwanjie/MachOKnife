@@ -219,19 +219,23 @@ final class RawMachOImage: @unchecked Sendable {
 
     /// VM address for an absolute file offset, or `nil` if the offset is not mapped.
     func rva(forFileOffset offset: Int) -> UInt64? {
-        let relative = UInt64(max(0, offset - base))
-        guard offset >= base else { return nil }
+        guard offset >= base else {
+            return nil
+        }
+        let relative = UInt64(offset - base)
+        // 段/节的偏移和大小来自文件，统一用 rangeContains 做无溢出的区间判断，结果用 &+ 计算，
+        // 畸形文件只会得到错误的地址而不会让浏览器崩溃。
         if isObject {
             for section in sections where section.isZerofill == false && section.size > 0 {
                 let start = UInt64(section.offset)
-                if relative >= start, relative < start + section.size {
-                    return section.addr + (relative - start)
+                if rangeContains(start: start, length: section.size, relative) {
+                    return section.addr &+ (relative - start)
                 }
             }
         }
         for segment in segments where segment.filesize > 0 {
-            if relative >= segment.fileoff, relative < segment.fileoff + segment.filesize {
-                return segment.vmaddr + (relative - segment.fileoff)
+            if rangeContains(start: segment.fileoff, length: segment.filesize, relative) {
+                return segment.vmaddr &+ (relative - segment.fileoff)
             }
         }
         return nil
@@ -241,26 +245,40 @@ final class RawMachOImage: @unchecked Sendable {
     func fileOffset(forVM address: UInt64) -> Int? {
         if isObject || segments.isEmpty {
             for section in sections where section.isZerofill == false {
-                if address >= section.addr, address < section.addr + section.size {
-                    return absolute(UInt64(section.offset) + (address - section.addr))
+                if rangeContains(start: section.addr, length: section.size, address) {
+                    let (relative, overflow) = UInt64(section.offset).addingReportingOverflow(address - section.addr)
+                    return overflow ? nil : absolute(relative)
                 }
             }
-            if isObject { return nil }
+            if isObject {
+                return nil
+            }
         }
         for segment in segments where segment.filesize > 0 {
-            if address >= segment.vmaddr, address < segment.vmaddr + segment.filesize {
-                return absolute(segment.fileoff + (address - segment.vmaddr))
+            if rangeContains(start: segment.vmaddr, length: segment.filesize, address) {
+                let (relative, overflow) = segment.fileoff.addingReportingOverflow(address - segment.vmaddr)
+                return overflow ? nil : absolute(relative)
             }
         }
         return nil
     }
 
     func section(containingVM address: UInt64) -> Section? {
-        sections.first { address >= $0.addr && address < $0.addr + max($0.size, 1) }
+        sections.first { rangeContains(start: $0.addr, length: max($0.size, 1), address) }
     }
 
     func segmentIndex(containingVM address: UInt64) -> Int? {
-        segments.firstIndex { address >= $0.vmaddr && address < $0.vmaddr + $0.vmsize }
+        segments.firstIndex { rangeContains(start: $0.vmaddr, length: $0.vmsize, address) }
+    }
+
+    /// 从 `offset` 起最多能容纳多少个 `entrySize` 字节的表项（以本镜像的 `limit` 为界）。
+    /// 用于在为表项数组预留容量或遍历前，把文件里声明的（可能畸形的）数量截断到实际可读范围。
+    func availableEntryCount(from offset: Int, entrySize: Int, declared: UInt64) -> Int {
+        guard entrySize > 0, offset >= base, offset < limit else {
+            return 0
+        }
+        let fitting = UInt64((limit - offset) / entrySize)
+        return Int(min(declared, fitting))
     }
 
     func section(ordinal: Int) -> Section? {
@@ -313,10 +331,18 @@ final class RawMachOImage: @unchecked Sendable {
     }
 
     private func decodeSymbols() -> [Symbol] {
-        guard let symtab else { return [] }
+        guard let symtab else {
+            return []
+        }
+        // nsyms 来自文件：先按符号表在文件中实际能容纳的条目数截断，避免畸形的超大值
+        // 触发数十 GB 的 reserveCapacity 或长时间空转。
+        guard let start = absolute(UInt64(symtab.symoff)) else {
+            return []
+        }
+        let count = availableEntryCount(from: start, entrySize: nlistSize, declared: UInt64(symtab.nsyms))
         var result: [Symbol] = []
-        result.reserveCapacity(Int(symtab.nsyms))
-        for index in 0..<Int(symtab.nsyms) {
+        result.reserveCapacity(count)
+        for index in 0..<count {
             guard let symbol = symbol(at: index) else { break }
             result.append(symbol)
         }

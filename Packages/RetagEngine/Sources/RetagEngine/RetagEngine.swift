@@ -118,35 +118,72 @@ public struct RetagEngine: Sendable {
     }
 
     public func previewFixDyldCacheDylib(inputURL: URL) throws -> RetagPreview {
-        let plan = try makeDyldCacheFixPlan(inputURL: inputURL)
-        return try RetagPreview(diff: writer.preview(inputURL: inputURL, editPlan: plan))
+        let plans = try makeDyldCacheFixPlans(inputURL: inputURL)
+        var entries = [DiffEntry]()
+        for plan in plans {
+            entries.append(contentsOf: try writer.preview(inputURL: inputURL, editPlan: plan).entries)
+        }
+        return RetagPreview(diff: MachODiff(entries: entries))
     }
 
     public func fixDyldCacheDylib(inputURL: URL, outputURL: URL) throws -> RetagResult {
-        let plan = try makeDyldCacheFixPlan(inputURL: inputURL)
-        let result = try writer.write(inputURL: inputURL, outputURL: outputURL, editPlan: plan)
-        return RetagResult(outputURL: result.outputURL, diff: result.diff)
-    }
-
-    private func makeDyldCacheFixPlan(inputURL: URL) throws -> MachOEditPlan {
-        let container = try MachOContainer.parse(at: inputURL)
-        guard let slice = container.slices.first else {
-            return MachOEditPlan()
+        let plans = try makeDyldCacheFixPlans(inputURL: inputURL)
+        guard plans.isEmpty == false else {
+            let result = try writer.write(inputURL: inputURL, outputURL: outputURL, editPlan: MachOEditPlan())
+            return RetagResult(outputURL: result.outputURL, diff: result.diff)
         }
 
+        // 每个切片的依赖与 rpath 可能不同，因此逐个切片应用各自的计划：
+        // 第一次从输入写到输出，之后在输出文件上原地继续修改（写入器不会移动切片位置）。
+        var entries = [DiffEntry]()
+        var sourceURL = inputURL
+        for plan in plans {
+            let result = try writer.write(inputURL: sourceURL, outputURL: outputURL, editPlan: plan)
+            entries.append(contentsOf: result.diff.entries)
+            sourceURL = outputURL
+        }
+        return RetagResult(outputURL: outputURL, diff: MachODiff(entries: entries))
+    }
+
+    /// 为每个切片生成“dyld 共享缓存导出 dylib”的修复计划。
+    /// 以前只看第一个切片，并且无条件设置 install name：对没有 LC_ID_DYLIB 的可执行文件会直接抛错，
+    /// 对 fat 文件则其余切片的依赖不会被改写、rpath 可能重复添加。
+    private func makeDyldCacheFixPlans(inputURL: URL) throws -> [MachOEditPlan] {
+        let container = try MachOContainer.parse(at: inputURL)
+        return container.slices.map { slice in
+            makeDyldCacheFixPlan(for: slice, inputURL: inputURL)
+        }
+    }
+
+    private func makeDyldCacheFixPlan(for slice: MachOSlice, inputURL: URL) -> MachOEditPlan {
         let installName = slice.installName ?? inputURL.path
-        let absoluteDirectory = URL(filePath: installName).deletingLastPathComponent().path + "/"
-        let rewrittenInstallName = "@rpath/" + URL(filePath: installName).lastPathComponent
+        let installNameURL = URL(filePath: installName)
+        // 只有 LC_ID_DYLIB 存在且不是 @rpath 形式时才改写 install name。
+        var rewrittenInstallName: String?
+        if slice.installNameInfo != nil {
+            let candidate = "@rpath/" + installNameURL.lastPathComponent
+            if candidate != installName {
+                rewrittenInstallName = candidate
+            }
+        }
 
         var dylibEdits = [DylibEdit]()
-        for reference in slice.dylibReferences where reference.path.hasPrefix(absoluteDirectory) {
-            dylibEdits.append(
-                .replace(
-                    oldPath: reference.path,
-                    newPath: "@rpath/" + URL(filePath: reference.path).lastPathComponent,
-                    command: reference.command
+        // 只把与自身位于同一绝对目录下的依赖改为 @rpath；install name 本身是 @rpath/... 等相对形式时不处理。
+        if installName.hasPrefix("/") {
+            let absoluteDirectory = installNameURL.deletingLastPathComponent().path + "/"
+            for reference in slice.dylibReferences where reference.path.hasPrefix(absoluteDirectory) {
+                let newPath = "@rpath/" + URL(filePath: reference.path).lastPathComponent
+                guard newPath != reference.path else {
+                    continue
+                }
+                dylibEdits.append(
+                    .replace(
+                        oldPath: reference.path,
+                        newPath: newPath,
+                        command: reference.command
+                    )
                 )
-            )
+            }
         }
 
         var rpathEdits = [RPathEdit]()
@@ -155,6 +192,7 @@ public struct RetagEngine: Sendable {
         }
 
         return MachOEditPlan(
+            targetSliceOffset: slice.offset,
             installName: rewrittenInstallName,
             dylibEdits: dylibEdits,
             rpathEdits: rpathEdits
@@ -489,6 +527,9 @@ private let linkeditDataCommands: Set<UInt32> = [
     UInt32(LC_LINKER_OPTIMIZATION_HINT),
     UInt32(LC_DYLD_EXPORTS_TRIE),
     UInt32(LC_DYLD_CHAINED_FIXUPS),
+    // LC_ATOM_INFO（0x36）：较新的工具链会在目标文件中写入，同样是 linkedit_data_command，
+    // 插入 LC_BUILD_VERSION 后其 dataoff 也必须随之平移。部分 SDK 头文件尚未定义该常量，因此直接写数值。
+    0x36,
 ]
 
 private extension Data {

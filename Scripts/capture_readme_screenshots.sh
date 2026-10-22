@@ -16,7 +16,7 @@ rm -rf "$SANDBOX_SCREENSHOT_DIR" "$REPO_SCREENSHOT_DIR"
 
 echo "[readme-assets] render screenshots"
 xcodebuild test \
-  -project "$REPO_ROOT/MachOKnife.xcodeproj" \
+  -workspace "$REPO_ROOT/MachOKnife.xcworkspace" \
   -scheme MachOKnife \
   -destination 'platform=macOS,arch=x86_64' \
   -derivedDataPath "$DERIVED_DATA_PATH" \

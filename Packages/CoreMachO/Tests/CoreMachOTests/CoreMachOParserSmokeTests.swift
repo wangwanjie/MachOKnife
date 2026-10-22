@@ -1,4 +1,5 @@
 import Foundation
+import MachO
 import Testing
 @testable import CoreMachO
 
@@ -11,6 +12,12 @@ struct CoreMachOParserSmokeTests {
 
         #expect(container.slices.count == 1)
         #expect(container.kind == .thin)
+        let slice = try #require(container.slices.first)
+        #expect(slice.offset == 0)
+        #expect(slice.is64Bit)
+        #expect(slice.header.cpuType == CPU_TYPE_X86_64)
+        #expect(slice.header.fileType == UInt32(MH_OBJECT))
+        #expect(slice.symbols.contains(where: { $0.name == "_machoknife_fixture" }))
     }
 
     @Test("parses a fat Mach-O fixture")
@@ -21,6 +28,12 @@ struct CoreMachOParserSmokeTests {
 
         #expect(container.kind == .fat)
         #expect(container.slices.count == 2)
+        // 两个切片的架构分别是 x86_64 与 arm64，且偏移都在 fat 头之后。
+        let architectures = Set(container.slices.map {
+            MachOArchitectureNaming.name(cpuType: $0.header.cpuType, cpuSubtype: $0.header.cpuSubtype)
+        })
+        #expect(architectures == ["x86_64", "arm64"])
+        #expect(container.slices.allSatisfy { $0.offset > 0 })
     }
 
     @Test("parses a fat executable fixture with symbol tables")
@@ -40,7 +53,11 @@ struct CoreMachOParserSmokeTests {
 
         let container = try MachOContainer.parse(at: fixtureURL)
 
-        #expect(container.slices.first?.loadCommands.isEmpty == false)
+        let slice = try #require(container.slices.first)
+        #expect(slice.loadCommands.count == Int(slice.header.numberOfCommands))
+        #expect(slice.loadCommands.reduce(0) { $0 + Int($1.size) } == Int(slice.header.sizeofCommands))
+        #expect(slice.loadCommands.contains(where: { $0.command == UInt32(LC_SYMTAB) }))
+        #expect(slice.loadCommands.contains(where: { $0.command == UInt32(LC_SEGMENT_64) }))
     }
 }
 

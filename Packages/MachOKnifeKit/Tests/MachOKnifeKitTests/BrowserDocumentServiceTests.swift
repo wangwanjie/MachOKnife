@@ -244,9 +244,16 @@ struct BrowserDocumentServiceTests {
         let symbolsNode = try #require(imageNode.children.first(where: { $0.title.hasPrefix("Symbol Table (") }))
         let stringTableNode = try #require(imageNode.children.first(where: { $0.title == "String Table" }))
 
+        let declaredSymbols = try #require(scan.slices.first?.symbolTable?.symbolCount)
+
         #expect(document.kind == .machOFile)
-        #expect(symbolsNode.detailCount >= 520 * 5)
+        #expect(declaredSymbols >= 520)
+        // 每个 nlist 对应 5 行（索引、类型、节、描述、值），行数应与符号表声明的条目数完全一致。
+        #expect(symbolsNode.detailCount == Int(declaredSymbols) * 5)
+        #expect(symbolsNode.loadedDetailRows.isEmpty)
         #expect(symbolsNode.detailRow(at: 0).key == "String Table Index")
+        // 只物化了被访问的行，而不是整张符号表。
+        #expect(symbolsNode.loadedDetailRows.count == 1)
         #expect(stringTableNode.detailCount > 520)
         #expect(stringTableNode.detailRow(at: stringTableNode.detailCount - 1).rawAddress != nil)
     }

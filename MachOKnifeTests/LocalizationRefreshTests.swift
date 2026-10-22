@@ -600,6 +600,7 @@ private final class SpyMainWindowController: MainWindowControlling {
     var hasLoadedDocument = false
     var canCopyOrExportSelectedNodeInfo = false
     var hasCurrentFileURL = false
+    var loadedDocumentURL: URL?
     private(set) var presentCallCount = 0
     private(set) var promptCallCount = 0
 

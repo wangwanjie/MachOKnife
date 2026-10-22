@@ -5,14 +5,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings: AppSettings
     private let updateManager: UpdateManager
     private let mainWindowControllerFactory: () -> MainWindowControlling
-    private lazy var recentFilesController = try? RecentFilesController(settings: settings)
+    private let recentFilesControllerFactory: (AppSettings) -> RecentFilesController?
+    private lazy var recentFilesController = recentFilesControllerFactory(settings)
     private var mainWindowController: MainWindowControlling?
     private var preferencesWindowController: PreferencesWindowController?
-    private var retagWindowController: RetagWindowController?
+    // 工具窗口只读暴露给测试，用于验证从工作区交接文件的行为。
+    private(set) var retagWindowController: RetagWindowController?
     private var xcframeworkBuildWindowController: XCFrameworkBuildWindowController?
-    private var machoSummaryWindowController: MachOSummaryWindowController?
-    private var contaminationWindowController: BinaryContaminationWindowController?
-    private var mergeSplitWindowController: MachOMergeSplitWindowController?
+    private(set) var machoSummaryWindowController: MachOSummaryWindowController?
+    private(set) var contaminationWindowController: BinaryContaminationWindowController?
+    private(set) var mergeSplitWindowController: MachOMergeSplitWindowController?
     private var settingsObserver: NSObjectProtocol?
     private var recentFilesMenu = NSMenu(title: "")
     private var pendingLaunchDocumentURLs: [URL] = []
@@ -21,18 +23,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.settings = .shared
         self.updateManager = UpdateManager()
         self.mainWindowControllerFactory = { MainWindowController() }
+        self.recentFilesControllerFactory = Self.makeDefaultRecentFilesController(settings:)
         super.init()
     }
 
     init(
         settings: AppSettings,
         updateManager: UpdateManager,
-        mainWindowControllerFactory: (() -> MainWindowControlling)? = nil
+        mainWindowControllerFactory: (() -> MainWindowControlling)? = nil,
+        recentFilesControllerFactory: ((AppSettings) -> RecentFilesController?)? = nil
     ) {
         self.settings = settings
         self.updateManager = updateManager
         self.mainWindowControllerFactory = mainWindowControllerFactory ?? { MainWindowController() }
+        self.recentFilesControllerFactory = recentFilesControllerFactory ?? Self.makeDefaultRecentFilesController(settings:)
         super.init()
+    }
+
+    private static func makeDefaultRecentFilesController(settings: AppSettings) -> RecentFilesController? {
+        try? RecentFilesController(settings: settings)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -122,6 +131,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = mainWindowController.openDocument(at: url)
     }
 
+    @objc private func clearRecentDocuments(_ sender: Any?) {
+        try? recentFilesController?.clearRecentFiles()
+        refreshRecentFilesMenu()
+    }
+
     @objc private func showMainWindow(_ sender: Any?) {
         mainWindowController?.present(sender)
     }
@@ -144,6 +158,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showRetagTool(_ sender: Any?) {
         let retagWindowController = retagWindowController ?? RetagWindowController()
         self.retagWindowController = retagWindowController
+        if let documentURL = workspaceDocumentURL {
+            retagWindowController.prefill(withWorkspaceDocument: documentURL)
+        }
         retagWindowController.present(sender)
     }
 
@@ -156,19 +173,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showMachOSummaryTool(_ sender: Any?) {
         let controller = machoSummaryWindowController ?? MachOSummaryWindowController()
         machoSummaryWindowController = controller
+        if let documentURL = workspaceDocumentURL {
+            controller.prefill(withWorkspaceDocument: documentURL)
+        }
         controller.present(sender)
     }
 
     @objc private func showContaminationTool(_ sender: Any?) {
         let controller = contaminationWindowController ?? BinaryContaminationWindowController()
         contaminationWindowController = controller
+        if let documentURL = workspaceDocumentURL {
+            controller.prefill(withWorkspaceDocument: documentURL)
+        }
         controller.present(sender)
     }
 
     @objc private func showMergeSplitTool(_ sender: Any?) {
         let controller = mergeSplitWindowController ?? MachOMergeSplitWindowController()
         mergeSplitWindowController = controller
+        if let documentURL = workspaceDocumentURL {
+            controller.prefill(withWorkspaceDocument: documentURL)
+        }
         controller.present(sender)
+    }
+
+    /// 主工作区当前已载入的文档，用于打开工具窗口时预填输入；没有文档时为 nil，工具窗口保持原有行为。
+    private var workspaceDocumentURL: URL? {
+        mainWindowController?.loadedDocumentURL
     }
 
     @objc private func copySelectedNodeInfo(_ sender: Any?) {
@@ -368,6 +399,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.toolTip = url.path
             recentFilesMenu.addItem(item)
         }
+
+        // 与系统惯例一致：在列表底部用分隔线隔开“清除菜单”。
+        recentFilesMenu.addItem(NSMenuItem.separator())
+        let clearItem = NSMenuItem(title: L10n.menuOpenRecentClear, action: #selector(clearRecentDocuments(_:)), keyEquivalent: "")
+        clearItem.target = self
+        recentFilesMenu.addItem(clearItem)
+    }
+
+    /// “打开最近文件”子菜单（供测试检查菜单内容）。
+    var openRecentMenu: NSMenu {
+        recentFilesMenu
     }
 
     private func replaceMainMenu(with menu: NSMenu) {

@@ -5,46 +5,40 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
-DEFAULT_ARCHIVES_DIR="$PROJECT_DIR/build/appcast-archives"
 DEFAULT_OUTPUT_PATH="$PROJECT_DIR/Resources/Updates/appcast.xml"
 
-ARCHIVE_PATH=""
-ARCHIVES_DIR="$DEFAULT_ARCHIVES_DIR"
+ARCHIVES=()
 OUTPUT_PATH="$DEFAULT_OUTPUT_PATH"
 REPO=""
 ACCOUNT="$DEFAULT_SPARKLE_ACCOUNT"
 NOTES=""
 NOTES_FILE=""
+BUILD_NUMBER=""
+MINIMUM_SYSTEM_VERSION=""
 
 usage() {
     cat <<EOF
 Usage:
-  ./Scripts/generate_appcast.sh [--archive PATH] [--archives-dir DIR] [--output PATH]
+  ./Scripts/generate_appcast.sh --archive PATH [--archive PATH ...] [--output PATH]
                                 [--repo OWNER/REPO] [--account ACCOUNT]
+                                [--build-number N] [--minimum-system-version X.Y]
                                 [--notes TEXT | --notes-file FILE]
+
+Signs each DMG with Sparkle's EdDSA key and merges one <item> per DMG into the feed.
+DMG names must look like ${APP_NAME}_V_<version>_<arch>.dmg (arch: arm64 / x86_64).
+
+Items of the same version are written arm64 first, carrying
+<sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>, then x86_64.
+Sparkle drops the arm64 item on Intel Macs and, for equal versions, picks the first
+item on Apple Silicon, so one feed serves both architectures (including older
+universal builds that still read this feed).
 EOF
-}
-
-copy_release_notes() {
-    local archive_dest="$1"
-    local base_path="${archive_dest%.*}"
-
-    if [[ -n "$NOTES_FILE" ]]; then
-        local extension="${NOTES_FILE##*.}"
-        cp "$NOTES_FILE" "${base_path}.${extension}"
-    elif [[ -n "$NOTES" ]]; then
-        printf '%s\n' "$NOTES" > "${base_path}.md"
-    fi
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --archive)
-            ARCHIVE_PATH="${2:-}"
-            shift 2
-            ;;
-        --archives-dir)
-            ARCHIVES_DIR="${2:-}"
+            ARCHIVES+=("${2:-}")
             shift 2
             ;;
         --output)
@@ -57,6 +51,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --account)
             ACCOUNT="${2:-}"
+            shift 2
+            ;;
+        --build-number)
+            BUILD_NUMBER="${2:-}"
+            shift 2
+            ;;
+        --minimum-system-version)
+            MINIMUM_SYSTEM_VERSION="${2:-}"
             shift 2
             ;;
         --notes)
@@ -84,18 +86,15 @@ if [[ -n "$NOTES" && -n "$NOTES_FILE" ]]; then
     exit 1
 fi
 
+if [[ ${#ARCHIVES[@]} -eq 0 ]]; then
+    echo "error: at least one --archive is required" >&2
+    usage >&2
+    exit 1
+fi
+
 require_command /usr/bin/python3
 
-ARCHIVES_DIR="$(expand_path "$ARCHIVES_DIR")"
 OUTPUT_PATH="$(expand_path "$OUTPUT_PATH")"
-
-if [[ -n "$ARCHIVE_PATH" ]]; then
-    ARCHIVE_PATH="$(resolve_existing_path "$ARCHIVE_PATH")"
-    if [[ -z "$ARCHIVE_PATH" || ! -f "$ARCHIVE_PATH" ]]; then
-        echo "error: archive not found" >&2
-        exit 1
-    fi
-fi
 
 if [[ -n "$NOTES_FILE" ]]; then
     NOTES_FILE="$(resolve_existing_path "$NOTES_FILE")"
@@ -103,6 +102,7 @@ if [[ -n "$NOTES_FILE" ]]; then
         echo "error: notes file not found" >&2
         exit 1
     fi
+    NOTES="$(<"$NOTES_FILE")"
 fi
 
 if [[ -z "$REPO" ]]; then
@@ -114,8 +114,22 @@ if ! [[ "$REPO" =~ ^[^/]+/[^/]+$ ]]; then
     exit 1
 fi
 
+if [[ -z "$BUILD_NUMBER" ]]; then
+    BUILD_NUMBER="$(read_build_number)"
+fi
+
+if [[ -z "$MINIMUM_SYSTEM_VERSION" ]]; then
+    # 测试 target 的部署版本可能更高，取工程中最低的部署版本作为应用的最低系统要求
+    MINIMUM_SYSTEM_VERSION="$(grep "MACOSX_DEPLOYMENT_TARGET" "$PBXPROJ" | sed 's/.*= *\([^;]*\);/\1/' | tr -d ' "' | sort -V | head -1)"
+fi
+
+if [[ -z "$BUILD_NUMBER" || -z "$MINIMUM_SYSTEM_VERSION" ]]; then
+    echo "error: failed to resolve build number or minimum system version" >&2
+    exit 1
+fi
+
 GENERATE_KEYS_TOOL="$(ensure_sparkle_tool generate_keys)"
-GENERATE_APPCAST_TOOL="$(ensure_sparkle_tool generate_appcast)"
+SIGN_UPDATE_TOOL="$(ensure_sparkle_tool sign_update)"
 
 if ! "$GENERATE_KEYS_TOOL" --account "$ACCOUNT" -p >/dev/null 2>&1; then
     echo "error: Sparkle key is missing for account $ACCOUNT" >&2
@@ -123,128 +137,126 @@ if ! "$GENERATE_KEYS_TOOL" --account "$ACCOUNT" -p >/dev/null 2>&1; then
     exit 1
 fi
 
-mkdir -p "$ARCHIVES_DIR" "$(dirname "$OUTPUT_PATH")"
-
-if [[ -n "$ARCHIVE_PATH" ]]; then
-    archive_dest="$ARCHIVES_DIR/$(basename "$ARCHIVE_PATH")"
-    cp "$ARCHIVE_PATH" "$archive_dest"
-    copy_release_notes "$archive_dest"
-fi
-
-shopt -s nullglob
-archives=( "$ARCHIVES_DIR"/*.dmg )
-shopt -u nullglob
-
-if [[ ${#archives[@]} -eq 0 ]]; then
-    echo "error: no DMGs found in $ARCHIVES_DIR" >&2
-    exit 1
-fi
-
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/machoknife-appcast.XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-cp "$ARCHIVES_DIR"/*.dmg "$TMP_DIR/"
-for notes_path in "$ARCHIVES_DIR"/*.md "$ARCHIVES_DIR"/*.txt "$ARCHIVES_DIR"/*.html; do
-    [[ -e "$notes_path" ]] || continue
-    cp "$notes_path" "$TMP_DIR/"
-done
-
-TMP_APPCAST="$TMP_DIR/appcast.xml"
 TMP_PRIVATE_KEY="$TMP_DIR/private_ed25519.key"
 "$GENERATE_KEYS_TOOL" --account "$ACCOUNT" -x "$TMP_PRIVATE_KEY"
-"$GENERATE_APPCAST_TOOL" \
-    --account "$ACCOUNT" \
-    --ed-key-file "$TMP_PRIVATE_KEY" \
-    --embed-release-notes \
-    --link "https://github.com/$REPO" \
-    -o "$TMP_APPCAST" \
-    "$TMP_DIR"
 
-/usr/bin/python3 - "$TMP_APPCAST" "$OUTPUT_PATH" "$REPO" "$APP_NAME" <<'PY'
+# 每行一个安装包：<version>\t<arch>\t<file name>\t<length>\t<signature>
+ENTRIES_FILE="$TMP_DIR/entries.tsv"
+: >"$ENTRIES_FILE"
+
+for archive in "${ARCHIVES[@]}"; do
+    archive_path="$(resolve_existing_path "$archive")"
+    if [[ -z "$archive_path" || ! -f "$archive_path" ]]; then
+        echo "error: archive not found: $archive" >&2
+        exit 1
+    fi
+
+    if ! parsed="$(parse_dmg_file_name "$archive_path")"; then
+        echo "error: unexpected DMG name: $(basename "$archive_path")" >&2
+        exit 1
+    fi
+    read -r version arch <<<"$parsed"
+
+    # sign_update 输出形如：sparkle:edSignature="..." length="..."
+    sign_output="$("$SIGN_UPDATE_TOOL" --ed-key-file "$TMP_PRIVATE_KEY" "$archive_path")"
+    signature="$(sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p' <<<"$sign_output")"
+    length="$(sed -n 's/.*length="\([0-9]*\)".*/\1/p' <<<"$sign_output")"
+
+    if [[ -z "$signature" || -z "$length" ]]; then
+        echo "error: failed to sign $archive_path" >&2
+        echo "$sign_output" >&2
+        exit 1
+    fi
+
+    printf '%s\t%s\t%s\t%s\t%s\n' "$version" "$arch" "$(basename "$archive_path")" "$length" "$signature" >>"$ENTRIES_FILE"
+    echo "signed $(basename "$archive_path") ($arch, $length bytes)"
+done
+
+mkdir -p "$(dirname "$OUTPUT_PATH")"
+
+APPCAST_NOTES="$NOTES" /usr/bin/python3 - "$OUTPUT_PATH" "$ENTRIES_FILE" "$REPO" "$APP_NAME" "$BUILD_NUMBER" "$MINIMUM_SYSTEM_VERSION" <<'PY'
+import email.utils
+import os
 import pathlib
-import re
 import sys
 import urllib.parse
 import xml.etree.ElementTree as ET
 
-input_path, output_path, repo, app_name = sys.argv[1:5]
-sparkle_ns = "http://www.andymatuschak.org/xml-namespaces/sparkle"
-dc_ns = "http://purl.org/dc/elements/1.1/"
-ET.register_namespace("sparkle", sparkle_ns)
-ET.register_namespace("dc", dc_ns)
+output_path, entries_path, repo, app_name, build_number, minimum_system_version = sys.argv[1:7]
+notes = os.environ.get("APPCAST_NOTES", "").strip()
 
-tree = ET.parse(input_path)
-root = tree.getroot()
+sparkle_ns = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+ET.register_namespace("sparkle", sparkle_ns)
+
+
+def sparkle(tag):
+    return f"{{{sparkle_ns}}}{tag}"
+
+
+output = pathlib.Path(output_path)
+if output.exists():
+    tree = ET.parse(output)
+    root = tree.getroot()
+else:
+    root = ET.Element("rss", {"version": "2.0"})
+    tree = ET.ElementTree(root)
+
 channel = root.find("channel")
 if channel is None:
-    raise SystemExit("missing channel node")
+    channel = ET.SubElement(root, "channel")
+    ET.SubElement(channel, "title").text = app_name
 
-def find_or_create(parent, tag):
-    node = parent.find(tag)
-    if node is None:
-        node = ET.SubElement(parent, tag)
-    return node
-
-title_node = find_or_create(channel, "title")
-if not (title_node.text or "").strip():
-    title_node.text = f"{app_name} Updates"
-
-link_node = find_or_create(channel, "link")
-link_node.text = f"https://github.com/{repo}"
-
-description_node = find_or_create(channel, "description")
-if not (description_node.text or "").strip():
-    description_node.text = f"{app_name} release feed."
-
-language_node = find_or_create(channel, "language")
-if not (language_node.text or "").strip():
-    language_node.text = "en"
-
-pattern = re.compile(rf"{re.escape(app_name)}_V_(.+)\.dmg$")
-
-for item in channel.findall("item"):
-    enclosure = item.find("enclosure")
-    if enclosure is None:
+# 同版本 arm64 必须排在 x86_64 之前：Sparkle 对版本相同的条目取第一个可用条目
+arch_order = {"arm64": 0, "x86_64": 1, "universal": 2}
+entries = []
+for line in pathlib.Path(entries_path).read_text().splitlines():
+    if not line.strip():
         continue
+    version, arch, file_name, length, signature = line.split("\t")
+    entries.append((version, arch, file_name, length, signature))
+entries.sort(key=lambda entry: arch_order.get(entry[1], 99))
 
-    raw_url = enclosure.attrib.get("url", "")
-    parsed_path = urllib.parse.urlparse(raw_url).path
-    filename = pathlib.PurePosixPath(parsed_path).name or pathlib.Path(raw_url).name
-    if not filename:
-        continue
+new_versions = {entry[0] for entry in entries}
+if len(new_versions) != 1:
+    raise SystemExit(f"all archives must share one version, got: {sorted(new_versions)}")
 
-    match = pattern.match(filename)
-    version = match.group(1) if match else None
+# 移除同版本的旧条目，便于重复执行（例如重新上传某个架构的安装包）
+for item in list(channel.findall("item")):
+    short_version = item.find(sparkle("shortVersionString"))
+    if short_version is not None and (short_version.text or "").strip() in new_versions:
+        channel.remove(item)
 
-    if version is None:
-        short_version = item.find(f"{{{sparkle_ns}}}shortVersionString")
-        version = (short_version.text or "").strip() if short_version is not None else ""
+existing_items = channel.findall("item")
+insert_index = list(channel).index(existing_items[0]) if existing_items else len(channel)
+pub_date = email.utils.formatdate(localtime=True)
 
-    if not version:
-        sparkle_version = item.find(f"{{{sparkle_ns}}}version")
-        version = (sparkle_version.text or "").strip() if sparkle_version is not None else ""
-
-    if not version:
-        raise SystemExit(f"failed to infer version for {filename}")
-
-    version = version.lstrip("vV")
+for offset, (version, arch, file_name, length, signature) in enumerate(entries):
     tag = f"v{version}"
     quoted_tag = urllib.parse.quote(tag, safe="")
-    quoted_file = urllib.parse.quote(filename, safe="")
-    release_url = f"https://github.com/{repo}/releases/tag/{quoted_tag}"
-    download_url = f"https://github.com/{repo}/releases/download/{quoted_tag}/{quoted_file}"
+    quoted_file = urllib.parse.quote(file_name, safe="")
 
-    enclosure.set("url", download_url)
-    find_or_create(item, "link").text = release_url
-
-    for removable_tag in (
-        f"{{{sparkle_ns}}}deltas",
-        f"{{{sparkle_ns}}}releaseNotesLink",
-        f"{{{sparkle_ns}}}fullReleaseNotesLink",
-    ):
-        node = item.find(removable_tag)
-        if node is not None:
-            item.remove(node)
+    item = ET.Element("item")
+    ET.SubElement(item, "title").text = version
+    ET.SubElement(item, "pubDate").text = pub_date
+    ET.SubElement(item, "link").text = f"https://github.com/{repo}/releases/tag/{quoted_tag}"
+    ET.SubElement(item, sparkle("version")).text = build_number
+    ET.SubElement(item, sparkle("shortVersionString")).text = version
+    ET.SubElement(item, sparkle("minimumSystemVersion")).text = minimum_system_version
+    if arch == "arm64":
+        ET.SubElement(item, sparkle("hardwareRequirements")).text = "arm64"
+    if notes:
+        description = ET.SubElement(item, "description", {sparkle("format"): "markdown"})
+        description.text = notes + "\n"
+    ET.SubElement(item, "enclosure", {
+        "url": f"https://github.com/{repo}/releases/download/{quoted_tag}/{quoted_file}",
+        "length": length,
+        "type": "application/octet-stream",
+        sparkle("edSignature"): signature,
+    })
+    channel.insert(insert_index + offset, item)
 
 ET.indent(tree, space="    ")
 tree.write(output_path, encoding="utf-8", xml_declaration=True)

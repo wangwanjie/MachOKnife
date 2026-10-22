@@ -14,6 +14,7 @@ enum L10n {
     static var menuCloseWindow: String { text("menu.closeWindow", fallback: "Close Window") }
     static var menuOpenRecent: String { text("menu.openRecent", fallback: "Open Recent") }
     static var menuOpenRecentEmpty: String { text("menu.openRecent.empty", fallback: "No Recent Files") }
+    static var menuOpenRecentClear: String { text("menu.openRecent.clear", fallback: "Clear Menu") }
     static var menuTools: String { text("menu.tools", fallback: "Tools") }
     static var menuRetag: String { text("menu.retag", fallback: "MachO Retag...") }
     static var menuBuildXCFramework: String { text("menu.buildXCFramework", fallback: "Build XCFramework...") }
@@ -96,8 +97,6 @@ enum L10n {
     static var viewerDescriptionLabel: String { text("workspace.viewer.description", fallback: "Description") }
     static var viewerNoDecodedPayload: String { text("workspace.viewer.noDecodedPayload", fallback: "No decoded payload") }
     static var viewerNoSections: String { text("workspace.viewer.noSections", fallback: "No sections") }
-    static var viewerDylibPathEditableHint: String { text("workspace.viewer.dylibPathEditableHint", fallback: "Path draft is editable in the inspector.") }
-    static var viewerRPathEditableHint: String { text("workspace.viewer.rpathEditableHint", fallback: "RPath entries are editable in the inspector.") }
     static var viewerInstallNameDiffKind: String { text("workspace.viewer.diff.installName", fallback: "Install Name") }
     static var viewerDylibDiffKind: String { text("workspace.viewer.diff.dylib", fallback: "Dylib") }
     static var viewerRPathDiffKind: String { text("workspace.viewer.diff.rpath", fallback: "RPath") }
@@ -115,26 +114,6 @@ enum L10n {
     static var viewerBitness64: String { text("workspace.viewer.value.64bit", fallback: "64-bit") }
     static var viewerBitness32: String { text("workspace.viewer.value.32bit", fallback: "32-bit") }
     static var viewerCommandsShort: String { text("workspace.viewer.value.commandsShort", fallback: "cmds") }
-    static var inspectorTitle: String { text("workspace.inspector.title", fallback: "Inspector") }
-    static var inspectorPlaceholder: String { text("workspace.inspector.placeholder", fallback: "Dependencies and rpaths will appear here.") }
-    static var inspectorTabOverview: String { text("workspace.inspector.tab.overview", fallback: "Overview") }
-    static var inspectorTabDylibs: String { text("workspace.inspector.tab.dylibs", fallback: "Dylibs") }
-    static var inspectorTabRPaths: String { text("workspace.inspector.tab.rpaths", fallback: "RPaths") }
-    static var inspectorTabPlatform: String { text("workspace.inspector.tab.platform", fallback: "Platform") }
-    static var inspectorTabPreview: String { text("workspace.inspector.tab.preview", fallback: "Preview") }
-    static var inspectorInstallNameLabel: String { text("workspace.inspector.installName", fallback: "Install Name") }
-    static var inspectorDylibsEmpty: String { text("workspace.inspector.dylibs.empty", fallback: "No load dylib commands in the selected slice.") }
-    static var inspectorRPathsEmpty: String { text("workspace.inspector.rpaths.empty", fallback: "No rpaths in the selected slice.") }
-    static var inspectorAddRPath: String { text("workspace.inspector.rpaths.add", fallback: "Add RPath") }
-    static var inspectorRemoveAction: String { text("workspace.inspector.action.remove", fallback: "Remove") }
-    static var inspectorPlatformLabel: String { text("workspace.inspector.platform.name", fallback: "Platform") }
-    static var inspectorMinimumOSLabel: String { text("workspace.inspector.platform.min", fallback: "Minimum OS") }
-    static var inspectorSDKLabel: String { text("workspace.inspector.platform.sdk", fallback: "SDK") }
-    static var inspectorPlatformHint: String { text("workspace.inspector.platform.hint", fallback: "Use semantic versions like 17.4 or 17.4.0.") }
-    static var inspectorPlatformUnavailable: String { text("workspace.inspector.platform.unavailable", fallback: "The selected slice has no editable platform metadata yet.") }
-    static var inspectorPlatformInvalidVersion: String { text("workspace.inspector.platform.invalid", fallback: "Enter versions as major.minor or major.minor.patch.") }
-    static var inspectorPreviewAction: String { text("workspace.inspector.preview.action", fallback: "Preview Changes") }
-    static var inspectorPreviewPlaceholder: String { text("workspace.inspector.preview.placeholder", fallback: "Diff preview will appear here after you preview edits.") }
     static var workspaceEmptyTitle: String { text("workspace.empty.title", fallback: "Open a Mach-O to begin") }
     static var workspaceEmptySubtitle: String { text("workspace.empty.subtitle", fallback: "Drop a Mach-O, dylib, framework, or archive here, or choose Open to analyze it.") }
     static var workspaceEmptyOpenButton: String { text("workspace.empty.open", fallback: "Open File") }
@@ -186,10 +165,20 @@ enum L10n {
     static func viewerDeferredSymbolsMessage(_ count: Int) -> String {
         format(
             "workspace.viewer.symbols.deferred",
-            fallback: "Showing the metadata shell. %d symbols are available through deferred browser pages.",
+            fallback: "Showing the metadata shell. %ld symbols are available through deferred browser pages.",
             count
         )
     }
+
+    /// 字节数文案（如“4096 bytes”），用于十六进制分页标签和加载命令大小等位置。
+    static func workspaceByteCount(_ count: Int) -> String {
+        format("workspace.value.byteCount", fallback: "%ld bytes", count)
+    }
+
+    /// 结构树标题旁的大文件（预算）模式标记。
+    static var sourceListBudgetedBadge: String { text("workspace.sourceList.budgeted", fallback: "Large-File Mode") }
+    /// Mach-O 摘要工具在后台分析期间显示的状态文案。
+    static var summaryRunningStatus: String { text("summary.status.running", fallback: "Analyzing…") }
     static var toolbarAnalyze: String { text("workspace.toolbar.analyze", fallback: "Analyze") }
     static var toolbarPreview: String { text("workspace.toolbar.preview", fallback: "Preview") }
     static var toolbarSave: String { text("workspace.toolbar.save", fallback: "Save") }
@@ -320,6 +309,16 @@ enum L10n {
     static var mergeSplitSplitIdleStatus: String { text("mergeSplit.split.status.idle", fallback: "Choose a fat binary to split.") }
     static var mergeSplitCompletedStatus: String { text("mergeSplit.status.completed", fallback: "Operation completed.") }
     static var mergeSplitErrorTitle: String { text("mergeSplit.error.title", fallback: "Merge / Split Failed") }
+    static var mergeSplitRemoveTab: String { text("mergeSplit.tab.remove", fallback: "Remove Architectures") }
+    static var mergeSplitRemoveInputLabel: String { text("mergeSplit.remove.input", fallback: "Input Universal Binary") }
+    static var mergeSplitRemoveDropHint: String { text("mergeSplit.remove.dropHint", fallback: "Drop a universal Mach-O or fat static library here.") }
+    static var mergeSplitRemoveArchitecturesLabel: String { text("mergeSplit.remove.architectures", fallback: "Architectures to Remove") }
+    static var mergeSplitRemoveArchitecturesHint: String { text("mergeSplit.remove.architectures.hint", fallback: "Check the architectures to strip; at least one must remain.") }
+    static var mergeSplitRemoveNoArchitectures: String { text("mergeSplit.remove.architectures.none", fallback: "No architectures were detected in this file.") }
+    static var mergeSplitRemoveSingleArchitecture: String { text("mergeSplit.remove.architectures.single", fallback: "This file contains a single architecture, so there is nothing to remove.") }
+    static var mergeSplitRemoveKeepOne: String { text("mergeSplit.remove.architectures.keepOne", fallback: "At least one architecture must remain. Uncheck one to continue.") }
+    static var mergeSplitRemoveStart: String { text("mergeSplit.remove.start", fallback: "Remove Architectures") }
+    static var mergeSplitRemoveIdleStatus: String { text("mergeSplit.remove.status.idle", fallback: "Choose a universal binary, check the architectures to remove, then choose an output file.") }
     static var xcframeworkIdleStatus: String { text("xcframework.status.idle", fallback: "Select headers and an output directory, then provide Source Library, iOS Device Library, or iOS Simulator Library to begin.") }
     static var xcframeworkRunningStatus: String { text("xcframework.status.running", fallback: "Building XCFramework…") }
     static var xcframeworkCancelledStatus: String { text("xcframework.status.cancelled", fallback: "XCFramework build cancelled.") }
@@ -350,6 +349,13 @@ enum L10n {
                 return text("preferences.cli.error.directoryMissing", fallback: "Choose an install directory before installing the CLI.")
             case .bundledCLINotFound:
                 return text("preferences.cli.error.bundledMissing", fallback: "The bundled machoe-cli payload could not be found in the app.")
+            case let .installPathIsDirectory(path):
+                // 安装位置已被同名目录占用：拒绝覆盖/删除，提示用户自行处理。
+                return format(
+                    "preferences.cli.error.installPathIsDirectory",
+                    fallback: "%@ is a directory, not the machoe-cli executable. Remove or rename it, or choose another install directory.",
+                    path
+                )
             }
         }
 

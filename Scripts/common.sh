@@ -11,12 +11,53 @@ SPARKLE_DERIVED_DATA="$PROJECT_DIR/build/SparkleTools"
 DEFAULT_REPO="VanJay/MachOKnife"
 DEFAULT_SPARKLE_ACCOUNT="cn.vanjay.MachOKnife.sparkle"
 DEFAULT_NOTARY_PROFILE="vanjay_mac_stapler"
+# 分发的单架构安装包列表；arm64 排在前面，生成 appcast 时同版本 arm64 条目需先于 x86_64 条目
+SUPPORTED_ARCHS=(arm64 x86_64)
 
 if [[ -d "$APP_WORKSPACE" ]]; then
     XCODE_APP_CONTAINER_ARGS=(-workspace "$APP_WORKSPACE")
 else
     XCODE_APP_CONTAINER_ARGS=(-project "$APP_PROJECT")
 fi
+
+# 安装包命名：MachOKnife_V_<version>_<arch>.dmg
+dmg_file_name() {
+    local version="$1"
+    local arch="$2"
+    printf '%s_V_%s_%s.dmg\n' "$APP_NAME" "$version" "$arch"
+}
+
+arch_display_name() {
+    case "$1" in
+        arm64)
+            printf 'Apple Silicon\n'
+            ;;
+        x86_64)
+            printf 'Intel\n'
+            ;;
+        *)
+            printf '%s\n' "$1"
+            ;;
+    esac
+}
+
+# 从安装包文件名中解析版本号与架构，输出 "<version> <arch>"；旧版通用包没有架构后缀时架构为 universal
+parse_dmg_file_name() {
+    local dmg_name
+    dmg_name="$(basename "$1")"
+
+    if [[ "$dmg_name" =~ ^${APP_NAME}_V_(.+)_(arm64|x86_64)\.dmg$ ]]; then
+        printf '%s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+        return 0
+    fi
+
+    if [[ "$dmg_name" =~ ^${APP_NAME}_V_(.+)\.dmg$ ]]; then
+        printf '%s universal\n' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+
+    return 1
+}
 
 require_command() {
     local command_name="$1"

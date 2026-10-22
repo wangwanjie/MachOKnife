@@ -57,6 +57,31 @@ final class MachOMergeSplitWindowController: NSWindowController {
         rootViewController.reloadLocalization()
     }
 
+    /// 用主工作区当前打开的文件预填“拆分”和“移除架构”的输入（合并需要多个输入，不做预填）。
+    /// 用户已在工具里手动选择了其他文件、或操作正在进行时保持不变。
+    func prefill(withWorkspaceDocument url: URL) {
+        _ = window
+        rootViewController.prefill(withWorkspaceDocument: url)
+    }
+
+    /// “移除架构”表单的状态（供测试读取）。
+    var removeArchitecturesViewModel: RemoveArchitecturesViewModel {
+        _ = window
+        return rootViewController.removeArchitecturesViewModel
+    }
+
+    /// “拆分”表单当前的输入文件（供测试读取）。
+    var splitInputURL: URL? {
+        _ = window
+        return rootViewController.splitInputURL
+    }
+
+    /// 当前选中的标签页标题（供测试读取）。
+    var selectedTabLabel: String? {
+        _ = window
+        return rootViewController.selectedTabLabel
+    }
+
     private func observeSettings() {
         settingsObserver = NotificationCenter.default.addObserver(
             forName: AppSettings.didChangeNotification,
@@ -75,13 +100,45 @@ final class MachOMergeSplitWindowController: NSWindowController {
 private final class MachOMergeSplitRootViewController: NSTabViewController {
     private let mergeController = MergeMachOViewController()
     private let splitController = SplitMachOViewController()
+    private let removeController = RemoveArchitecturesViewController()
+    private var splitHandOff = WorkspaceToolHandOff()
+    private var removeHandOff = WorkspaceToolHandOff()
+
+    var removeArchitecturesViewModel: RemoveArchitecturesViewModel {
+        removeController.viewModel
+    }
+
+    var splitInputURL: URL? {
+        splitController.inputURL
+    }
+
+    var selectedTabLabel: String? {
+        tabViewItems[safe: selectedTabViewItemIndex]?.label
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         tabStyle = .toolbar
         addChild(mergeController)
         addChild(splitController)
+        addChild(removeController)
         reloadLocalization()
+    }
+
+    func prefill(withWorkspaceDocument url: URL) {
+        _ = view
+        // 预填时不弹出错误提示：工作区文件可能是单架构文件，此时只在表单中显示检测结果。
+        if splitController.isRunning == false,
+           let target = splitHandOff.inputToPrefill(workspaceDocumentURL: url, currentInputURL: splitController.inputURL) {
+            splitController.loadInput(target, presentingErrors: false)
+        }
+        if removeController.viewModel.isRunning == false,
+           let target = removeHandOff.inputToPrefill(
+               workspaceDocumentURL: url,
+               currentInputURL: removeController.viewModel.inputURL
+           ) {
+            removeController.loadInput(target, presentingErrors: false)
+        }
     }
 
     func reloadLocalization() {
@@ -95,8 +152,14 @@ private final class MachOMergeSplitRootViewController: NSTabViewController {
             systemSymbolName: "square.stack.3d.down.right.fill",
             accessibilityDescription: L10n.mergeSplitSplitTab
         )
+        tabViewItems[safe: 2]?.label = L10n.mergeSplitRemoveTab
+        tabViewItems[safe: 2]?.image = NSImage(
+            systemSymbolName: "scissors",
+            accessibilityDescription: L10n.mergeSplitRemoveTab
+        )
         mergeController.reloadLocalization()
         splitController.reloadLocalization()
+        removeController.reloadLocalization()
     }
 }
 
@@ -204,9 +267,8 @@ private final class MergeMachOViewController: NSViewController, NSTableViewDataS
             let result = Result<Void, Error> {
                 try MachOMergeSplitService().merge(inputURLs: inputURLs, outputURL: outputURL)
             }
-            await MainActor.run {
-                self?.finishMerge(result, operationID: operationID, outputURL: outputURL)
-            }
+            // 直接 await 主线程隔离的方法，避免在嵌套的并发闭包里引用被捕获的 weak self（Swift 6 下会报错）。
+            await self?.finishMerge(result, operationID: operationID, outputURL: outputURL)
         }
     }
 
@@ -385,7 +447,7 @@ private final class SplitMachOViewController: NSViewController {
     private let startButton = NSButton(title: "", target: nil, action: nil)
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
 
-    private var inputURL: URL?
+    private(set) var inputURL: URL?
     private var outputDirectoryURL: URL?
     private var architectures: [String] = []
     private var status: MergeSplitStatus = .idle
@@ -393,6 +455,10 @@ private final class SplitMachOViewController: NSViewController {
 
     override func loadView() {
         view = AdaptiveBackgroundView(backgroundColor: .windowBackgroundColor)
+    }
+
+    var isRunning: Bool {
+        activeOperationID != nil
     }
 
     override func viewDidLoad() {
@@ -487,9 +553,8 @@ private final class SplitMachOViewController: NSViewController {
                     outputDirectoryURL: outputDirectoryURL
                 )
             }
-            await MainActor.run {
-                self?.finishSplit(result, operationID: operationID)
-            }
+            // 直接 await 主线程隔离的方法，避免在嵌套的并发闭包里引用被捕获的 weak self（Swift 6 下会报错）。
+            await self?.finishSplit(result, operationID: operationID)
         }
     }
 
@@ -560,7 +625,8 @@ private final class SplitMachOViewController: NSViewController {
         }
     }
 
-    private func loadInput(_ url: URL) {
+    /// 载入输入文件并检测架构；`presentingErrors` 为 false 时（例如从工作区预填）检测失败不弹窗。
+    func loadInput(_ url: URL, presentingErrors: Bool = true) {
         inputURL = url
         do {
             architectures = try service.availableArchitectures(for: url)
@@ -568,7 +634,9 @@ private final class SplitMachOViewController: NSViewController {
         } catch {
             architectures = []
             inputsDidChange()
-            presentMergeSplitAlert(error)
+            if presentingErrors {
+                presentMergeSplitAlert(error)
+            }
         }
     }
 
@@ -591,6 +659,259 @@ private final class SplitMachOViewController: NSViewController {
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
         alert.beginSheetModal(for: view.window ?? NSWindow())
+    }
+}
+
+@MainActor
+private final class RemoveArchitecturesViewController: NSViewController {
+    let viewModel = RemoveArchitecturesViewModel()
+
+    private let inputLabel = makeSectionLabel("")
+    private let chooseInputButton = NSButton(title: "", target: nil, action: nil)
+    private let clearInputButton = NSButton(title: "", target: nil, action: nil)
+    private let inputPathLabel = makeCopyablePathLabel()
+    private let dropView = ToolDropZoneView()
+    private let architecturesLabel = makeSectionLabel("")
+    private let architecturesStackView = NSStackView()
+    private let architecturesHintLabel = NSTextField(wrappingLabelWithString: "")
+    private let outputLabel = makeSectionLabel("")
+    private let outputField = makeCopyablePathLabel()
+    private let chooseOutputButton = NSButton(title: "", target: nil, action: nil)
+    private let startButton = NSButton(title: "", target: nil, action: nil)
+    private let statusLabel = NSTextField(wrappingLabelWithString: "")
+    /// 当前展示的架构复选框对应的架构列表，变化时才重建复选框。
+    private var renderedArchitectures: [String] = []
+
+    override func loadView() {
+        view = AdaptiveBackgroundView(backgroundColor: .windowBackgroundColor)
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        buildUI()
+        viewModel.onChange = { [weak self] in
+            self?.refreshState()
+        }
+        reloadLocalization()
+    }
+
+    func reloadLocalization() {
+        inputLabel.stringValue = L10n.mergeSplitRemoveInputLabel
+        chooseInputButton.title = L10n.mergeSplitSplitChooseInput
+        clearInputButton.title = L10n.mergeSplitMergeClear
+        dropView.titleLabel.stringValue = L10n.mergeSplitRemoveDropHint
+        architecturesLabel.stringValue = L10n.mergeSplitRemoveArchitecturesLabel
+        outputLabel.stringValue = L10n.mergeSplitMergeOutputLabel
+        chooseOutputButton.title = L10n.mergeSplitMergeChooseOutput
+        startButton.title = L10n.mergeSplitRemoveStart
+        refreshState()
+    }
+
+    /// 载入输入文件；`presentingErrors` 为 false 时（例如从工作区预填）读取失败不弹窗。
+    func loadInput(_ url: URL, presentingErrors: Bool = true) {
+        do {
+            try viewModel.loadInput(url)
+        } catch {
+            if presentingErrors {
+                presentMergeSplitAlert(error)
+            }
+        }
+    }
+
+    @objc private func chooseInput(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.beginSheetModal(for: view.window ?? NSApp.mainWindow ?? NSWindow()) { [weak self] response in
+            guard response == .OK, let url = panel.url else {
+                return
+            }
+            self?.loadInput(url)
+        }
+    }
+
+    @objc private func clearInput(_ sender: Any?) {
+        viewModel.clearInput()
+    }
+
+    @objc private func chooseOutput(_ sender: Any?) {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = viewModel.suggestedOutputFileName
+        panel.directoryURL = viewModel.inputURL?.deletingLastPathComponent()
+        panel.beginSheetModal(for: view.window ?? NSApp.mainWindow ?? NSWindow()) { [weak self] response in
+            guard response == .OK, let url = panel.url else {
+                return
+            }
+            self?.viewModel.setOutputURL(url)
+        }
+    }
+
+    @objc private func architectureCheckboxChanged(_ sender: NSButton) {
+        guard let architecture = sender.identifier?.rawValue else {
+            return
+        }
+        viewModel.setArchitecture(architecture, removed: sender.state == .on)
+    }
+
+    @objc private func startRemoval(_ sender: Any?) {
+        guard let task = viewModel.start() else {
+            return
+        }
+        // 与合并/拆分一致：操作失败时除了状态文字外再弹出提示框。
+        Task { [weak self] in
+            await task.value
+            guard let self, case let .failed(error) = self.viewModel.status else {
+                return
+            }
+            self.presentMergeSplitAlert(error)
+        }
+    }
+
+    private func buildUI() {
+        chooseInputButton.target = self
+        chooseInputButton.action = #selector(chooseInput(_:))
+        clearInputButton.target = self
+        clearInputButton.action = #selector(clearInput(_:))
+        chooseOutputButton.target = self
+        chooseOutputButton.action = #selector(chooseOutput(_:))
+        startButton.target = self
+        startButton.action = #selector(startRemoval(_:))
+        statusLabel.lineBreakMode = .byTruncatingMiddle
+        statusLabel.maximumNumberOfLines = 2
+        architecturesHintLabel.textColor = .secondaryLabelColor
+        architecturesHintLabel.maximumNumberOfLines = 2
+
+        architecturesStackView.orientation = .horizontal
+        architecturesStackView.alignment = .centerY
+        architecturesStackView.spacing = 16
+
+        dropView.onFileURLDropped = { [weak self] url in
+            guard self?.viewModel.isRunning == false else {
+                return
+            }
+            self?.loadInput(url)
+        }
+
+        let controls = NSStackView()
+        controls.orientation = .vertical
+        controls.alignment = .leading
+        controls.spacing = 12
+
+        let inputRow = NSStackView(views: [inputLabel, NSView(), chooseInputButton, clearInputButton])
+        inputRow.orientation = .horizontal
+        inputRow.alignment = .centerY
+        inputRow.spacing = 8
+
+        let outputRow = NSStackView(views: [outputLabel, NSView(), chooseOutputButton])
+        outputRow.orientation = .horizontal
+        outputRow.alignment = .centerY
+        outputRow.spacing = 8
+
+        controls.addArrangedSubview(inputRow)
+        controls.addArrangedSubview(inputPathLabel)
+        controls.addArrangedSubview(dropView)
+        controls.addArrangedSubview(architecturesLabel)
+        controls.addArrangedSubview(architecturesStackView)
+        controls.addArrangedSubview(architecturesHintLabel)
+        controls.addArrangedSubview(outputRow)
+        controls.addArrangedSubview(outputField)
+        controls.addArrangedSubview(startButton)
+        controls.addArrangedSubview(statusLabel)
+        view.addSubview(controls)
+
+        controls.snp.makeConstraints { make in
+            make.edges.equalToSuperview().inset(20)
+        }
+        dropView.snp.makeConstraints { make in
+            make.width.equalTo(controls)
+            make.height.equalTo(120)
+        }
+        inputRow.snp.makeConstraints { make in
+            make.width.equalTo(controls)
+        }
+        outputRow.snp.makeConstraints { make in
+            make.width.equalTo(controls)
+        }
+    }
+
+    private func refreshState() {
+        inputPathLabel.stringValue = viewModel.inputURL?.path ?? L10n.xcframeworkNoSelection
+        outputField.stringValue = viewModel.outputURL?.path ?? L10n.xcframeworkNoSelection
+        rebuildArchitectureCheckboxesIfNeeded()
+
+        let running = viewModel.isRunning
+        for case let checkbox as NSButton in architecturesStackView.arrangedSubviews {
+            let architecture = checkbox.identifier?.rawValue ?? ""
+            checkbox.state = viewModel.architecturesToRemove.contains(architecture) ? .on : .off
+            checkbox.isEnabled = !running && viewModel.hasRemovableArchitectures
+        }
+        architecturesHintLabel.stringValue = architecturesHint()
+        chooseInputButton.isEnabled = !running
+        clearInputButton.isEnabled = !running && viewModel.inputURL != nil
+        chooseOutputButton.isEnabled = !running && viewModel.inputURL != nil
+        startButton.isEnabled = viewModel.canStart
+        statusLabel.stringValue = statusText()
+    }
+
+    private func rebuildArchitectureCheckboxesIfNeeded() {
+        guard renderedArchitectures != viewModel.availableArchitectures else {
+            return
+        }
+        renderedArchitectures = viewModel.availableArchitectures
+        for arrangedSubview in architecturesStackView.arrangedSubviews {
+            architecturesStackView.removeArrangedSubview(arrangedSubview)
+            arrangedSubview.removeFromSuperview()
+        }
+        // 架构名称本身不需要本地化，复选框的 identifier 保存架构名，便于回调时识别。
+        for architecture in renderedArchitectures {
+            let checkbox = NSButton(checkboxWithTitle: architecture, target: self, action: #selector(architectureCheckboxChanged(_:)))
+            checkbox.identifier = NSUserInterfaceItemIdentifier(architecture)
+            architecturesStackView.addArrangedSubview(checkbox)
+        }
+    }
+
+    /// 架构区下方的提示：没有输入、只有一个架构、全部勾选时给出对应说明。
+    private func architecturesHint() -> String {
+        if viewModel.inputURL == nil {
+            return L10n.mergeSplitRemoveArchitecturesHint
+        }
+        if viewModel.availableArchitectures.isEmpty {
+            return L10n.mergeSplitRemoveNoArchitectures
+        }
+        if viewModel.hasRemovableArchitectures == false {
+            return L10n.mergeSplitRemoveSingleArchitecture
+        }
+        if viewModel.removesEveryArchitecture {
+            return L10n.mergeSplitRemoveKeepOne
+        }
+        return L10n.mergeSplitRemoveArchitecturesHint
+    }
+
+    private func statusText() -> String {
+        switch viewModel.status {
+        case .idle:
+            return L10n.mergeSplitRemoveIdleStatus
+        case .running:
+            return L10n.mergeSplitRunningStatus
+        case let .completed(outputURL):
+            return "\(L10n.mergeSplitCompletedStatus) \(outputURL.path)"
+        case let .failed(error):
+            return error.localizedDescription
+        }
+    }
+
+    private func presentMergeSplitAlert(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = L10n.mergeSplitErrorTitle
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        guard let window = view.window, window.isVisible else {
+            // 窗口不可见（例如尚未显示）时错误已体现在表单中，不再弹出无处附着的提示框。
+            return
+        }
+        alert.beginSheetModal(for: window)
     }
 }
 

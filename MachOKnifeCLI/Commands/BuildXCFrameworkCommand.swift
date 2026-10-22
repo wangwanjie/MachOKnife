@@ -40,7 +40,13 @@ struct BuildXCFrameworkCommand {
             return try runAdvancedBuild(parsed)
         }
 
-        let parsed = try CLICommandSupport.parse(arguments, valueOptions: simpleValueOptions, usage: usage)
+        // 简单模式下 `--library` / `--headers` 可以重复（每个库一组头文件），`--output` 只能出现一次。
+        let parsed = try CLICommandSupport.parse(
+            arguments,
+            valueOptions: simpleValueOptions,
+            repeatableOptions: ["--library", "--headers"],
+            usage: usage
+        )
         guard parsed.positionals.isEmpty else {
             throw CLIError.invalidUsage(usage, detail: "unexpected argument '\(parsed.positionals[0])'")
         }
@@ -58,22 +64,36 @@ struct BuildXCFrameworkCommand {
         let outputURL = try validatedXCFrameworkOutputURL(parsed.requiredValue("--output", usage: usage))
 
         try createParentDirectoryIfNeeded(for: outputURL)
-        // Only ever delete a previous .xcframework bundle; never an arbitrary user path.
-        try removeExistingXCFramework(at: outputURL)
+
+        // 先在暂存目录里生成 xcframework，成功后再替换旧产物：
+        // 之前的实现在调用 xcodebuild 之前就删除了已有的输出，一旦构建失败，用户原有的 xcframework 会丢失。
+        let fileManager = FileManager.default
+        let stagingDirectoryURL = try makeStagingDirectory(near: outputURL)
+        defer {
+            try? fileManager.removeItem(at: stagingDirectoryURL)
+        }
+        let stagedOutputURL = stagingDirectoryURL.appendingPathComponent(outputURL.lastPathComponent, isDirectory: true)
 
         var commandArguments = ["-create-xcframework"]
         for (libraryURL, headersURL) in zip(libraries, headers) {
             commandArguments += ["-library", libraryURL.path, "-headers", headersURL.path]
         }
-        commandArguments += ["-output", outputURL.path]
+        commandArguments += ["-output", stagedOutputURL.path]
 
         let output = try runProcess(
             executableURL: URL(filePath: "/usr/bin/xcodebuild"),
             arguments: commandArguments
         )
 
+        // Only ever delete a previous .xcframework bundle; never an arbitrary user path.
+        try removeExistingXCFramework(at: outputURL)
+        try fileManager.moveItem(at: stagedOutputURL, to: outputURL)
+
         var lines = ["XCFramework output: \(outputURL.path)"]
-        let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        // xcodebuild 的日志里引用的是暂存路径，替换回最终输出路径，避免把临时目录暴露给用户。
+        let trimmedOutput = output
+            .replacingOccurrences(of: stagedOutputURL.path, with: outputURL.path)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedOutput.isEmpty == false {
             lines += ["", trimmedOutput]
         }
@@ -122,6 +142,24 @@ struct BuildXCFrameworkCommand {
         }
     }
 
+    /// 创建与输出同卷的私有暂存目录（优先 itemReplacementDirectory，便于最终 move 不跨卷），
+    /// 失败时退回系统临时目录。调用方负责在结束后删除。
+    private static func makeStagingDirectory(near outputURL: URL) throws -> URL {
+        let fileManager = FileManager.default
+        if let replacementDirectoryURL = try? fileManager.url(
+            for: .itemReplacementDirectory,
+            in: .userDomainMask,
+            appropriateFor: outputURL.deletingLastPathComponent(),
+            create: true
+        ) {
+            return replacementDirectoryURL
+        }
+        let fallbackURL = fileManager.temporaryDirectory
+            .appendingPathComponent("machoe-cli-xcframework-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: fallbackURL, withIntermediateDirectories: true)
+        return fallbackURL
+    }
+
     private static func createParentDirectoryIfNeeded(for outputURL: URL) throws {
         let parentDirectoryURL = outputURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parentDirectoryURL, withIntermediateDirectories: true)
@@ -166,6 +204,14 @@ struct BuildXCFrameworkCommand {
 
         let finalOutputURL: URL
         if let explicitOutput = parsed.value("--output") {
+            // `--output` 与 `--output-dir` / `--xcframework-name` 互斥；以前会静默忽略后两者，
+            // 用户可能以为产物写到了 `--output-dir` 下。
+            if parsed.contains("--output-dir") || parsed.contains("--xcframework-name") {
+                throw CLIError.invalidUsage(
+                    usage,
+                    detail: "--output cannot be combined with --output-dir or --xcframework-name"
+                )
+            }
             finalOutputURL = try validatedXCFrameworkOutputURL(explicitOutput)
         } else {
             let outputDirectoryURL = URL(filePath: try parsed.requiredValue("--output-dir", usage: usage))
@@ -185,20 +231,10 @@ struct BuildXCFrameworkCommand {
         // The build tool creates scratch directories (artifacts, prepared headers) next to the
         // xcframework and deletes them first. Run it inside a private staging directory on the
         // same volume so it can never touch existing user content, then move the result into place.
-        let stagingDirectoryURL: URL
-        if let replacementDirectoryURL = try? fileManager.url(
-            for: .itemReplacementDirectory,
-            in: .userDomainMask,
-            appropriateFor: finalOutputURL.deletingLastPathComponent(),
-            create: true
-        ) {
-            stagingDirectoryURL = replacementDirectoryURL
-        } else {
-            stagingDirectoryURL = fileManager.temporaryDirectory
-                .appendingPathComponent("machoe-cli-xcframework-\(UUID().uuidString)", isDirectory: true)
-            try fileManager.createDirectory(at: stagingDirectoryURL, withIntermediateDirectories: true)
+        let stagingDirectoryURL = try makeStagingDirectory(near: finalOutputURL)
+        defer {
+            try? fileManager.removeItem(at: stagingDirectoryURL)
         }
-        defer { try? fileManager.removeItem(at: stagingDirectoryURL) }
 
         let request = XCFrameworkBuildRequest(
             sourceLibraryURL: sourceLibraryURL,

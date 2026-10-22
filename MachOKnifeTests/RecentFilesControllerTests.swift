@@ -142,6 +142,64 @@ struct RecentFilesControllerTests {
         #expect(bookmarkProviderCalls == 1)
     }
 
+    @Test("keeps a bookmark that temporarily fails to resolve")
+    func keepsBookmarkThatTemporarilyFailsToResolve() throws {
+        struct VolumeNotMounted: Error {}
+        let settings = makeSettings()
+        let defaults = makeDefaults()
+        let originalURL = try makeExistingFile(named: "OnExternalVolume.dylib")
+        let resolvedURL = URL(filePath: "/Volumes/External/OnExternalVolume.dylib")
+        let bookmarkData = Data("external-bookmark".utf8)
+        var resolveAttempts = 0
+
+        let controller = try makeController(
+            settings: settings,
+            defaults: defaults,
+            bookmarkDataProvider: { _ in bookmarkData },
+            bookmarkResolver: { data in
+                resolveAttempts += 1
+                #expect(data == bookmarkData)
+                // 第一次模拟卷未挂载（`.withoutMounting` 下解析失败），之后恢复正常。
+                if resolveAttempts == 1 {
+                    throw VolumeNotMounted()
+                }
+                return RecentFilesController.BookmarkResolutionResult(url: resolvedURL, isStale: false)
+            }
+        )
+
+        try controller.recordOpen(url: originalURL, openedAt: Date(timeIntervalSince1970: 10))
+
+        // 解析失败时回退到记录的路径。
+        #expect(try controller.recentFileURLs() == [originalURL])
+        // 回归：此前失败一次就删除书签，卷重新挂载后也无法再恢复沙盒访问。
+        #expect(try controller.recentFileURLs() == [resolvedURL])
+        #expect(resolveAttempts == 2)
+    }
+
+    @Test("clearing recent files removes every record and drops stored bookmarks")
+    func clearingRecentFilesRemovesRecordsAndBookmarks() throws {
+        let settings = makeSettings()
+        let defaults = makeDefaults()
+        let bookmarkData = Data("clear-bookmark".utf8)
+        let controller = try makeController(
+            settings: settings,
+            defaults: defaults,
+            bookmarkDataProvider: { _ in bookmarkData }
+        )
+        let firstURL = try makeExistingFile(named: "ClearA.dylib")
+        let secondURL = try makeExistingFile(named: "ClearB.dylib")
+
+        try controller.recordOpen(url: firstURL, openedAt: Date(timeIntervalSince1970: 10))
+        try controller.recordOpen(url: secondURL, openedAt: Date(timeIntervalSince1970: 20))
+        #expect(defaults.dictionary(forKey: "app.recentFileBookmarks")?.count == 2)
+
+        try controller.clearRecentFiles()
+
+        #expect(try controller.recentFileURLs().isEmpty)
+        // 书签必须一并移除，不能在列表清空后继续保留沙盒访问凭据。
+        #expect(defaults.dictionary(forKey: "app.recentFileBookmarks") == nil)
+    }
+
     private func makeController(
         settings: AppSettings,
         defaults: UserDefaults? = nil,

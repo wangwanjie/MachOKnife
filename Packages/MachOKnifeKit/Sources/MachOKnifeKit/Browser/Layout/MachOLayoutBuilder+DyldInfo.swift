@@ -188,7 +188,7 @@ extension MachOLayoutBuilder {
             case 0x20:
                 rows.field(cursor, 1, name, "")
                 cursor += 1
-                cursor += rows.uleb(cursor, limit: end, "dylib", format: { MachOConstants.libraryOrdinalName(Int($0), dylibs: dylibs) }).length
+                cursor += rows.uleb(cursor, limit: end, "dylib", format: { MachOConstants.libraryOrdinalName(Int(truncatingIfNeeded: $0), dylibs: dylibs) }).length
             case 0x30:
                 let ordinal = immediate == 0 ? 0 : Int(Int8(bitPattern: 0xF0 | immediate))
                 rows.field(cursor, 1, name, "dylib (\(MachOConstants.libraryOrdinalName(ordinal, dylibs: dylibs)))")
@@ -288,7 +288,8 @@ extension MachOLayoutBuilder {
                         let entry = exports[index]
                         var value: String
                         if entry.flags & 0x08 != 0 {
-                            let ordinal = Int(entry.other ?? 0)
+                            // 序号来自 ULEB128，可能超过 Int.max；按位截断避免 `Int(UInt64)` 崩溃。
+                            let ordinal = Int(truncatingIfNeeded: entry.other ?? 0)
                             value = "re-export from \(MachOConstants.libraryOrdinalName(ordinal, dylibs: slice.dylibs))"
                             if let importName = entry.importName, importName.isEmpty == false {
                                 value += " as \(importName)"
@@ -340,17 +341,28 @@ extension MachOLayoutBuilder {
                     }
                 }
             }
-            cursor += Int(terminal.value)
-            guard cursor < end else { continue }
+            // terminal size 与子节点偏移都是文件里的 ULEB128，可能超过 Int.max 或令加法溢出，
+            // 统一经 MachOByteReader.offset(_:adding:) 计算，无效时跳过该节点。
+            guard let childrenStart = MachOByteReader.offset(cursor, adding: terminal.value), childrenStart < end else {
+                continue
+            }
+            cursor = childrenStart
             let childCount = Int(slice.u8(cursor))
             cursor += 1
             var children: [(Int, String)] = []
             for _ in 0..<childCount {
-                guard let label = reader.cString(at: cursor, limit: end) else { break }
+                guard let label = reader.cString(at: cursor, limit: end) else {
+                    break
+                }
                 cursor += label.length + 1
-                guard let childOffset = reader.uleb128(at: cursor, limit: end) else { break }
+                guard let childOffset = reader.uleb128(at: cursor, limit: end) else {
+                    break
+                }
                 cursor += childOffset.length
-                children.append((start + Int(childOffset.value), prefix + label.string))
+                guard let childNode = MachOByteReader.offset(start, adding: childOffset.value) else {
+                    continue
+                }
+                children.append((childNode, prefix + label.string))
             }
             stack.append(contentsOf: children.reversed())
         }
@@ -366,17 +378,27 @@ extension MachOLayoutBuilder {
         while let (node, prefix) = queue.popLast() {
             guard node < end, visited.insert(node).inserted else { continue }
             nodes.append((node, prefix))
-            guard let terminal = slice.reader.uleb128(at: node, limit: end) else { continue }
-            var cursor = node + terminal.length + Int(terminal.value)
-            guard cursor < end else { continue }
+            guard let terminal = slice.reader.uleb128(at: node, limit: end) else {
+                continue
+            }
+            // 同 exportEntries：文件里的 ULEB128 值需要无溢出地加到偏移上。
+            guard var cursor = MachOByteReader.offset(node + terminal.length, adding: terminal.value), cursor < end else {
+                continue
+            }
             let childCount = Int(slice.u8(cursor))
             cursor += 1
             for _ in 0..<childCount {
-                guard let label = slice.reader.cString(at: cursor, limit: end) else { break }
+                guard let label = slice.reader.cString(at: cursor, limit: end) else {
+                    break
+                }
                 cursor += label.length + 1
-                guard let childOffset = slice.reader.uleb128(at: cursor, limit: end) else { break }
+                guard let childOffset = slice.reader.uleb128(at: cursor, limit: end) else {
+                    break
+                }
                 cursor += childOffset.length
-                queue.append((start + Int(childOffset.value), prefix + label.string))
+                if let childNode = MachOByteReader.offset(start, adding: childOffset.value) {
+                    queue.append((childNode, prefix + label.string))
+                }
             }
         }
         for (node, prefix) in nodes.sorted(by: { $0.0 < $1.0 }) where rows.rows.count < 1_000_000 {
@@ -390,7 +412,7 @@ extension MachOLayoutBuilder {
                 rows.flags(flags.value, MachOConstants.exportSymbolFlags, width: 1)
                 cursor += flags.length
                 if flags.value & 0x08 != 0 {
-                    cursor += rows.uleb(cursor, limit: end, "Library Ordinal", format: { MachOConstants.libraryOrdinalName(Int($0), dylibs: slice.dylibs) }).length
+                    cursor += rows.uleb(cursor, limit: end, "Library Ordinal", format: { MachOConstants.libraryOrdinalName(Int(truncatingIfNeeded: $0), dylibs: slice.dylibs) }).length
                     if let name = slice.reader.cString(at: cursor, limit: end) {
                         rows.bytes(cursor, name.length + 1, "Import Name", name.string)
                     }
@@ -400,7 +422,11 @@ extension MachOLayoutBuilder {
                         rows.uleb(cursor, limit: end, "Resolver Offset", format: { hex($0) })
                     }
                 }
-                cursor = node + terminal.length + Int(terminal.value)
+                guard let childrenStart = MachOByteReader.offset(node + terminal.length, adding: terminal.value) else {
+                    rows.nextGroup()
+                    continue
+                }
+                cursor = childrenStart
             }
             guard cursor < end else { continue }
             let childCount = rows.u8(cursor, "Child Count")

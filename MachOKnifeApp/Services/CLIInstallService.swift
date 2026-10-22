@@ -7,9 +7,18 @@ struct CLIInstallStatus: Equatable {
     let isInstalled: Bool
 }
 
-enum CLIInstallError: Error {
+enum CLIInstallError: Error, Equatable {
     case installDirectoryNotConfigured
     case bundledCLINotFound
+    /// 安装目标路径上已存在同名目录（不是可执行文件），为避免误删用户数据而拒绝覆盖或删除。
+    case installPathIsDirectory(String)
+}
+
+extension CLIInstallError: LocalizedError {
+    // 让 `localizedDescription` 返回本地化的具体原因，而不是系统通用的“操作无法完成”。
+    var errorDescription: String? {
+        L10n.preferencesCLIErrorMessage(for: self)
+    }
 }
 
 protocol CLIInstallServicing {
@@ -69,12 +78,23 @@ final class CLIInstallService: CLIInstallServicing {
         do {
             try accessDirectory(installDirectoryURL) {
                 try fileManager.createDirectory(at: installDirectoryURL, withIntermediateDirectories: true)
+                // 目标位置若是一个真实目录，`removeItem` 会递归删除其中所有内容，必须拒绝。
+                try ensureNotDirectory(installedCLIURL)
+                // 安装目录恰好就是随包 CLI 所在目录时（例如选择了 App 旁边的目录），源与目标是同一个
+                // 文件：先删除再复制会把唯一的副本删掉，因此只需修正权限即可。
+                if Self.isSameFile(bundledCLIURL, installedCLIURL) {
+                    try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installedCLIURL.path)
+                    return
+                }
                 if fileManager.fileExists(atPath: installedCLIURL.path) {
                     try fileManager.removeItem(at: installedCLIURL)
                 }
                 try fileManager.copyItem(at: bundledCLIURL, to: installedCLIURL)
                 try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installedCLIURL.path)
             }
+        } catch let error as CLIInstallError {
+            // 业务校验错误不是权限问题，不应再走管理员权限安装的兜底流程。
+            throw error
         } catch {
             guard requiresAdministratorPrivileges(error) else {
                 throw error
@@ -95,10 +115,14 @@ final class CLIInstallService: CLIInstallServicing {
 
         do {
             try accessDirectory(currentStatus.installDirectoryURL) {
+                // 同名目录不是我们安装的 CLI，卸载时绝不能递归删除它。
+                try ensureNotDirectory(installedCLIURL)
                 if fileManager.fileExists(atPath: installedCLIURL.path) {
                     try fileManager.removeItem(at: installedCLIURL)
                 }
             }
+        } catch let error as CLIInstallError {
+            throw error
         } catch {
             guard requiresAdministratorPrivileges(error) else {
                 throw error
@@ -120,7 +144,37 @@ final class CLIInstallService: CLIInstallServicing {
         return try operation()
     }
 
+    /// 若 `url` 处是一个真实目录（符号链接本身不算）则抛出 `installPathIsDirectory`。
+    private func ensureNotDirectory(_ url: URL) throws {
+        if Self.isRealDirectory(atPath: url.path) {
+            throw CLIInstallError.installPathIsDirectory(url.path)
+        }
+    }
+
+    /// `lstat` 确认路径本身是目录（不跟随符号链接）。无法访问时返回 false。
+    nonisolated static func isRealDirectory(atPath path: String) -> Bool {
+        var info = stat()
+        guard lstat(path, &info) == 0 else {
+            return false
+        }
+        return (info.st_mode & S_IFMT) == S_IFDIR
+    }
+
+    /// 判断两个路径是否指向同一个文件（比较设备号与 inode，可识别符号链接、大小写或 `/private` 前缀差异）。
+    nonisolated static func isSameFile(_ lhs: URL, _ rhs: URL) -> Bool {
+        var lhsInfo = stat()
+        var rhsInfo = stat()
+        guard stat(lhs.path, &lhsInfo) == 0, stat(rhs.path, &rhsInfo) == 0 else {
+            return false
+        }
+        return lhsInfo.st_dev == rhsInfo.st_dev && lhsInfo.st_ino == rhsInfo.st_ino
+    }
+
     private func isInstalledCLI(at url: URL) -> Bool {
+        // 目录同样带有 x 权限位，会被 `isExecutableFile` 误判为“可执行”，需要排除。
+        if Self.isRealDirectory(atPath: url.path) {
+            return false
+        }
         if fileManager.fileExists(atPath: url.path), fileManager.isExecutableFile(atPath: url.path) {
             return true
         }
@@ -166,7 +220,8 @@ final class CLIInstallService: CLIInstallServicing {
     nonisolated private static func defaultFallbackExecutableProbe(_ url: URL) -> Bool {
         let process = Process()
         process.executableURL = URL(filePath: "/bin/sh")
-        process.arguments = ["-c", "test -x \(shellQuoted(url.path))"]
+        // `test -x` 对目录同样成立，因此同时要求是普通文件。
+        process.arguments = ["-c", "test -f \(shellQuoted(url.path)) && test -x \(shellQuoted(url.path))"]
 
         do {
             try process.run()

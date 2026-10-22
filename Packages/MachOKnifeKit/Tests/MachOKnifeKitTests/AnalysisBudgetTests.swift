@@ -38,6 +38,56 @@ struct AnalysisBudgetTests {
     }
 }
 
+extension AnalysisBudgetTests {
+    @Test("values exactly at the limits stay on the normal path")
+    func valuesAtTheLimitsStayNormal() {
+        // smallScan 的文件大小 1_024、符号 8、字符串表 128、估算节点 24，全部恰好等于上限。
+        let budget = AnalysisBudget(
+            maximumFileSize: 1_024,
+            maximumSymbolCount: 8,
+            maximumStringTableSize: 128,
+            maximumEstimatedNodeCount: 24
+        )
+
+        let decision = budget.classify(scan: smallScan())
+
+        #expect(decision.mode == .normal)
+        #expect(decision.exceededLimits.isEmpty)
+    }
+
+    @Test("a single exceeded limit is reported on its own")
+    func singleExceededLimitIsReportedAlone() {
+        let budget = AnalysisBudget(
+            maximumFileSize: 1_024,
+            maximumSymbolCount: 7,
+            maximumStringTableSize: 128,
+            maximumEstimatedNodeCount: 24
+        )
+
+        let decision = budget.classify(scan: smallScan())
+
+        #expect(decision.mode == .budgetedLargeFile)
+        #expect(decision.exceededLimits == [.symbolCount])
+    }
+
+    @Test("estimates from every slice of a universal binary are summed")
+    func estimatesAreSummedAcrossSlices() {
+        let single = smallScan()
+        let slice = single.slices[0]
+        let universal = MachOMetadataScan(fileURL: single.fileURL, fileSize: single.fileSize, kind: .fat, slices: [slice, slice])
+        // 单个切片 8 个符号未超限，两个切片合计 16 个超过 15。
+        let budget = AnalysisBudget(
+            maximumFileSize: 1_024,
+            maximumSymbolCount: 15,
+            maximumStringTableSize: 256,
+            maximumEstimatedNodeCount: 48
+        )
+
+        #expect(budget.classify(scan: single).mode == .normal)
+        #expect(budget.classify(scan: universal).exceededLimits == [.symbolCount])
+    }
+}
+
 private func smallScan() -> MachOMetadataScan {
     MachOMetadataScan(
         fileURL: URL(filePath: "/tmp/small"),

@@ -10,6 +10,7 @@ final class RetagWindowController: NSWindowController {
     private static let autosaveName = NSWindow.FrameAutosaveName("MachOKnifeRetagWindowFrame")
     private let retagViewController: RetagViewController
     private var settingsObserver: NSObjectProtocol?
+    private var workspaceHandOff = WorkspaceToolHandOff()
 
     convenience init() {
         self.init(viewController: RetagViewController())
@@ -58,6 +59,27 @@ final class RetagWindowController: NSWindowController {
     func reloadLocalization() {
         window?.title = L10n.retagWindowTitle
         retagViewController.reloadLocalization()
+    }
+
+    /// 用主工作区当前打开的文件预填输入；用户已手动选择了其他文件或改写正在进行时保持不变。
+    func prefill(withWorkspaceDocument url: URL) {
+        _ = window
+        guard retagViewController.isRetagging == false else {
+            return
+        }
+        guard let target = workspaceHandOff.inputToPrefill(
+            workspaceDocumentURL: url,
+            currentInputURL: retagViewController.inputURL
+        ) else {
+            return
+        }
+        // 预填时不弹出错误提示：文件无法用于改写时窗口保持空闲状态。
+        retagViewController.loadInput(target, presentingErrors: false)
+    }
+
+    /// 当前改写的输入文件。
+    var inputURL: URL? {
+        retagViewController.inputURL
     }
 
     private func observeSettings() {
@@ -125,7 +147,7 @@ private final class RetagViewController: NSViewController {
     private let startButton = NSButton(title: "", target: nil, action: nil)
     private let cancelButton = NSButton(title: "", target: nil, action: nil)
 
-    private var inputURL: URL?
+    private(set) var inputURL: URL?
     private var outputDirectoryURL: URL?
     private var activeInputSecurityScopedURL: URL?
     private var activeOutputSecurityScopedURL: URL?
@@ -262,18 +284,18 @@ private final class RetagViewController: NSViewController {
                     outcome = .failure(error)
                 }
 
-                await MainActor.run {
-                    guard let self else {
-                        try? FileManager.default.removeItem(at: stagingURL)
-                        return
-                    }
-                    self.finishRetag(
-                        retagID: retagID,
-                        outcome: outcome,
-                        stagingURL: stagingURL,
-                        outputURL: outputURL
-                    )
+                // 窗口已释放时丢弃暂存文件；否则直接 await 主线程隔离的方法，
+                // 避免在嵌套的并发闭包里引用被捕获的 weak self（Swift 6 下会报错）。
+                guard let self else {
+                    try? FileManager.default.removeItem(at: stagingURL)
+                    return
                 }
+                await self.finishRetag(
+                    retagID: retagID,
+                    outcome: outcome,
+                    stagingURL: stagingURL,
+                    outputURL: outputURL
+                )
             }
         } catch {
             showErrorAlert(error)
@@ -515,7 +537,13 @@ private final class RetagViewController: NSViewController {
         renderStatus()
     }
 
-    private func loadInput(_ url: URL) {
+    /// 是否有改写操作正在进行。
+    var isRetagging: Bool {
+        activeRetagID != nil
+    }
+
+    /// 载入输入文件；`presentingErrors` 为 false 时（例如从工作区预填）解析失败不弹窗。
+    func loadInput(_ url: URL, presentingErrors: Bool = true) {
         let previousInputURL = activeInputSecurityScopedURL
         let reusesExistingScope = previousInputURL?.standardizedFileURL == url.standardizedFileURL
         let didAccessInputScope = reusesExistingScope ? false : url.startAccessingSecurityScopedResource()
@@ -556,7 +584,9 @@ private final class RetagViewController: NSViewController {
             if didAccessInputScope {
                 url.stopAccessingSecurityScopedResource()
             }
-            showErrorAlert(error)
+            if presentingErrors {
+                showErrorAlert(error)
+            }
         }
     }
 

@@ -167,7 +167,7 @@ extension MachOLayoutBuilder {
                     row: { index in
                         let offset = start + hashOffset + index * hashSize
                         return BrowserDetailRow(
-                            key: pageSize > 0 ? "Page \(index) (\(hex(UInt64(index) * pageSize)))" : "Slot \(index)",
+                            key: pageSize > 0 ? "Page \(index) (\(hex(UInt64(index) &* pageSize)))" : "Slot \(index)",
                             value: reader.hexString(at: offset, count: hashSize, maximumBytes: 64),
                             dataPreview: reader.hexString(at: offset, count: hashSize, maximumBytes: 32),
                             rawAddress: UInt64(offset)

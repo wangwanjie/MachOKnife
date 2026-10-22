@@ -122,8 +122,24 @@ final class WorkspaceViewModel {
         } else {
             outlineItems = []
         }
+        refreshLoadingDetailText()
         updateDetailOutputs()
         updateBrowserPresentation()
+    }
+
+    /// 语言切换后重新生成加载提示：这些文案在加载开始/完成时就已写入，
+    /// 如果不重新取值，会一直停留在旧语言。错误信息来自系统错误描述，保持原样。
+    private func refreshLoadingDetailText() {
+        switch loadingState {
+        case .loading:
+            loadingDetailText = L10n.workspaceLoadingAnalyzing
+        case .degraded:
+            if analysisMode == .budgetedLargeFile {
+                loadingDetailText = L10n.workspaceLoadingDeferredCollections
+            }
+        case .idle, .ready, .error:
+            break
+        }
     }
 
     func closeCurrentDocument() {
@@ -154,26 +170,6 @@ final class WorkspaceViewModel {
         guard var editableSlice else { return }
         guard let index = editableSlice.rpaths.firstIndex(of: oldPath) else { return }
         editableSlice.rpaths[index] = newPath
-        applyDraft(editableSlice)
-    }
-
-    func addRPathDraft(_ path: String) {
-        guard var editableSlice else { return }
-        editableSlice.rpaths.append(path)
-        applyDraft(editableSlice)
-    }
-
-    func updateRPathDraft(at index: Int, path: String) {
-        guard var editableSlice else { return }
-        guard editableSlice.rpaths.indices.contains(index) else { return }
-        editableSlice.rpaths[index] = path
-        applyDraft(editableSlice)
-    }
-
-    func removeRPathDraft(at index: Int) {
-        guard var editableSlice else { return }
-        guard editableSlice.rpaths.indices.contains(index) else { return }
-        editableSlice.rpaths.remove(at: index)
         applyDraft(editableSlice)
     }
 
@@ -533,7 +529,7 @@ final class WorkspaceViewModel {
             detailText = """
             \(L10n.viewerLoadCommandsSection)
             \(L10n.viewerCountLabel): \(slice.loadCommandCount)
-            \(L10n.viewerSizeLabel): \(slice.header.sizeofCommands) bytes
+            \(L10n.viewerSizeLabel): \(L10n.workspaceByteCount(Int(slice.header.sizeofCommands)))
             """
 
             inspectorText = slice.loadCommands.enumerated().map { commandIndex, command in
@@ -651,7 +647,8 @@ final class WorkspaceViewModel {
             \(L10n.viewerCommandLabel): \(commandName(for: dylib.command))
             \(L10n.viewerPathLabel): \(dylib.path)
             """
-            inspectorText = L10n.viewerDylibPathEditableHint
+            // 编辑面板已移除，单条依赖库无额外信息可展示
+            inspectorText = ""
 
         case let .rpaths(index):
             guard let slice = slice(at: index, in: analysis) else {
@@ -678,7 +675,8 @@ final class WorkspaceViewModel {
             \(L10n.viewerRPathTitle)
             \(L10n.viewerValueLabel): \(slice.rpaths[rpathIndex])
             """
-            inspectorText = L10n.viewerRPathEditableHint
+            // 编辑面板已移除，单条 RPath 无额外信息可展示
+            inspectorText = ""
 
         case let .symbols(index):
             guard let slice = slice(at: index, in: analysis) else {
@@ -879,7 +877,7 @@ final class WorkspaceViewModel {
             return
         }
 
-        guard let dataRange = node.dataRange else {
+        guard node.dataRange != nil else {
             browserHexText = L10n.workspaceHexUnavailable
             browserHexRows = []
             browserHexPageLabel = ""
@@ -917,9 +915,11 @@ final class WorkspaceViewModel {
             )) ?? []
             browserHexRows = rows
             browserHexText = rows.isEmpty ? L10n.workspaceHexUnavailable : renderHex(rows)
+            // 字节数文案走本地化，避免中文界面出现硬编码的英文 "bytes"。
+            let byteCountText = L10n.workspaceByteCount(selection.length)
             browserHexPageLabel = pageCount > 1
-                ? "\(browserHexPageIndex + 1) / \(pageCount) (\(selection.length) bytes)"
-                : "\(selection.length) bytes"
+                ? "\(browserHexPageIndex + 1) / \(pageCount) (\(byteCountText))"
+                : byteCountText
         }
     }
 
@@ -1179,7 +1179,8 @@ final class WorkspaceViewModel {
 
             let symbolItems = slice.symbols.prefix(200).enumerated().map { symbolIndex, symbol in
                 OutlineItem(
-                    title: symbol.name.isEmpty ? "(anonymous)" : symbol.name,
+                    // 匿名符号的占位文案需本地化，与详情区保持一致。
+                    title: symbol.name.isEmpty ? L10n.viewerAnonymous : symbol.name,
                     selection: .symbol(sliceIndex: index, symbolIndex: symbolIndex),
                     children: []
                 )
@@ -1418,7 +1419,10 @@ final class WorkspaceViewModel {
     }
 
     private func formatPlatform(_ platform: MachOPlatform?) -> String {
-        guard let platform else { return "n/a" }
+        guard let platform else {
+            // 缺失平台信息时使用本地化的 “n/a”。
+            return L10n.viewerNA
+        }
         switch platform {
         case .macOS:
             return "macOS"

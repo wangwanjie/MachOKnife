@@ -128,7 +128,9 @@ final class MachOByteReader: @unchecked Sendable {
             shift += 7
         } while byte & 0x80 != 0
         if shift < 64, byte & 0x40 != 0 {
-            result |= -(Int64(1) << shift)
+            // 用全 1 左移做符号扩展：shift == 63 时 `-(1 << 63)` 会对 Int64.min 取负而溢出崩溃，
+            // `~0 << shift` 得到的是同样的掩码且不会溢出。
+            result |= ~Int64(0) << shift
         }
         return (result, cursor - offset)
     }
@@ -158,6 +160,19 @@ final class MachOByteReader: @unchecked Sendable {
             }
         }
         return offsets
+    }
+
+    /// 在绝对偏移 `base` 上加一个从文件里读出的无符号增量（如 ULEB128 长度、偏移）。
+    /// 结果超出 Int 范围时返回 nil，避免 `Int(UInt64)` 或加法溢出导致畸形文件直接崩溃。
+    static func offset(_ base: Int, adding delta: UInt64) -> Int? {
+        guard let delta = Int(exactly: delta) else {
+            return nil
+        }
+        let (result, overflow) = base.addingReportingOverflow(delta)
+        if overflow {
+            return nil
+        }
+        return result
     }
 
     private func load<T: FixedWidthInteger>(_ type: T.Type, at offset: Int) -> T? {

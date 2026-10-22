@@ -37,8 +37,11 @@ public struct MachOWriter: Sendable {
         let originalData = try Data(contentsOf: inputURL, options: [.mappedIfSafe])
         let container = try MachOContainer.parse(at: inputURL)
         let diffEntries = try container.slices.flatMap { slice in
-            guard applies(editPlan, to: slice) else { return [DiffEntry]() }
-            return try rewriteSlice(slice, in: originalData, plan: editPlan).diffEntries
+            guard applies(editPlan, to: slice) else {
+                return [DiffEntry]()
+            }
+            // 预览不修改文件，切片大小只影响签名裁剪，这里传入 0 表示不计算裁剪。
+            return try rewriteSlice(slice, in: originalData, plan: editPlan, sliceSize: 0).diffEntries
         }
         return MachODiff(entries: diffEntries)
     }
@@ -49,14 +52,38 @@ public struct MachOWriter: Sendable {
         var rewrittenData = originalData
         var diffEntries = [DiffEntry]()
         var removedCodeSignature = false
+        // fat 文件需要在裁剪签名后同步更新 fat_arch.size。
+        let fatEntries = container.kind == .fat ? try MachOFileParser(data: originalData).fatArchitectureEntries() : []
+        var truncatedFileSize: Int?
 
         for slice in container.slices {
-            guard applies(editPlan, to: slice) else { continue }
-            let rewrite = try rewriteSlice(slice, in: originalData, plan: editPlan)
+            guard applies(editPlan, to: slice) else {
+                continue
+            }
+            let fatEntry = fatEntries.first(where: { $0.offset == slice.offset })
+            let sliceSize = sliceByteCount(slice, fatEntry: fatEntry, fileSize: originalData.count)
+            let rewrite = try rewriteSlice(slice, in: originalData, plan: editPlan, sliceSize: sliceSize)
             rewrittenData.replaceSubrange(rewrite.commandAreaRange, with: rewrite.commandAreaData)
             patchHeader(in: &rewrittenData, slice: slice, commandCount: rewrite.commandCount, sizeofCommands: rewrite.sizeofCommands)
             diffEntries.append(contentsOf: rewrite.diffEntries)
             removedCodeSignature = removedCodeSignature || rewrite.removedCodeSignature
+
+            // 与 `codesign --remove-signature` 一致：签名数据位于切片末尾时把它从文件中去掉，
+            // 否则旧签名会作为垃圾数据留在 __LINKEDIT 末尾，重新签名后文件持续变大。
+            if let trimmedSliceSize = rewrite.trimmedSliceSize {
+                let freedRange = (slice.offset + trimmedSliceSize)..<(slice.offset + sliceSize)
+                rewrittenData.resetBytes(in: freedRange)
+                if let fatEntry {
+                    patchFatSliceSize(in: &rewrittenData, entry: fatEntry, newSize: trimmedSliceSize)
+                }
+                if freedRange.upperBound == originalData.count {
+                    truncatedFileSize = freedRange.lowerBound
+                }
+            }
+        }
+
+        if let truncatedFileSize {
+            rewrittenData.removeSubrange(truncatedFileSize..<rewrittenData.count)
         }
 
         let inputPermissions = MachOFileAttributes.posixPermissions(of: inputURL)
@@ -69,7 +96,16 @@ public struct MachOWriter: Sendable {
         plan.targetSliceOffset == nil || plan.targetSliceOffset == slice.offset
     }
 
-    private func rewriteSlice(_ slice: MachOSlice, in data: Data, plan: MachOEditPlan) throws -> SliceRewriteResult {
+    /// 计算切片的字节数：fat 切片取 fat_arch.size（限制在文件范围内），thin 文件取整个文件。
+    private func sliceByteCount(_ slice: MachOSlice, fatEntry: FatArchitectureEntry?, fileSize: Int) -> Int {
+        let remaining = max(0, fileSize - slice.offset)
+        guard let fatEntry else {
+            return remaining
+        }
+        return min(Int(clamping: fatEntry.size), remaining)
+    }
+
+    private func rewriteSlice(_ slice: MachOSlice, in data: Data, plan: MachOEditPlan, sliceSize: Int) throws -> SliceRewriteResult {
         try ensureNativeByteOrder(slice, in: data)
         if plan.installName != nil, slice.installNameInfo == nil {
             throw MachOWriteError.missingInstallNameCommand(sliceOffset: slice.offset)
@@ -84,10 +120,20 @@ public struct MachOWriter: Sendable {
         rewrittenCommands.reserveCapacity(slice.loadCommands.count + plan.rpathEdits.count + plan.dylibEdits.count)
         var diffEntries = [DiffEntry]()
 
+        // 同一段名出现多次时以最后一个编辑为准；以前用 uniqueKeysWithValues，重复段名会直接触发运行时崩溃。
         let segmentProtectionMap = Dictionary(
-            uniqueKeysWithValues: plan.segmentProtectionEdits.map { ($0.segmentName, $0) }
+            plan.segmentProtectionEdits.map { ($0.segmentName, $0) },
+            uniquingKeysWith: { _, last in
+                last
+            }
         )
-        let shouldRemoveCodeSignature = plan.stripCodeSignature || editPlanTouchesSignedMetadata(plan)
+        // LC_CODE_SIGNATURE 是否移除要等所有编辑处理完后再决定：只有显式要求剥离签名，
+        // 或确实产生了修改时才移除；以前只要计划里带了编辑项（即使没有匹配、文件未变）也会删掉签名。
+        var codeSignatureCommandIndex: Int?
+        var linkEditCommandIndex: Int?
+        // 平台编辑时只保留一条 LC_BUILD_VERSION：zippered 等含多条版本命令的文件，
+        // 全部改写成同一平台会产生重复的 LC_BUILD_VERSION，dyld 会拒绝加载。
+        var wroteBuildVersion = false
 
         var usedDylibReplaceIndexes = Set<Int>()
         var usedDylibRemoveIndexes = Set<Int>()
@@ -160,6 +206,18 @@ public struct MachOWriter: Sendable {
                 rewrittenCommands.append(rawData)
             case let .buildVersion(info)?:
                 if let platformEdit = plan.platformEdit {
+                    if wroteBuildVersion {
+                        diffEntries.append(
+                            DiffEntry(
+                                sliceOffset: slice.offset,
+                                kind: .platform,
+                                originalValue: "\(info.platform) \(info.minimumOS) \(info.sdk)",
+                                updatedValue: nil
+                            )
+                        )
+                        continue
+                    }
+                    wroteBuildVersion = true
                     rewrittenCommands.append(try serializeBuildVersionCommand(info: info, edit: platformEdit, is64Bit: slice.is64Bit))
                     diffEntries.append(
                         DiffEntry(
@@ -175,6 +233,19 @@ public struct MachOWriter: Sendable {
             case let .versionMin(info)?:
                 if let platformEdit = plan.platformEdit {
                     if usesBuildVersionCommand(for: platformEdit.platform) {
+                        // 已有（或即将写入）LC_BUILD_VERSION 时直接丢弃旧的 version-min，避免出现重复的版本命令。
+                        if wroteBuildVersion || slice.buildVersion != nil {
+                            diffEntries.append(
+                                DiffEntry(
+                                    sliceOffset: slice.offset,
+                                    kind: .platform,
+                                    originalValue: "\(info.platform) \(info.minimumOS) \(info.sdk)",
+                                    updatedValue: nil
+                                )
+                            )
+                            continue
+                        }
+                        wroteBuildVersion = true
                         rewrittenCommands.append(
                             try serializeBuildVersionCommand(
                                 command: UInt32(LC_BUILD_VERSION),
@@ -200,6 +271,9 @@ public struct MachOWriter: Sendable {
                     rewrittenCommands.append(rawData)
                 }
             case let .segment(info)?:
+                if info.name == SEG_LINKEDIT {
+                    linkEditCommandIndex = rewrittenCommands.count
+                }
                 if let edit = segmentProtectionMap[info.name] {
                     rewrittenCommands.append(serializeSegmentCommand(original: rawData, segment: info, edit: edit))
                     diffEntries.append(
@@ -214,13 +288,9 @@ public struct MachOWriter: Sendable {
                     rewrittenCommands.append(rawData)
                 }
             case .codeSignature?:
-                if shouldRemoveCodeSignature {
-                    diffEntries.append(
-                        DiffEntry(sliceOffset: slice.offset, kind: .codeSignature, originalValue: "present", updatedValue: "removed")
-                    )
-                } else {
-                    rewrittenCommands.append(rawData)
-                }
+                // 先保留，待所有编辑处理完后再决定是否移除。
+                codeSignatureCommandIndex = rewrittenCommands.count
+                rewrittenCommands.append(rawData)
             default:
                 rewrittenCommands.append(rawData)
             }
@@ -261,6 +331,27 @@ public struct MachOWriter: Sendable {
             )
         }
 
+        // 有实际修改（diffEntries 非空）或显式要求时才移除签名：修改后的文件签名必然失效。
+        let shouldRemoveCodeSignature = plan.stripCodeSignature || diffEntries.isEmpty == false
+        var trimmedSliceSize: Int?
+        if shouldRemoveCodeSignature, let codeSignatureCommandIndex {
+            rewrittenCommands.remove(at: codeSignatureCommandIndex)
+            diffEntries.append(
+                DiffEntry(sliceOffset: slice.offset, kind: .codeSignature, originalValue: "present", updatedValue: "removed")
+            )
+            if let linkEditIndex = linkEditCommandIndex {
+                // __LINKEDIT 位于签名命令之后时，删除签名命令会让它的下标前移一位。
+                let adjustedIndex = linkEditIndex > codeSignatureCommandIndex ? linkEditIndex - 1 : linkEditIndex
+                if let trim = codeSignatureTrim(for: slice, sliceSize: sliceSize) {
+                    rewrittenCommands[adjustedIndex] = shrinkLinkEditSegment(
+                        rewrittenCommands[adjustedIndex],
+                        newFileSize: trim.linkEditFileSize
+                    )
+                    trimmedSliceSize = trim.sliceSize
+                }
+            }
+        }
+
         let serializedCommandBytes = rewrittenCommands.reduce(into: Data(), { $0.append($1) })
         let requiredBytes = serializedCommandBytes.count
         guard requiredBytes <= availableCommandBytes else {
@@ -280,8 +371,70 @@ public struct MachOWriter: Sendable {
             commandCount: UInt32(rewrittenCommands.count),
             sizeofCommands: UInt32(requiredBytes),
             diffEntries: diffEntries,
-            removedCodeSignature: shouldRemoveCodeSignature && slice.codeSignature != nil
+            removedCodeSignature: shouldRemoveCodeSignature && codeSignatureCommandIndex != nil,
+            trimmedSliceSize: trimmedSliceSize
         )
+    }
+
+    /// 判断签名数据能否像 `codesign --remove-signature` 那样从文件中裁掉：
+    /// 签名必须恰好位于 __LINKEDIT 末尾且位于切片末尾，否则只移除加载命令、保留数据。
+    /// 返回裁剪后 __LINKEDIT 的 filesize 与切片的新大小（均相对切片起点）。
+    private func codeSignatureTrim(for slice: MachOSlice, sliceSize: Int) -> (linkEditFileSize: UInt64, sliceSize: Int)? {
+        guard sliceSize > 0,
+              let signature = slice.codeSignature,
+              let linkEdit = slice.segments.first(where: { $0.name == SEG_LINKEDIT })
+        else {
+            return nil
+        }
+
+        let signatureStart = UInt64(signature.dataOffset)
+        let signatureEnd = signatureStart + UInt64(signature.dataSize)
+        let (linkEditEnd, overflow) = linkEdit.fileOffset.addingReportingOverflow(linkEdit.fileSize)
+        guard overflow == false,
+              signature.dataSize > 0,
+              signatureStart >= linkEdit.fileOffset,
+              linkEditEnd == signatureEnd,
+              signatureEnd == UInt64(sliceSize)
+        else {
+            return nil
+        }
+
+        return (signatureStart - linkEdit.fileOffset, Int(signatureStart))
+    }
+
+    /// 修改 __LINKEDIT 段命令的 filesize（vmsize 保持不变，与 codesign 的行为一致）。
+    private func shrinkLinkEditSegment(_ commandData: Data, newFileSize: UInt64) -> Data {
+        var data = commandData
+        let command = data.withUnsafeBytes { buffer in
+            buffer.loadUnaligned(fromByteOffset: 0, as: UInt32.self)
+        }
+        if command == UInt32(LC_SEGMENT_64) {
+            var segment = data.withUnsafeBytes { buffer in
+                buffer.loadUnaligned(fromByteOffset: 0, as: segment_command_64.self)
+            }
+            segment.filesize = newFileSize
+            writeStruct(segment, into: &data, at: 0)
+        } else {
+            var segment = data.withUnsafeBytes { buffer in
+                buffer.loadUnaligned(fromByteOffset: 0, as: segment_command.self)
+            }
+            segment.filesize = UInt32(truncatingIfNeeded: newFileSize)
+            writeStruct(segment, into: &data, at: 0)
+        }
+        return data
+    }
+
+    /// 把 fat 头中某个切片的 size 字段改为 `newSize`，按原文件的字节序写回。
+    private func patchFatSliceSize(in data: inout Data, entry: FatArchitectureEntry, newSize: Int) {
+        if entry.is64Bit {
+            // fat_arch_64: cputype(4) cpusubtype(4) offset(8) size(8) align(4) reserved(4)
+            let value = UInt64(newSize)
+            writeStruct(entry.isByteSwapped ? value.byteSwapped : value, into: &data, at: entry.entryOffset + 16)
+        } else {
+            // fat_arch: cputype(4) cpusubtype(4) offset(4) size(4) align(4)
+            let value = UInt32(truncatingIfNeeded: newSize)
+            writeStruct(entry.isByteSwapped ? value.byteSwapped : value, into: &data, at: entry.entryOffset + 12)
+        }
     }
 
     private func patchHeader(in data: inout Data, slice: MachOSlice, commandCount: UInt32, sizeofCommands: UInt32) {
@@ -355,14 +508,6 @@ public struct MachOWriter: Sendable {
         }
 
         return available
-    }
-
-    private func editPlanTouchesSignedMetadata(_ plan: MachOEditPlan) -> Bool {
-        plan.installName != nil
-            || plan.dylibEdits.isEmpty == false
-            || plan.rpathEdits.isEmpty == false
-            || plan.platformEdit != nil
-            || plan.segmentProtectionEdits.isEmpty == false
     }
 
     private func matchDylibReplacement(
@@ -679,4 +824,6 @@ private struct SliceRewriteResult {
     let sizeofCommands: UInt32
     let diffEntries: [DiffEntry]
     let removedCodeSignature: Bool
+    /// 签名数据被裁掉后切片的新大小；nil 表示没有裁剪。
+    let trimmedSliceSize: Int?
 }

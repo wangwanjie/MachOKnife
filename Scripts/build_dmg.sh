@@ -12,6 +12,7 @@ DMG_OUTPUT_DIR="$BUILD_DIR/dmg"
 KEYCHAIN_PROFILE="$DEFAULT_NOTARY_PROFILE"
 SKIP_NOTARIZE=false
 SIGNING_IDENTITY=""
+ARCH_OPTION="all"
 
 generate_dmg_background() {
     local output_path="$1"
@@ -345,17 +346,27 @@ EOF
 usage() {
     cat <<EOF
 Usage:
-  ./Scripts/build_dmg.sh [--keychain-profile PROFILE] [--signing-identity IDENTITY] [--no-notarize]
+  ./Scripts/build_dmg.sh [--arch arm64|x86_64|all] [--keychain-profile PROFILE]
+                         [--signing-identity IDENTITY] [--no-notarize]
 
 Options:
+  --arch ARCH                  Architecture to package. arm64 / x86_64 builds a single-arch DMG,
+                               all (default) builds one DMG per architecture.
   --keychain-profile PROFILE   Notarytool keychain profile. Default: $DEFAULT_NOTARY_PROFILE
   --signing-identity IDENTITY  Developer ID Application identity to use
   --no-notarize                Skip notarization
+
+Output:
+  build/dmg/${APP_NAME}_V_<version>_<arch>.dmg
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --arch)
+            ARCH_OPTION="${2:-}"
+            shift 2
+            ;;
         --keychain-profile)
             KEYCHAIN_PROFILE="${2:-}"
             shift 2
@@ -401,52 +412,137 @@ if [[ -z "$SIGNING_IDENTITY" ]]; then
     exit 1
 fi
 
-DMG_NAME="${APP_NAME}_V_${VERSION}.dmg"
-APP_PATH="$DERIVED_DATA/Build/Products/$CONFIGURATION/${APP_NAME}.app"
-DMG_PATH="$DMG_OUTPUT_DIR/$DMG_NAME"
-VOLUME_NAME="${APP_NAME} V$VERSION"
+# 解析需要打包的架构列表：分别构建单架构安装包，避免通用包体积翻倍
+case "$ARCH_OPTION" in
+    all)
+        TARGET_ARCHS=("${SUPPORTED_ARCHS[@]}")
+        ;;
+    arm64|x86_64)
+        TARGET_ARCHS=("$ARCH_OPTION")
+        ;;
+    *)
+        echo "error: unsupported --arch value: $ARCH_OPTION (expected arm64, x86_64 or all)" >&2
+        exit 1
+        ;;
+esac
 
 mkdir -p "$DMG_OUTPUT_DIR"
 
-echo "building $APP_NAME $VERSION"
-xcodebuild \
-    "${XCODE_APP_CONTAINER_ARGS[@]}" \
-    -scheme "$SCHEME" \
-    -configuration "$CONFIGURATION" \
-    -derivedDataPath "$DERIVED_DATA" \
-    -destination "generic/platform=macOS" \
-    ARCHS="arm64 x86_64" \
-    ONLY_ACTIVE_ARCH=NO \
-    build
+notarize_dmg() {
+    local dmg_path="$1"
+    local notary_output
 
-if [[ ! -d "$APP_PATH" ]]; then
-    echo "error: app bundle not found: $APP_PATH" >&2
-    exit 1
-fi
+    echo "submitting $(basename "$dmg_path") for notarization"
+    notary_output="$(xcrun notarytool submit "$dmg_path" --keychain-profile "$KEYCHAIN_PROFILE" --wait 2>&1)" || true
+    echo "$notary_output"
 
-echo "re-signing app with $SIGNING_IDENTITY"
-resign_for_distribution "$APP_PATH" "$SIGNING_IDENTITY"
-verify_developer_id_signature "$APP_PATH" "$APP_NAME.app"
-codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-
-rm -f "$DMG_PATH"
-echo "creating DMG: $DMG_PATH"
-create_pretty_dmg "$APP_PATH" "$DMG_PATH" "$VOLUME_NAME"
-
-if [[ "$SKIP_NOTARIZE" == false ]]; then
-    echo "submitting DMG for notarization"
-    NOTARY_OUTPUT="$(xcrun notarytool submit "$DMG_PATH" --keychain-profile "$KEYCHAIN_PROFILE" --wait 2>&1)" || true
-    echo "$NOTARY_OUTPUT"
-
-    if ! grep -q "status: Accepted" <<<"$NOTARY_OUTPUT"; then
-        echo "error: notarization failed" >&2
+    if ! grep -q "status: Accepted" <<<"$notary_output"; then
+        echo "error: notarization failed for $dmg_path" >&2
         exit 1
     fi
 
-    xcrun stapler staple "$DMG_PATH"
-    xcrun stapler validate "$DMG_PATH"
-else
-    echo "skipping notarization"
-fi
+    xcrun stapler staple "$dmg_path"
+    xcrun stapler validate "$dmg_path"
+}
 
-echo "done: $DMG_PATH"
+# 预编译的第三方框架（如 Sparkle）是通用二进制，ARCHS 无法裁剪；这里把包内所有多架构 Mach-O 瘦身到目标架构
+thin_app_to_arch() {
+    local app_path="$1"
+    local arch="$2"
+    local file_path
+    local archs
+
+    while IFS= read -r -d '' file_path; do
+        if [[ -L "$file_path" ]]; then
+            continue
+        fi
+        if ! file "$file_path" | grep -q "Mach-O universal"; then
+            continue
+        fi
+        archs="$(lipo -archs "$file_path" 2>/dev/null || true)"
+        if ! grep -qw "$arch" <<<"$archs"; then
+            echo "error: $file_path does not contain $arch (found: $archs)" >&2
+            exit 1
+        fi
+        lipo "$file_path" -thin "$arch" -output "$file_path.thin"
+        chmod "$(stat -f '%Lp' "$file_path")" "$file_path.thin"
+        mv "$file_path.thin" "$file_path"
+    done < <(find "$app_path" -type f -print0)
+}
+
+# 校验产物中的每个 Mach-O 都只包含目标架构，防止误把通用二进制打进单架构安装包
+verify_app_architecture() {
+    local app_path="$1"
+    local expected_arch="$2"
+    local file_path
+    local archs
+
+    while IFS= read -r -d '' file_path; do
+        if ! file "$file_path" | grep -q "Mach-O"; then
+            continue
+        fi
+        archs="$(lipo -archs "$file_path" 2>/dev/null || true)"
+        if [[ -z "$archs" ]]; then
+            continue
+        fi
+        if [[ "$archs" != "$expected_arch" ]]; then
+            echo "error: $file_path is not $expected_arch only (found: $archs)" >&2
+            exit 1
+        fi
+    done < <(find "$app_path" -type f -print0)
+}
+
+build_dmg_for_arch() {
+    local arch="$1"
+    local derived_data="$DERIVED_DATA-$arch"
+    local app_path="$derived_data/Build/Products/$CONFIGURATION/${APP_NAME}.app"
+    local dmg_path
+    local volume_name="${APP_NAME} V$VERSION ($(arch_display_name "$arch"))"
+
+    dmg_path="$DMG_OUTPUT_DIR/$(dmg_file_name "$VERSION" "$arch")"
+
+    echo "building $APP_NAME $VERSION for $arch"
+    rm -rf "$app_path"
+    xcodebuild \
+        "${XCODE_APP_CONTAINER_ARGS[@]}" \
+        -scheme "$SCHEME" \
+        -configuration "$CONFIGURATION" \
+        -derivedDataPath "$derived_data" \
+        -destination "generic/platform=macOS" \
+        ARCHS="$arch" \
+        ONLY_ACTIVE_ARCH=NO \
+        build
+
+    if [[ ! -d "$app_path" ]]; then
+        echo "error: app bundle not found: $app_path" >&2
+        exit 1
+    fi
+
+    thin_app_to_arch "$app_path" "$arch"
+    verify_app_architecture "$app_path" "$arch"
+
+    echo "re-signing app with $SIGNING_IDENTITY"
+    resign_for_distribution "$app_path" "$SIGNING_IDENTITY"
+    verify_developer_id_signature "$app_path" "$APP_NAME.app"
+    codesign --verify --deep --strict --verbose=2 "$app_path"
+
+    rm -f "$dmg_path"
+    echo "creating DMG: $dmg_path"
+    create_pretty_dmg "$app_path" "$dmg_path" "$volume_name"
+
+    if [[ "$SKIP_NOTARIZE" == false ]]; then
+        notarize_dmg "$dmg_path"
+    else
+        echo "skipping notarization"
+    fi
+
+    BUILT_DMGS+=("$dmg_path")
+}
+
+BUILT_DMGS=()
+for arch in "${TARGET_ARCHS[@]}"; do
+    build_dmg_for_arch "$arch"
+done
+
+echo "done:"
+printf '  %s\n' "${BUILT_DMGS[@]}"

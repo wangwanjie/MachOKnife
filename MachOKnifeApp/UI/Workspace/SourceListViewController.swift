@@ -137,6 +137,10 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
         outlineView.onPrepareContextMenu = { [weak self] row in
             self?.prepareContextMenu(forRow: row)
         }
+        // ⌘C（编辑 > 拷贝）在结构树获得焦点时复制选中节点的信息，与“拷贝节点信息”一致。
+        outlineView.onCopy = { [weak self] in
+            self?.copySelectedNodeInfo?()
+        }
 
         let scrollView = NSScrollView()
         scrollView.borderType = .noBorder
@@ -204,6 +208,16 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
             }
             .store(in: &cancellables)
 
+        // 打开另一个文件或关闭当前文件时清空搜索词，避免新文档被上一个文档的过滤条件隐藏。
+        viewModel.$currentFileURL
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.resetSearch()
+            }
+            .store(in: &cancellables)
+
         viewModel.$browserSelectedNodeID
             .receive(on: RunLoop.main)
             .sink { [weak self] nodeID in
@@ -226,6 +240,15 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
             updatePlaceholder()
         }
         .store(in: &cancellables)
+    }
+
+    private func resetSearch() {
+        guard searchField.stringValue.isEmpty == false else {
+            return
+        }
+        searchField.stringValue = ""
+        applyFilter(query: "")
+        applySelection(viewModel.browserSelectedNodeID)
     }
 
     private func applyFilter(query: String) {
@@ -298,6 +321,9 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
             title: node.title,
             subtitle: node.subtitle,
             summaryStyle: node.summaryStyle,
+            // 过滤生成的是节点副本，必须保留节点自身的十六进制数据源，
+            // 否则在搜索结果中选中节点后，数据视图会退回到文档级数据源。
+            hexSource: node.hexSource,
             detailCount: node.detailCount,
             indexedDetailProvider: { node.detailRow(at: $0) },
             children: filteredChildren,
@@ -353,8 +379,9 @@ final class SourceListViewController: NSViewController, NSOutlineViewDataSource,
             return
         }
 
+        // 大文件（预算）模式的标记需本地化，不能硬编码英文。
         let summary = currentAnalysisMode == .budgetedLargeFile
-            ? "\(subtitle) • Budgeted"
+            ? "\(subtitle) • \(L10n.sourceListBudgetedBadge)"
             : subtitle
         documentSummaryLabel.stringValue = summary
         documentSummaryLabel.toolTip = rootNode.title
@@ -400,6 +427,23 @@ private final class BrowserOutlineRowView: NSTableRowView {
 
 private final class BrowserOutlineView: NSOutlineView {
     var onPrepareContextMenu: ((Int) -> Void)?
+    /// 响应标准的 `copy:` 动作（⌘C）；为 nil 时该动作不可用。
+    var onCopy: (() -> Void)?
+
+    @objc func copy(_ sender: Any?) {
+        guard selectedRow >= 0 else {
+            return
+        }
+        onCopy?()
+    }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(copy(_:)) {
+            // 只有存在选中行且设置了拷贝回调时才启用“拷贝”菜单项。
+            return onCopy != nil && selectedRow >= 0
+        }
+        return super.validateUserInterfaceItem(item)
+    }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)

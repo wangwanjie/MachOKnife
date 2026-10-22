@@ -68,36 +68,44 @@ public final class XCFrameworkBuildTool {
         process.standardOutput = stdout
         process.standardError = stderr
 
-        let collector = XCFrameworkBuildOutputCollector()
-        let appendOutput: @Sendable (Data) -> Void = { data in
-            guard let text = String(data: data, encoding: .utf8), text.isEmpty == false else { return }
-            collector.append(text)
-            outputHandler(text)
+        let collector = XCFrameworkBuildOutputCollector(outputHandler: outputHandler)
+        // 每个管道在读到 EOF（availableData 为空）时离开 group。旧实现在进程退出后直接把
+        // readabilityHandler 置空并再次 readDataToEndOfFile：仍在执行中的回调可能与之并发读取同一句柄，
+        // 导致最后一段输出（其中包含 XCFramework 路径）丢失或重复。
+        let drained = DispatchGroup()
+        for pipe in [stdout, stderr] {
+            drained.enter()
+            pipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.isEmpty {
+                    handle.readabilityHandler = nil
+                    drained.leave()
+                } else {
+                    collector.append(data)
+                }
+            }
         }
 
-        stdout.fileHandleForReading.readabilityHandler = { handle in
-            appendOutput(handle.availableData)
+        do {
+            try process.run()
+        } catch {
+            stdout.fileHandleForReading.readabilityHandler = nil
+            stderr.fileHandleForReading.readabilityHandler = nil
+            throw error
         }
-        stderr.fileHandleForReading.readabilityHandler = { handle in
-            appendOutput(handle.availableData)
-        }
-
-        try process.run()
         process.waitUntilExit()
 
-        stdout.fileHandleForReading.readabilityHandler = nil
-        stderr.fileHandleForReading.readabilityHandler = nil
-        appendOutput(stdout.fileHandleForReading.readDataToEndOfFile())
-        appendOutput(stderr.fileHandleForReading.readDataToEndOfFile())
+        // 子进程退出后等待两个管道读完；若有孙进程继承了管道导致迟迟不到 EOF，最多等待 10 秒后停止读取。
+        if drained.wait(timeout: .now() + 10) == .timedOut {
+            stdout.fileHandleForReading.readabilityHandler = nil
+            stderr.fileHandleForReading.readabilityHandler = nil
+        }
+        collector.finish()
 
         let output = collector.value.trimmingCharacters(in: .whitespacesAndNewlines)
         if process.terminationReason == .exit, process.terminationStatus == 0 {
-            if let outputPath = output
-                .split(whereSeparator: \.isNewline)
-                .map(String.init)
-                .last(where: { $0.hasSuffix(".xcframework") })
-                .map({ URL(fileURLWithPath: $0) }) {
-                return outputPath
+            if let outputURL = Self.reportedOutputURL(in: output) {
+                return outputURL
             }
 
             let fallbackURL = request.outputDirectoryURL.appendingPathComponent(request.xcframeworkName)
@@ -117,6 +125,18 @@ public final class XCFrameworkBuildTool {
             code: Int(process.terminationStatus),
             userInfo: [NSLocalizedDescriptionKey: output.isEmpty ? "XCFramework build failed." : output]
         )
+    }
+
+    /// 从构建脚本输出中找出最终的 XCFramework 路径：脚本成功时最后打印一行绝对路径。
+    ///
+    /// 只接受以 `/` 开头、以 `.xcframework` 结尾的整行，避免把 xcodebuild 的
+    /// “xcframework successfully written out to: <临时目录>” 之类的提示行误当作路径。
+    static func reportedOutputURL(in output: String) -> URL? {
+        output
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .last { $0.hasPrefix("/") && $0.hasSuffix(".xcframework") }
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
     }
 
     private func makeArguments(scriptURL: URL, request: XCFrameworkBuildRequest) -> [String] {
@@ -510,11 +530,22 @@ def build_xcframework(args: argparse.Namespace) -> Path:
         scratch_dir = Path(scratch)
         staged_xcframework_dir = scratch_dir / args.xcframework_name
         build_xcframework_slices(args, scratch_dir / "artifacts", scratch_dir / "Headers", staged_xcframework_dir)
-        if xcframework_dir.is_symlink() or xcframework_dir.is_file():
-            xcframework_dir.unlink()
-        elif xcframework_dir.exists():
-            shutil.rmtree(xcframework_dir)
-        shutil.move(str(staged_xcframework_dir), str(xcframework_dir))
+        # Move an existing output aside instead of deleting it up front, so a failing final move
+        # (for example a full disk) restores the previous XCFramework rather than losing it.
+        previous_dir = None
+        if xcframework_dir.is_symlink() or xcframework_dir.exists():
+            previous_dir = scratch_dir / "previous-output"
+            shutil.move(str(xcframework_dir), str(previous_dir))
+        try:
+            shutil.move(str(staged_xcframework_dir), str(xcframework_dir))
+        except BaseException:
+            if xcframework_dir.is_symlink() or xcframework_dir.is_file():
+                xcframework_dir.unlink()
+            elif xcframework_dir.exists():
+                shutil.rmtree(xcframework_dir)
+            if previous_dir is not None:
+                shutil.move(str(previous_dir), str(xcframework_dir))
+            raise
     return xcframework_dir
 
 def build_xcframework_slices(args: argparse.Namespace, artifacts_dir: Path, prepared_headers_dir: Path, xcframework_dir: Path) -> None:
@@ -720,14 +751,44 @@ public struct XCFrameworkDeveloperToolLocator {
     }
 }
 
-private final class XCFrameworkBuildOutputCollector: @unchecked Sendable {
+/// 收集构建输出并按块转发给调用方。
+///
+/// 管道按任意字节边界分块，一个多字节 UTF-8 字符可能被拆到两块里；旧实现对每块调用
+/// `String(data:encoding:)`，遇到被拆开的字符会返回 nil，整块输出被直接丢弃。
+/// 这里把末尾不完整的 UTF-8 序列暂存，等下一块到来后再一起解码。
+final class XCFrameworkBuildOutputCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var storage = ""
+    private var pending = Data()
+    private let outputHandler: @Sendable (String) -> Void
 
-    func append(_ text: String) {
+    init(outputHandler: @escaping @Sendable (String) -> Void = { _ in }) {
+        self.outputHandler = outputHandler
+    }
+
+    func append(_ data: Data) {
         lock.lock()
+        pending.append(data)
+        let completeLength = Self.completeUTF8PrefixLength(pending)
+        let text = String(decoding: pending.prefix(completeLength), as: UTF8.self)
+        pending = Data(pending.dropFirst(completeLength))
         storage += text
         lock.unlock()
+        if text.isEmpty == false {
+            outputHandler(text)
+        }
+    }
+
+    /// 输出结束：把残留的（不完整）字节按容错方式解码，避免静默丢失。
+    func finish() {
+        lock.lock()
+        let text = String(decoding: pending, as: UTF8.self)
+        pending.removeAll()
+        storage += text
+        lock.unlock()
+        if text.isEmpty == false {
+            outputHandler(text)
+        }
     }
 
     var value: String {
@@ -735,5 +796,36 @@ private final class XCFrameworkBuildOutputCollector: @unchecked Sendable {
         let value = storage
         lock.unlock()
         return value
+    }
+
+    /// `bytes` 中以完整 UTF-8 序列结尾的最长前缀长度：只检查末尾最多 4 个字节，
+    /// 若最后一个多字节序列尚未接收完整，则把它排除在前缀之外。
+    static func completeUTF8PrefixLength(_ bytes: Data) -> Int {
+        let count = bytes.count
+        var index = count - 1
+        let lowerBound = max(0, count - 4)
+        while index >= lowerBound {
+            let byte = bytes[bytes.startIndex + index]
+            if byte & 0xC0 == 0x80 {
+                // 续字节（10xxxxxx），继续向前寻找起始字节。
+                index -= 1
+                continue
+            }
+            let expectedLength: Int
+            if byte & 0x80 == 0 {
+                expectedLength = 1
+            } else if byte & 0xE0 == 0xC0 {
+                expectedLength = 2
+            } else if byte & 0xF0 == 0xE0 {
+                expectedLength = 3
+            } else if byte & 0xF8 == 0xF0 {
+                expectedLength = 4
+            } else {
+                // 非法起始字节：交给容错解码处理，不再等待。
+                expectedLength = 1
+            }
+            return count - index >= expectedLength ? count : index
+        }
+        return count
     }
 }

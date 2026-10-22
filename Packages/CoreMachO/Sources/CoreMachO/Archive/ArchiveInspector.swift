@@ -627,11 +627,13 @@ public struct ArchiveInspector: Sendable {
     }
 
     private func machOArchitectures(in data: Data) throws -> [String] {
-        let container = try MachOFileParser(data: data).parseContainer()
-        return container.slices.reduce(into: [String]()) { architectures, slice in
+        // 只读取 Mach-O 头部即可确定架构；以前对每个成员做完整解析（含全部符号），
+        // 大型静态库检查很慢，且某个成员符号表轻微损坏就会让该成员的架构被忽略。
+        let cpuTypes = try MachOFileParser(data: data).sliceCPUTypes()
+        return cpuTypes.reduce(into: [String]()) { architectures, slice in
             let architecture = architectureName(
-                cpuType: slice.header.cpuType,
-                cpuSubtype: slice.header.cpuSubtype
+                cpuType: slice.cpuType,
+                cpuSubtype: slice.cpuSubtype
             )
             if architectures.contains(architecture) == false {
                 architectures.append(architecture)
@@ -816,15 +818,19 @@ public struct ArchiveInspector: Sendable {
                 let entry = symbolOffset + index * entrySize
                 let stringIndex = Int(data.readUInt32(at: entry, swapped: swapped))
                 let type = data[data.startIndex + entry + 4]
-                let value = is64Bit
-                    ? data.readUInt64(at: entry + 8, swapped: swapped)
-                    : UInt64(data.readUInt32(at: entry + 8, swapped: swapped))
 
                 let isDebug = type & UInt8(N_STAB) != 0
                 let isExternal = type & UInt8(N_EXT) != 0
                 let isUndefined = type & UInt8(N_TYPE) == UInt8(N_UNDF)
-                guard isDebug == false, isExternal, isUndefined == false || value != 0 else { continue }
-                guard stringIndex > 0, stringIndex < stringSize else { continue }
+                // 与 ranlib / libtool 默认行为一致：只收录已定义的外部符号。
+                // N_UNDF 且 n_value != 0 的是 common 符号，ranlib 只有在 `-c` 时才收录，
+                // 默认收录会让链接器仅因引用一个未初始化全局变量就拉入整个成员。
+                guard isDebug == false, isExternal, isUndefined == false else {
+                    continue
+                }
+                guard stringIndex > 0, stringIndex < stringSize else {
+                    continue
+                }
 
                 let start = data.startIndex + stringOffset + stringIndex
                 let end = data.startIndex + stringOffset + stringSize

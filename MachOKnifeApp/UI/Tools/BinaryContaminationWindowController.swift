@@ -7,6 +7,7 @@ final class BinaryContaminationWindowController: NSWindowController {
     private static let autosaveName = NSWindow.FrameAutosaveName("MachOKnifeContaminationWindowFrame")
     private let rootViewController: BinaryContaminationViewController
     private var settingsObserver: NSObjectProtocol?
+    private var workspaceHandOff = WorkspaceToolHandOff()
 
     convenience init() {
         self.init(viewController: BinaryContaminationViewController())
@@ -57,6 +58,23 @@ final class BinaryContaminationWindowController: NSWindowController {
         rootViewController.reloadLocalization()
     }
 
+    /// 用主工作区当前打开的文件预填输入；用户已在本窗口手动选择了其他文件时保持不变。
+    func prefill(withWorkspaceDocument url: URL) {
+        _ = window
+        guard let target = workspaceHandOff.inputToPrefill(
+            workspaceDocumentURL: url,
+            currentInputURL: rootViewController.inputURL
+        ) else {
+            return
+        }
+        rootViewController.loadInput(target)
+    }
+
+    /// 当前检查的输入文件。
+    var inputURL: URL? {
+        rootViewController.inputURL
+    }
+
     private func observeSettings() {
         settingsObserver = NotificationCenter.default.addObserver(
             forName: AppSettings.didChangeNotification,
@@ -89,7 +107,7 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
     private let reportLabel = NSTextField(labelWithString: "")
     private let reportTextView = NSTextView()
 
-    private var inputURL: URL?
+    private(set) var inputURL: URL?
     /// Incremented for every requested check so results from superseded checks are dropped.
     private var checkGeneration = 0
     private var pendingTypingCheck: DispatchWorkItem?
@@ -118,7 +136,9 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
         dropView.titleLabel.stringValue = L10n.summaryDropHint
 
         rebuildModeOptions()
-        if reportTextView.string.isEmpty {
+        // 未选择输入时报告区显示的是空闲提示，语言切换后需要重新取值；
+        // 原先仅在文本为空时设置，导致切换语言后提示仍停留在旧语言。
+        if inputURL == nil || reportTextView.string.isEmpty {
             reportTextView.string = L10n.contaminationIdleStatus
             refreshReportLayout()
         }
@@ -201,10 +221,11 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
             } catch {
                 result = .failure(error)
             }
-            guard Task.isCancelled == false else { return }
-            await MainActor.run {
-                self?.applyCheckResult(result, generation: generation, presentingErrors: presentingErrors)
+            guard Task.isCancelled == false else {
+                return
             }
+            // 直接 await 主线程隔离的方法，避免在嵌套的并发闭包里引用被捕获的 weak self（Swift 6 下会报错）。
+            await self?.applyCheckResult(result, generation: generation, presentingErrors: presentingErrors)
         }
     }
 
@@ -333,7 +354,7 @@ private final class BinaryContaminationViewController: NSViewController, NSCombo
         targetComboBox.stringValue = (resetValue || previousValue.isEmpty) ? options[0] : previousValue
     }
 
-    private func loadInput(_ url: URL) {
+    func loadInput(_ url: URL) {
         cancelPendingChecks()
         inputURL = url
         inputPathLabel.stringValue = url.path

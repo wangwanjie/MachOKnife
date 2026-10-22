@@ -1,3 +1,4 @@
+import CoreMachO
 import Foundation
 
 enum MachOKnifeCLIApplication {
@@ -19,7 +20,7 @@ enum MachOKnifeCLIApplication {
             FileHandle.standardError.write(Data(text.utf8))
             Foundation.exit(error.exitCode)
         } catch {
-            FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
+            FileHandle.standardError.write(Data("error: \(CLIErrorDescriber.describe(error))\n".utf8))
             Foundation.exit(1)
         }
     }
@@ -33,12 +34,20 @@ enum MachOKnifeCLIApplication {
         let commandArguments = Array(arguments.dropFirst(2))
 
         if CLIHelp.isVersionCommand(command) {
+            // `version` 不接受任何参数；多余参数以前会被静默忽略，这里改为用法错误。
+            guard commandArguments.isEmpty else {
+                throw CLIError.invalidUsage("machoe-cli --version", detail: "unexpected argument '\(commandArguments[0])'")
+            }
             return CLIHelp.versionLine + "\n"
         }
 
         if CLIHelp.isHelpCommand(command) {
             guard let topic = commandArguments.first else {
                 return CLIHelp.text
+            }
+            // `help` 最多接受一个命令名，多余参数视为用法错误。
+            guard commandArguments.count == 1 else {
+                throw CLIError.invalidUsage("machoe-cli help [<command>]", detail: "unexpected argument '\(commandArguments[1])'")
             }
             guard let help = CLIHelp.commandHelp(for: topic) else {
                 throw CLIError.unsupportedCommand(topic)
@@ -62,6 +71,8 @@ enum MachOKnifeCLIApplication {
             return try MergeCommand.run(arguments: commandArguments)
         case SplitCommand.name:
             return try SplitCommand.run(arguments: commandArguments)
+        case RemoveArchCommand.name:
+            return try RemoveArchCommand.run(arguments: commandArguments)
         case InfoCommand.name:
             return try InfoCommand.run(arguments: commandArguments)
         case ListDylibsCommand.name:
@@ -110,6 +121,52 @@ struct CLIError: Error {
     }
 }
 
+/// 把底层抛出的错误转换成适合命令行展示的单行文字。
+///
+/// 未实现 `LocalizedError` 的 Swift 错误（例如 `MachOParseError`）走 `localizedDescription` 时只会得到
+/// “The operation couldn’t be completed. (CoreMachO.MachOParseError error 0.)” 这类无法定位问题的文本，
+/// 因此这里优先使用 `LocalizedError`，再为已知的解析错误给出可读说明，最后退回到 `String(describing:)`。
+enum CLIErrorDescriber {
+    static func describe(_ error: Error) -> String {
+        if let localizedError = error as? LocalizedError,
+           let description = localizedError.errorDescription,
+           description.isEmpty == false {
+            return description
+        }
+
+        if let parseError = error as? MachOParseError {
+            return describe(parseError)
+        }
+
+        // Foundation / Cocoa 错误（文件不存在、权限不足等）以及带本地化描述的 NSError 自带可读文本。
+        let nsError = error as NSError
+        let readableDomains: Set<String> = [NSCocoaErrorDomain, NSPOSIXErrorDomain, NSOSStatusErrorDomain, NSURLErrorDomain]
+        if readableDomains.contains(nsError.domain) || nsError.userInfo[NSLocalizedDescriptionKey] != nil {
+            return nsError.localizedDescription
+        }
+
+        return String(describing: error)
+    }
+
+    /// 用 `if case` 逐个匹配而不是 `switch`：CoreMachO 以后新增错误分支时这里无需同步修改，
+    /// 未覆盖的分支会退回到 `String(describing:)`，也不会产生 “default will never be executed” 警告。
+    private static func describe(_ error: MachOParseError) -> String {
+        if case .fileTooSmall = error {
+            return "not a Mach-O file: the file is too small to contain a Mach-O header"
+        }
+        if case let .unsupportedMagic(magic) = error {
+            return "not a Mach-O file (unsupported magic 0x\(String(magic, radix: 16)))"
+        }
+        if case let .outOfBounds(offset, size) = error {
+            return "malformed Mach-O: read of \(size) byte(s) at offset \(offset) is past the end of the file"
+        }
+        if case let .invalidLoadCommandSize(size) = error {
+            return "malformed Mach-O: invalid load command size \(size)"
+        }
+        return String(describing: error)
+    }
+}
+
 /// Thrown when a command produced a normal report but must exit with a non-zero status
 /// (for example a contamination check that found mismatches, or a failed validation).
 /// The report is still written to stdout.
@@ -133,12 +190,12 @@ enum CLIHelp {
     private static let commands = [
         CommandDescriptor(
             name: SummaryCommand.name,
-            summary: "Print a concise Mach-O or archive overview.",
+            summary: "Print a concise Mach-O or archive overview. Pass --json for machine-readable output.",
             usageLines: [SummaryCommand.usage]
         ),
         CommandDescriptor(
             name: ContaminationCheckCommand.name,
-            summary: "Detect platform or architecture slices that do not match a target. Exits with status 1 when mismatches are found.",
+            summary: "Detect platform or architecture slices that do not match a target. Exits with status 1 when mismatches are found (also with --json).",
             usageLines: [ContaminationCheckCommand.usage]
         ),
         CommandDescriptor(
@@ -152,13 +209,18 @@ enum CLIHelp {
             usageLines: [SplitCommand.usage]
         ),
         CommandDescriptor(
+            name: RemoveArchCommand.name,
+            summary: "Remove architectures from a universal binary or fat static library. Requires --output or --in-place.",
+            usageLines: [RemoveArchCommand.usage]
+        ),
+        CommandDescriptor(
             name: InfoCommand.name,
-            summary: "Inspect Mach-O metadata, slices, and load commands.",
+            summary: "Inspect Mach-O or archive metadata per slice. Pass --json for machine-readable output.",
             usageLines: [InfoCommand.usage]
         ),
         CommandDescriptor(
             name: ListDylibsCommand.name,
-            summary: "List dylib dependencies and LC_RPATH entries.",
+            summary: "List dylib dependencies and LC_RPATH entries. Pass --json for machine-readable output.",
             usageLines: [ListDylibsCommand.usage]
         ),
         CommandDescriptor(

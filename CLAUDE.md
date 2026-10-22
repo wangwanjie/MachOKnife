@@ -84,7 +84,8 @@ Some tests in `MachOKnifeTests` assert on repository files, so moving/renaming t
 
 - Version lives in `project.pbxproj` (`MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`, set across all targets); scripts read it via `Scripts/common.sh`.
 - Release notes go in `release-notes/vX.Y.Z.md`.
-- `Scripts/build_dmg.sh` → `Scripts/generate_appcast.sh --archive build/dmg/MachOKnife_V_X.Y.Z.dmg` → `Scripts/publish_github_release.sh --dmg ...`. The feed is `Resources/Updates/appcast.xml`, served from the `main` branch.
+- Distribution ships one DMG per architecture: `Scripts/build_dmg.sh` (default `--arch all`) → `build/dmg/MachOKnife_V_X.Y.Z_arm64.dmg` + `MachOKnife_V_X.Y.Z_x86_64.dmg` → `Scripts/publish_github_release.sh --notes-file release-notes/vX.Y.Z.md` (uploads every DMG of the current version, then runs `Scripts/generate_appcast.sh`).
+- There is a single Sparkle feed, `Resources/Updates/appcast.xml`, served from the `main` branch. For each version it holds an arm64 item (with `<sparkle:hardwareRequirements>arm64`) followed by an x86_64 item: Intel Macs skip the arm64 item and Apple Silicon picks the first item of equal version, so keep that order. `generate_appcast.sh` signs DMGs with `sign_update` and merges items, preserving older entries.
 
 ## Workflow conventions
 

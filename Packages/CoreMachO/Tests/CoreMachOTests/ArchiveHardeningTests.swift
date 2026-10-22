@@ -282,3 +282,59 @@ enum HardeningFixtures {
 enum HardeningFixtureError: Error {
     case commandFailed(String)
 }
+
+struct ArchiveTableOfContentsTests {
+    @Test("generated tables of contents omit common symbols like ranlib does by default")
+    func tableOfContentsOmitsCommonSymbols() throws {
+        let directory = try HardeningFixtures.makeDirectory()
+        let sourceURL = directory.appendingPathComponent("common.c")
+        let objectURL = directory.appendingPathComponent("common.o")
+        try "int toc_common_variable;\nint toc_defined_function(void) { return 1; }\n"
+            .write(to: sourceURL, atomically: true, encoding: .utf8)
+        try HardeningFixtures.run("/usr/bin/clang", ["-fcommon", "-c", sourceURL.path, "-o", objectURL.path])
+
+        let archiveURL = directory.appendingPathComponent("libCommon.a")
+        let inspector = ArchiveInspector()
+        try inspector.writeArchive(
+            outputURL: archiveURL,
+            members: [ArchiveMemberSource(name: "common.o", fileURL: objectURL)]
+        )
+
+        let layouts = try inspector.memberLayouts(in: archiveURL)
+        let toc = try HardeningFixtures.parseTableOfContents(data: try Data(contentsOf: archiveURL), layout: layouts[0])
+        #expect(toc["_toc_defined_function"] == layouts[1].headerOffset)
+        #expect(toc["_toc_common_variable"] == nil)
+    }
+
+    @Test("architecture detection only needs member headers, not valid symbol tables")
+    func architectureDetectionIgnoresBrokenSymbolTables() throws {
+        let directory = try HardeningFixtures.makeDirectory()
+        let objectURL = try HardeningFixtures.compileObject(
+            source: "int broken_symbols(void) { return 3; }\n",
+            name: "broken",
+            in: directory
+        )
+
+        // 把第一个符号的 n_strx 改成越界值：完整解析会失败，但架构依然可以从头部得到。
+        var objectData = try Data(contentsOf: objectURL)
+        let slice = try #require(try MachOContainer.parse(at: objectURL).slices.first)
+        let symbolTable = try #require(slice.symbolTable)
+        objectData.writeLittleEndian(UInt32.max, at: Int(symbolTable.symbolOffset))
+        try objectData.write(to: objectURL)
+        #expect(throws: MachOParseError.self) {
+            _ = try MachOContainer.parse(at: objectURL)
+        }
+
+        let archiveURL = directory.appendingPathComponent("libBroken.a")
+        let inspector = ArchiveInspector()
+        try inspector.writeArchive(
+            outputURL: archiveURL,
+            members: [ArchiveMemberSource(name: "broken.o", fileURL: objectURL)],
+            generateSymbolTable: false
+        )
+
+        let expected = MachOArchitectureNaming.name(cpuType: slice.header.cpuType, cpuSubtype: slice.header.cpuSubtype)
+        let inspection = try #require(try inspector.inspect(url: archiveURL))
+        #expect(inspection.architectures == [expected])
+    }
+}

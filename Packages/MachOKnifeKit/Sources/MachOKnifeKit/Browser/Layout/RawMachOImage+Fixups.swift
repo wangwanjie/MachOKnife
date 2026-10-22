@@ -76,13 +76,15 @@ extension RawMachOImage {
         let startsOffset = header + Int(u32(header + 4))
         let importsOffset = header + Int(u32(header + 8))
         let symbolsOffset = header + Int(u32(header + 12))
-        let importsCount = Int(u32(header + 16))
         let importsFormat = u32(header + 20)
+        let entrySize = importsFormat == 3 ? 16 : (importsFormat == 2 ? 8 : 4)
+        // imports_count 来自文件：截断到导入表在 fixups 数据内实际能容纳的数量，避免畸形值导致超大预分配。
+        let declaredImports = UInt64(u32(header + 16))
+        let importsCount = importsOffset < end ? Int(min(declaredImports, UInt64((end - importsOffset) / entrySize))) : 0
 
         var imports: [ChainedImport] = []
         imports.reserveCapacity(importsCount)
         for index in 0..<importsCount {
-            let entrySize = importsFormat == 3 ? 16 : (importsFormat == 2 ? 8 : 4)
             let offset = importsOffset + index * entrySize
             guard offset + entrySize <= end else { break }
             var ordinal: Int
@@ -111,7 +113,11 @@ extension RawMachOImage {
         }
 
         var segmentStarts: [ChainedSegmentStarts] = []
-        let segmentCount = Int(u32(startsOffset))
+        // seg_count 来自文件：最多只有和 load command 中段数相同的项有意义，同时不能越过 fixups 数据末尾。
+        // 否则畸形的 0xFFFFFFFF 会让这里空转数十亿次。
+        let declaredSegments = UInt64(u32(startsOffset))
+        let fittingSegments = startsOffset + 4 <= end ? UInt64((end - startsOffset - 4) / 4) : 0
+        let segmentCount = Int(min(declaredSegments, fittingSegments, UInt64(segments.count)))
         for index in 0..<segmentCount {
             let infoOffset = u32(startsOffset + 4 + index * 4)
             guard infoOffset != 0 else { continue }
@@ -133,7 +139,11 @@ extension RawMachOImage {
         var fixups: [ChainedFixup] = []
         for starts in segmentStarts where starts.segmentIndex < segments.count {
             let segment = segments[starts.segmentIndex]
-            guard let segmentStart = absolute(segment.fileoff) else { continue }
+            guard let segmentStart = absolute(segment.fileoff) else {
+                continue
+            }
+            // filesize 可能超过 Int.max（畸形文件），用 clamping 转换并做无溢出加法，结果再按 limit 截断。
+            let segmentEnd = min(limit, MachOByteReader.offset(segmentStart, adding: segment.filesize) ?? limit)
             for page in 0..<Int(starts.pageCount) {
                 let start = u16(starts.pageStartsOffset + page * 2)
                 if start == 0xFFFF { continue }
@@ -143,12 +153,12 @@ extension RawMachOImage {
                     var overflowIndex = Int(start & ~0x8000)
                     while true {
                         let entry = u16(starts.pageStartsOffset + overflowIndex * 2)
-                        walkChain(from: pageBase + Int(entry & ~0x8000), format: starts.pointerFormat, limit: min(limit, segmentStart + Int(segment.filesize)), into: &fixups)
+                        walkChain(from: pageBase + Int(entry & ~0x8000), format: starts.pointerFormat, limit: segmentEnd, into: &fixups)
                         if entry & 0x8000 != 0 || overflowIndex > Int(starts.size) { break }
                         overflowIndex += 1
                     }
                 } else {
-                    walkChain(from: pageBase + Int(start), format: starts.pointerFormat, limit: min(limit, segmentStart + Int(segment.filesize)), into: &fixups)
+                    walkChain(from: pageBase + Int(start), format: starts.pointerFormat, limit: segmentEnd, into: &fixups)
                 }
             }
         }
@@ -366,7 +376,9 @@ extension RawMachOImage {
                 // Lazy bind streams separate entries with DONE opcodes.
                 if kind != .lazy { cursor = end }
             case 0x10: ordinal = Int(immediate)
-            case 0x20: ordinal = Int(uleb())
+            case 0x20:
+                // ULEB128 可能超过 Int.max，`Int(UInt64)` 会崩溃；按位截断后作为（无效的）序号展示即可。
+                ordinal = Int(truncatingIfNeeded: uleb())
             case 0x30: ordinal = immediate == 0 ? 0 : Int(Int8(bitPattern: 0xF0 | immediate))
             case 0x40:
                 flags = immediate
@@ -429,13 +441,15 @@ extension RawMachOImage {
     }
 
     func relocations(at offset: UInt32, count: UInt32) -> [Relocation] {
-        guard count > 0, let start = absolute(UInt64(offset)) else { return [] }
+        guard count > 0, let start = absolute(UInt64(offset)) else {
+            return []
+        }
+        // 重定位数量来自文件，先截断到文件中实际存在的条目数，避免畸形值导致超大预分配。
+        let available = availableEntryCount(from: start, entrySize: 8, declared: UInt64(count))
         var result: [Relocation] = []
-        result.reserveCapacity(Int(count))
-        for index in 0..<Int(count) {
-            let entry = start + index * 8
-            guard entry + 8 <= limit else { break }
-            result.append(relocation(at: entry))
+        result.reserveCapacity(available)
+        for index in 0..<available {
+            result.append(relocation(at: start + index * 8))
         }
         return result
     }
@@ -512,8 +526,11 @@ extension RawMachOImage {
         let raw = pointer(offset)
         if isObject {
             if let section = sections.first(where: { section in
-                guard section.isZerofill == false, let start = absolute(UInt64(section.offset)) else { return false }
-                return offset >= start && offset < start + Int(section.size)
+                guard section.isZerofill == false, let start = absolute(UInt64(section.offset)), offset >= start else {
+                    return false
+                }
+                // section.size 可能超过 Int.max，`Int(section.size)` 会崩溃，改为无溢出的区间判断。
+                return UInt64(offset - start) < section.size
             }), let relocation = sectionRelocations(section)[offset] {
                 if relocation.isExtern {
                     guard let symbol = symbol(at: Int(relocation.symbolNum)) else { return .bind(name: "?", addend: Int64(bitPattern: raw)) }
@@ -532,8 +549,9 @@ extension RawMachOImage {
                 case let .rebase(target):
                     return .address(target)
                 case let .bind(ordinal, addend):
-                    let importAddend = ordinal < fixups.imports.count ? fixups.imports[ordinal].addend : 0
-                    return .bind(name: chainedImportName(ordinal), addend: addend + importAddend)
+                    let importAddend = ordinal >= 0 && ordinal < fixups.imports.count ? fixups.imports[ordinal].addend : 0
+                    // 两个 addend 都来自文件，使用 &+ 避免畸形值相加溢出崩溃。
+                    return .bind(name: chainedImportName(ordinal), addend: addend &+ importAddend)
                 }
             }
             return raw == 0 ? .null : .address(raw)

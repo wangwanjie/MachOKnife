@@ -19,6 +19,9 @@ struct DocumentEditingServiceTests {
 
         #expect(preview.diff.entries.contains(where: { $0.kind == .installName }))
         #expect(originalSlice.installName == "@rpath/libEditableFixture.dylib")
+        // 预览不应写出任何文件（备份或临时文件）。
+        #expect(FileManager.default.fileExists(atPath: fixture.binaryURL.appendingPathExtension("bak").path) == false)
+        #expect(try EditingFixtureFactory.temporaryFiles(in: fixture.directory).isEmpty)
     }
 
     @Test("saving in place creates a .bak backup before overwriting")
@@ -32,10 +35,14 @@ struct DocumentEditingServiceTests {
             createBackup: true
         )
 
+        // 用 #require 代替强制解包：backupURL 缺失时测试应失败而不是让整个测试进程崩溃。
+        let backupURL = try #require(result.backupURL)
         let rewritten = try MachOContainer.parse(at: fixture.binaryURL)
-        let backup = try MachOContainer.parse(at: result.backupURL!)
+        let backup = try MachOContainer.parse(at: backupURL)
 
-        #expect(FileManager.default.fileExists(atPath: result.backupURL!.path))
+        #expect(backupURL == fixture.binaryURL.appendingPathExtension("bak"))
+        #expect(FileManager.default.fileExists(atPath: backupURL.path))
+        #expect(try EditingFixtureFactory.temporaryFiles(in: fixture.directory).isEmpty)
         #expect(rewritten.slices.first?.installName == "@rpath/libInPlacePatched.dylib")
         #expect(backup.slices.first?.installName == "@rpath/libEditableFixture.dylib")
     }
