@@ -3,6 +3,67 @@
     <channel>
         <title>MachOKnife</title>
         <item>
+            <title>1.7.0</title>
+            <pubDate>Thu, 22 Oct 2026 10:53:28 +0800</pubDate>
+            <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.7.0</link>
+            <sparkle:version>11</sparkle:version>
+            <sparkle:shortVersionString>1.7.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown">## Highlights
+
+- 安装包按架构分开发布：Apple Silicon 下载 `MachOKnife_V_1.7.0_arm64.dmg`，Intel 下载 `MachOKnife_V_1.7.0_x86_64.dmg`，体积更小；应用内更新会自动推送与本机匹配的版本
+- 合并 / 拆分工具新增「移除架构」，可直接从通用二进制或 fat 静态库中剔除指定架构（例如上架前去掉模拟器切片）
+- 工作区已打开文件时，从 Tools 菜单打开摘要、污染检查、Retag、合并 / 拆分工具会自动带入当前文件
+- 「打开最近使用」菜单新增「清除菜单」；结构树、详情表和十六进制视图支持 ⌘C 复制选中内容
+- CLI 新增 `remove-arch` 命令；`info`、`summary`、`list-dylibs`、`check-contamination` 支持 `--json` 输出；错误信息更易读
+
+## 稳定性与修复
+
+- 修复打开过短文件、畸形或被篡改的 Mach-O 时可能直接崩溃或长时间卡死的问题（越界读取、整数溢出、超大预分配等多处加固）
+- 打开静态库时不再一次性解码整张符号表，大型 `.a` 打开更快
+- 合并 / 拆分时输出路径与输入相同不会再误删输入文件；失败时保留原有产物；拆分混合架构的非 fat 静态库时只保留目标架构成员
+- 编辑二进制时没有实际改动不再移除代码签名；剥离签名时同步裁掉签名数据；平台改写不再产生重复的版本命令导致 dyld 拒绝加载
+- dyld cache 风格 dylib 修复支持可执行文件和多切片文件
+- XCFramework 构建失败时不再删除已有产物，构建日志不再丢失结尾输出
+- Mach-O 摘要分析移到后台，大文件不再卡住界面；切换语言后各处提示文案即时刷新；补齐缺失的翻译
+- CLI 安装到随包目录或同名目录时不再误删文件；简繁中文地区识别更准确
+- 最近文件在同一时间打开多个文件时排序稳定，外接卷暂未挂载时不再丢失访问授权
+- 补充大量单元测试与回归测试，覆盖解析器加固、编辑写入、工具服务、CLI 与界面逻辑
+</description>
+            <enclosure url="https://github.com/wangwanjie/MachOKnife/releases/download/v1.7.0/MachOKnife_V_1.7.0_arm64.dmg" length="8080713" type="application/octet-stream" sparkle:edSignature="D+Wh8G3Dw6efvXAZm8AZJPtIG0b6X60uKq6JSV1u/mo1+jfgjVyH7HmUAQxmZlGw0JRvnlCxIK1Oze/9NkApDw==" />
+        </item>
+        <item>
+            <title>1.7.0</title>
+            <pubDate>Thu, 22 Oct 2026 10:53:28 +0800</pubDate>
+            <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.7.0</link>
+            <sparkle:version>11</sparkle:version>
+            <sparkle:shortVersionString>1.7.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown">## Highlights
+
+- 安装包按架构分开发布：Apple Silicon 下载 `MachOKnife_V_1.7.0_arm64.dmg`，Intel 下载 `MachOKnife_V_1.7.0_x86_64.dmg`，体积更小；应用内更新会自动推送与本机匹配的版本
+- 合并 / 拆分工具新增「移除架构」，可直接从通用二进制或 fat 静态库中剔除指定架构（例如上架前去掉模拟器切片）
+- 工作区已打开文件时，从 Tools 菜单打开摘要、污染检查、Retag、合并 / 拆分工具会自动带入当前文件
+- 「打开最近使用」菜单新增「清除菜单」；结构树、详情表和十六进制视图支持 ⌘C 复制选中内容
+- CLI 新增 `remove-arch` 命令；`info`、`summary`、`list-dylibs`、`check-contamination` 支持 `--json` 输出；错误信息更易读
+
+## 稳定性与修复
+
+- 修复打开过短文件、畸形或被篡改的 Mach-O 时可能直接崩溃或长时间卡死的问题（越界读取、整数溢出、超大预分配等多处加固）
+- 打开静态库时不再一次性解码整张符号表，大型 `.a` 打开更快
+- 合并 / 拆分时输出路径与输入相同不会再误删输入文件；失败时保留原有产物；拆分混合架构的非 fat 静态库时只保留目标架构成员
+- 编辑二进制时没有实际改动不再移除代码签名；剥离签名时同步裁掉签名数据；平台改写不再产生重复的版本命令导致 dyld 拒绝加载
+- dyld cache 风格 dylib 修复支持可执行文件和多切片文件
+- XCFramework 构建失败时不再删除已有产物，构建日志不再丢失结尾输出
+- Mach-O 摘要分析移到后台，大文件不再卡住界面；切换语言后各处提示文案即时刷新；补齐缺失的翻译
+- CLI 安装到随包目录或同名目录时不再误删文件；简繁中文地区识别更准确
+- 最近文件在同一时间打开多个文件时排序稳定，外接卷暂未挂载时不再丢失访问授权
+- 补充大量单元测试与回归测试，覆盖解析器加固、编辑写入、工具服务、CLI 与界面逻辑
+</description>
+            <enclosure url="https://github.com/wangwanjie/MachOKnife/releases/download/v1.7.0/MachOKnife_V_1.7.0_x86_64.dmg" length="8478452" type="application/octet-stream" sparkle:edSignature="NSF+z+F5ITbbSKyJEUZPaTpM/ISt6whOu9ZVeeJ/0RJhBuQbMZxrriUpgvDtiRnltDWAkDeYprp4jiW0FnNIBA==" />
+        </item>
+        <item>
             <title>1.6.0</title>
             <pubDate>Sat, 03 Oct 2026 18:43:25 +0800</pubDate>
             <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.6.0</link>
