@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MachOKnife — Mach-O browser and binary tools for macOS</title>
+<meta name="description" content="MachOKnife is a native macOS app for inspecting and editing Mach-O binaries: a MachOView-style structure browser plus retag, XCFramework packaging, merge / split / remove architectures and contamination checks, with the same tools in machoe-cli.">
+<meta property="og:title" content="MachOKnife — Mach-O browser and binary tools for macOS">
+<meta property="og:description" content="Inspect and edit executables, dylibs, frameworks, universal binaries and static libraries. Apple Silicon and Intel, macOS 13 or later.">
+<meta property="og:image" content="https://wangwanjie.github.io/MachOKnife/assets/icon.png">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" type="image/png" href="assets/icon-256.png">
+<style>
+  :root {
+    --bg: #080d18;
+    --nav-bg: rgba(8, 13, 24, 0.6);
+    --card: rgba(255, 255, 255, 0.045);
+    --card-border: rgba(255, 255, 255, 0.08);
+    --text: #eef3fb;
+    --muted: #93a1b8;
+    --accent: #2f7bff;
+    --accent-2: #19b5e8;
+    --glow-1: rgba(47, 123, 255, 0.28);
+    --glow-2: rgba(25, 181, 232, 0.12);
+    --title-from: #b9d4ff;
+    --step-bg: rgba(47, 123, 255, 0.22);
+    --step-text: #c3d9ff;
+    --code-bg: rgba(255, 255, 255, 0.08);
+    --shot-shadow: 0 40px 120px rgba(0, 0, 0, .6), 0 0 0 1px rgba(255, 255, 255, .06);
+    --radius: 18px;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  /* 亮色外观：跟随系统 */
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f5f8fd;
+      --nav-bg: rgba(245, 248, 253, 0.7);
+      --card: rgba(255, 255, 255, 0.85);
+      --card-border: rgba(15, 35, 70, 0.1);
+      --text: #0f1a2c;
+      --muted: #56647a;
+      --glow-1: rgba(47, 123, 255, 0.18);
+      --glow-2: rgba(25, 181, 232, 0.1);
+      --title-from: #1d4fd7;
+      --step-bg: rgba(47, 123, 255, 0.14);
+      --step-text: #1d4fd7;
+      --code-bg: rgba(15, 35, 70, 0.07);
+      --shot-shadow: 0 30px 80px rgba(15, 35, 70, .22), 0 0 0 1px rgba(15, 35, 70, .08);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    color: var(--text);
+    background:
+      radial-gradient(1200px 600px at 50% -10%, var(--glow-1), transparent 60%),
+      radial-gradient(800px 500px at 90% 30%, var(--glow-2), transparent 60%),
+      var(--bg);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  code { font-family: var(--mono); }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  nav {
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: saturate(180%) blur(18px);
+    -webkit-backdrop-filter: saturate(180%) blur(18px);
+    background: var(--nav-bg);
+    border-bottom: 1px solid var(--card-border);
+  }
+  nav .wrap { display: flex; align-items: center; height: 56px; gap: 28px; }
+  nav .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; }
+  nav .brand img { width: 26px; height: 26px; }
+  nav .links { margin-left: auto; display: flex; gap: 22px; font-size: 14px; }
+  nav .links a { color: var(--muted); text-decoration: none; }
+  nav .links a:hover { color: var(--text); }
+  nav .lang { cursor: pointer; border: 1px solid var(--card-border); border-radius: 999px; padding: 3px 12px; background: none; color: var(--muted); font: inherit; font-size: 13px; }
+
+  header.hero { text-align: center; padding: 88px 0 40px; }
+  .hero img.icon { width: 148px; height: 148px; filter: drop-shadow(0 24px 48px rgba(47, 123, 255, 0.45)); }
+  .hero h1 { font-size: clamp(40px, 7vw, 68px); letter-spacing: -0.03em; margin: 18px 0 8px; line-height: 1.05; }
+  .hero h1 span {
+    background: linear-gradient(120deg, var(--title-from), var(--accent) 45%, var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero p.lead { font-size: clamp(17px, 2.2vw, 21px); color: var(--muted); max-width: 760px; margin: 0 auto; }
+  .downloads { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin: 36px 0 14px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 10px; text-align: left;
+    padding: 13px 22px; border-radius: 14px; text-decoration: none; font-weight: 600; font-size: 16px;
+    transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+  }
+  .btn small { display: block; font-weight: 400; font-size: 12px; opacity: .75; }
+  .btn.primary { color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 10px 30px rgba(47, 123, 255, .35); }
+  .btn.secondary { background: var(--card); border: 1px solid var(--card-border); }
+  .btn:hover { transform: translateY(-2px); }
+  .btn svg { width: 22px; height: 22px; flex: none; }
+  .meta { color: var(--muted); font-size: 13px; }
+
+  .shot { margin: 56px auto 0; max-width: 1000px; }
+  .shot img { width: 100%; display: block; border-radius: 14px; box-shadow: var(--shot-shadow); }
+  .tabs { display: flex; justify-content: center; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
+  .tabs button {
+    font: inherit; font-size: 13px; color: var(--muted); background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 999px; padding: 6px 14px; cursor: pointer;
+  }
+  .tabs button.active { color: var(--text); border-color: rgba(47, 123, 255, .7); background: rgba(47, 123, 255, .18); }
+
+  section { padding: 96px 0 0; }
+  section h2 { font-size: clamp(28px, 4vw, 40px); letter-spacing: -0.02em; margin: 0 0 8px; text-align: center; }
+  section p.sub { text-align: center; color: var(--muted); margin: 0 auto 44px; max-width: 640px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius);
+    padding: 20px; transition: border-color .15s ease, transform .15s ease;
+  }
+  .card:hover { border-color: rgba(47, 123, 255, .45); transform: translateY(-2px); }
+  .card .tile {
+    width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+    font-size: 17px; font-weight: 700; color: #fff; margin-bottom: 12px;
+  }
+  .card h3 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 14px; }
+
+  .points { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .point { padding: 24px; border-radius: var(--radius); background: var(--card); border: 1px solid var(--card-border); }
+  .point b { display: block; font-size: 18px; margin-bottom: 6px; }
+  .point span { color: var(--muted); font-size: 14px; }
+
+  pre.cli {
+    max-width: 860px; margin: 0 auto; padding: 20px 22px; overflow-x: auto;
+    background: var(--card); border: 1px solid var(--card-border); border-radius: 14px;
+    font-family: var(--mono); font-size: 13px; line-height: 1.7;
+  }
+  pre.cli .c { color: var(--muted); }
+
+  .install ol { counter-reset: step; list-style: none; padding: 0; margin: 0 auto; max-width: 720px; }
+  .install li { counter-increment: step; position: relative; padding: 18px 20px 18px 64px; margin-bottom: 10px; background: var(--card); border: 1px solid var(--card-border); border-radius: 14px; }
+  .install li::before {
+    content: counter(step); position: absolute; left: 18px; top: 16px; width: 30px; height: 30px; border-radius: 50%;
+    display: grid; place-items: center; font-weight: 700; background: var(--step-bg); color: var(--step-text);
+  }
+  .install li code, .sub code { background: var(--code-bg); border-radius: 6px; padding: 1px 6px; font-size: 13px; }
+
+  footer { margin-top: 110px; padding: 36px 0 48px; border-top: 1px solid var(--card-border); color: var(--muted); font-size: 13px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; }
+  footer a { color: var(--muted); }
+
+  [data-lang="en"] .zh, [data-lang="zh"] .en { display: none !important; }
+
+  @media (max-width: 640px) {
+    nav .links a.hide-sm { display: none; }
+    header.hero { padding-top: 56px; }
+  }
+</style>
+</head>
+<body data-lang="en">
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#"><img src="assets/icon-256.png" alt="">MachOKnife</a>
+    <div class="links">
+      <a class="hide-sm" href="#features"><span class="zh">功能</span><span class="en">Features</span></a>
+      <a class="hide-sm" href="#cli"><span class="zh">命令行</span><span class="en">CLI</span></a>
+      <a class="hide-sm" href="#install"><span class="zh">安装</span><span class="en">Install</span></a>
+      <a href="https://github.com/wangwanjie/MachOKnife/releases"><span class="zh">版本历史</span><span class="en">Releases</span></a>
+      <a href="https://github.com/wangwanjie/MachOKnife">GitHub</a>
+    </div>
+    <button class="lang" id="lang-toggle" type="button">中文</button>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <img class="icon" src="assets/icon.png" alt="MachOKnife">
+    <h1><span>MachOKnife</span></h1>
+    <p class="lead">
+      <span class="zh">原生 macOS Mach-O 查看与编辑工具。MachOView 风格的结构浏览器，加上重写平台标记、打包 XCFramework、合并 / 拆分 / 移除架构、污染检查等常用二进制工具，同样的能力也可以通过命令行 <code>machoe-cli</code> 使用。</span>
+      <span class="en">A native macOS app for inspecting and editing Mach-O binaries. A MachOView-style structure browser plus everyday binary tools — retag, XCFramework packaging, merge / split / remove architectures, contamination checks — with the same tooling in the <code>machoe-cli</code> command-line utility.</span>
+    </p>
+    <div class="downloads">
+      <a class="btn primary" id="dl-arm" href="https://github.com/wangwanjie/MachOKnife/releases/latest">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
+        <span><span class="zh">下载 Apple 芯片版</span><span class="en">Download for Apple silicon</span><small>M1 / M2 / M3 / M4 …</small></span>
+      </a>
+      <a class="btn secondary" id="dl-intel" href="https://github.com/wangwanjie/MachOKnife/releases/latest">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
+        <span><span class="zh">下载 Intel 版</span><span class="en">Download for Intel</span><small>x86_64</small></span>
+      </a>
+    </div>
+    <div class="meta">
+      <span class="zh">免费 · macOS 13.0 及以上 · 已通过 Apple 公证 · 内置自动更新</span>
+      <span class="en">Free · macOS 13.0 or later · Notarized by Apple · Built-in auto update</span>
+      <span id="version"></span>
+    </div>
+
+    <div class="shot">
+      <img id="shot" src="assets/screenshots/main-window.png" alt="MachOKnife">
+    </div>
+    <div class="tabs" id="tabs">
+      <button type="button" class="active" data-shot="main-window"><span class="zh">结构浏览</span><span class="en">Browser</span></button>
+      <button type="button" data-shot="retag"><span class="zh">重写平台标记</span><span class="en">Retag</span></button>
+      <button type="button" data-shot="xcframework"><span class="zh">打包 XCFramework</span><span class="en">XCFramework</span></button>
+      <button type="button" data-shot="contamination"><span class="zh">污染检查</span><span class="en">Contamination</span></button>
+      <button type="button" data-shot="cli"><span class="zh">安装命令行</span><span class="en">CLI</span></button>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="points">
+      <div class="point"><b><span class="zh">大文件也流畅</span><span class="en">Fast on large binaries</span></b><span class="zh">符号、字符串等大分组按需解码，打开大型二进制依然迅速。</span><span class="en">Symbols, strings and other heavy groups are decoded on demand, so large binaries open quickly.</span></div>
+      <div class="point"><b><span class="zh">安全编辑</span><span class="en">Safe editing</span></b><span class="zh">编辑类操作不会隐式覆盖输入文件，原地修改需要显式确认。</span><span class="en">Editing never overwrites its input implicitly; in-place rewrites must be requested explicitly.</span></div>
+      <div class="point"><b><span class="zh">App 与命令行</span><span class="en">App &amp; CLI</span></b><span class="zh">App 内置 <code>machoe-cli</code>，在偏好设置中一键安装，方便写进脚本与 CI。</span><span class="en">The app bundles <code>machoe-cli</code>; install it from Preferences and use it in scripts and CI.</span></div>
+      <div class="point"><b><span class="zh">三种语言</span><span class="en">Three languages</span></b><span class="zh">English、简体中文、繁體中文，应用内随时切换，无需重启。</span><span class="en">English, Simplified Chinese and Traditional Chinese, switchable without restarting.</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <h2><span class="zh">浏览、分析、改写</span><span class="en">Browse, analyze, rewrite</span></h2>
+    <p class="sub"><span class="zh">支持可执行文件、dylib、framework、目标文件、通用二进制、静态库 <code>.a</code> 与 dyld 共享缓存。</span><span class="en">Executables, dylibs, frameworks, object files, universal binaries, static libraries (<code>.a</code>) and dyld shared caches.</span></p>
+    <div class="grid" id="feature-grid"></div>
+  </div>
+</section>
+
+<section id="cli">
+  <div class="wrap">
+    <h2><span class="zh">命令行工具</span><span class="en">Command-line tool</span></h2>
+    <p class="sub"><span class="zh">在「偏好设置 › CLI」中安装随 App 提供的 <code>machoe-cli</code>，运行 <code>machoe-cli help &lt;command&gt;</code> 查看全部选项。</span><span class="en">Install the bundled <code>machoe-cli</code> from Preferences › CLI, then run <code>machoe-cli help &lt;command&gt;</code> for every option.</span></p>
+<pre class="cli">machoe-cli info /path/to/binary <span class="c"># per-slice overview, add --json</span>
+machoe-cli check-contamination libSDK.a --mode architecture --target arm64
+machoe-cli merge arm64/libSDK.a x86_64/libSDK.a --output /tmp/libSDK.a
+machoe-cli remove-arch MyLib.framework/MyLib --arch x86_64 --in-place
+machoe-cli retag-platform libExample.dylib --platform macos --min 13.0 --sdk 14.0 --output /tmp/out.dylib
+machoe-cli build-xcframework --source-library libSDK.a --ios-simulator-source-library libSDK-sim.a \
+  --headers-dir Headers --output /tmp/SDK.xcframework
+machoe-cli validate /path/to/binary</pre>
+  </div>
+</section>
+
+<section id="install" class="install">
+  <div class="wrap">
+    <h2><span class="zh">安装</span><span class="en">Install</span></h2>
+    <p class="sub"><span class="zh">不确定芯片类型？打开「苹果菜单 › 关于本机」，看“芯片”或“处理器”一栏。</span><span class="en">Not sure which chip you have? Open  › About This Mac and check “Chip” or “Processor”.</span></p>
+    <ol>
+      <li><span class="zh">下载与本机芯片匹配的 DMG，打开后把 MachOKnife 拖进「应用程序」文件夹。</span><span class="en">Download the DMG for your chip, open it and drag MachOKnife into Applications.</span></li>
+      <li><span class="zh">从「应用程序」中打开 MachOKnife，把 Mach-O 文件拖进窗口，或用「文件 › 打开」、访达「打开方式」打开。</span><span class="en">Launch MachOKnife and drop a Mach-O file onto the window, or use File › Open… or Finder’s “Open With”.</span></li>
+      <li><span class="zh">需要命令行时，在「偏好设置 › CLI」中把 <code>machoe-cli</code> 安装到 <code>PATH</code> 中的目录。</span><span class="en">For the CLI, install <code>machoe-cli</code> into a directory on your <code>PATH</code> from Preferences › CLI.</span></li>
+      <li><span class="zh">App 通过 Sparkle 自动更新，只会下载与本机芯片匹配的版本；也可以在「偏好设置 › 更新」中调整检查频率。</span><span class="en">Updates arrive through Sparkle and always match your chip; adjust the check schedule in Preferences › Updates.</span></li>
+    </ol>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 VanJay · MachOKnife</span>
+    <span>
+      <a href="https://github.com/wangwanjie/MachOKnife/releases"><span class="zh">版本历史</span><span class="en">Releases</span></a> ·
+      <a href="https://github.com/wangwanjie/MachOKnife/issues"><span class="zh">反馈问题</span><span class="en">Feedback</span></a>
+    </span>
+  </div>
+</footer>
+
+<script>
+  // 功能卡片：[图标文字, 颜色, 中文名, 英文名, 中文说明, 英文说明]
+  const features = [
+    ["H", "#2f7bff", "头部与加载命令", "Header & load commands", "Mach header、加载命令、段与节，按 MachOView 的方式排布，逐字段显示偏移与原始字节。", "Mach header, load commands, segments and sections laid out like MachOView, with offsets and raw bytes for every field."],
+    ["⛓", "#0ea5e9", "dyld 信息", "dyld info", "dyld info、chained fixups、导出 trie 与重定位信息。", "dyld info, chained fixups, the export trie and relocations."],
+    ["$", "#6366f1", "符号与字符串", "Symbols & strings", "符号表、间接符号表、字符串表，大表分页按需解码。", "Symbol, indirect symbol and string tables, paged and decoded on demand."],
+    ["@", "#a855f7", "ObjC 元数据", "Objective-C metadata", "类、方法、协议等 Objective-C 元数据，以及代码签名信息。", "Objective-C classes, methods and protocols, plus the code signature."],
+    ["0x", "#14b8a6", "RAW / RVA 与十六进制", "RAW / RVA & hex", "两种地址模式，字段级 Detail 表与十六进制 Data 视图，支持结构搜索与复制导出。", "Two address modes, a field-level Detail table and a hex Data view, with search, copy and export."],
+    ["⇄", "#f59e0b", "重写平台标记", "Retag", "改写平台、最低系统与 SDK 版本，例如把 iOS 切片转成 Mac Catalyst 切片。", "Rewrite platform, minimum OS and SDK metadata, e.g. turn an iOS slice into Mac Catalyst."],
+    ["▣", "#22c55e", "打包 XCFramework", "Build XCFramework", "把 iOS 真机 / 模拟器静态库与头文件打包成 XCFramework，可自动生成 Mac Catalyst 切片。", "Package device and simulator static libraries with headers into an XCFramework, optionally adding Mac Catalyst slices."],
+    ["⚠", "#ef4444", "污染检查", "Contamination check", "找出平台或架构与预期不符的切片，上架前排查模拟器切片。", "Find slices whose platform or architecture doesn't match, e.g. simulator slices before an App Store upload."],
+    ["⑃", "#ec4899", "合并 / 拆分 / 移除架构", "Merge / split / thin", "合并为通用二进制、按架构拆分，或移除不需要的架构。", "Merge slices into a universal file, split per architecture, or strip unwanted architectures."],
+    ["≡", "#64748b", "Mach-O 概要", "Mach-O summary", "一页报告汇总二进制或静态库的关键信息。", "A one-page report for a binary or archive."],
+    ["↺", "#ea580c", "最近文件", "Recent files", "拖放、访达「打开方式」、最近打开列表，重启后依然可直接打开。", "Drag and drop, Finder “Open With” and Open Recent that survives relaunches."],
+    [">_", "#2563eb", "machoe-cli", "machoe-cli", "info、summary、merge、split、set-id、rewrite-rpath、retag-platform、validate 等子命令。", "info, summary, merge, split, set-id, rewrite-rpath, retag-platform, validate and more."]
+  ];
+
+  const grid = document.getElementById("feature-grid");
+  for (const [glyph, color, zh, en, zhText, enText] of features) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML =
+      `<div class="tile" style="background:${color}">${glyph}</div>` +
+      `<h3><span class="zh">${zh}</span><span class="en">${en}</span></h3>` +
+      `<p><span class="zh">${zhText}</span><span class="en">${enText}</span></p>`;
+    grid.appendChild(card);
+  }
+
+  // 截图切换
+  const shot = document.getElementById("shot");
+  document.getElementById("tabs").addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button) {
+      return;
+    }
+    document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b === button));
+    shot.src = `assets/screenshots/${button.dataset.shot}.png`;
+  });
+
+  // 语言：默认跟随浏览器，记住用户的选择
+  const toggle = document.getElementById("lang-toggle");
+  function applyLanguage(lang) {
+    document.body.dataset.lang = lang;
+    document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+    toggle.textContent = lang === "zh" ? "EN" : "中文";
+    localStorage.setItem("machoknife.lang", lang);
+  }
+  const saved = localStorage.getItem("machoknife.lang");
+  applyLanguage(saved || (navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en"));
+  toggle.addEventListener("click", () => applyLanguage(document.body.dataset.lang === "zh" ? "en" : "zh"));
+
+  // 尽量识别 Intel Mac（浏览器无法可靠区分时保持 Apple 芯片优先）
+  try {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl");
+    const info = gl && gl.getExtension("WEBGL_debug_renderer_info");
+    const renderer = info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : "";
+    if (/Intel|AMD|Radeon/i.test(renderer) && !/Apple/i.test(renderer)) {
+      document.getElementById("dl-intel").className = "btn primary";
+      document.getElementById("dl-arm").className = "btn secondary";
+      document.querySelector(".downloads").prepend(document.getElementById("dl-intel"));
+    }
+  } catch (error) {}
+
+  // 安装包文件名带版本号，从最新 Release 读出对应架构的直链；读取失败时按钮保持指向 Release 页面
+  fetch("https://api.github.com/repos/wangwanjie/MachOKnife/releases/latest")
+    .then((response) => (response.ok ? response.json() : null))
+    .then((release) => {
+      if (!release) {
+        return;
+      }
+      if (release.tag_name) {
+        document.getElementById("version").textContent = ` · ${release.tag_name}`;
+      }
+      for (const asset of release.assets || []) {
+        if (/_arm64\.dmg$/.test(asset.name)) {
+          document.getElementById("dl-arm").href = asset.browser_download_url;
+        } else if (/_x86_64\.dmg$/.test(asset.name)) {
+          document.getElementById("dl-intel").href = asset.browser_download_url;
+        }
+      }
+    })
+    .catch(() => {});
+</script>
+</body>
+</html>
