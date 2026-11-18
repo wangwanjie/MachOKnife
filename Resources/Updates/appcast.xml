@@ -3,6 +3,53 @@
     <channel>
         <title>MachOKnife</title>
         <item>
+            <title>1.7.2</title>
+            <pubDate>Thu, 19 Nov 2026 01:18:28 +0800</pubDate>
+            <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.7.2</link>
+            <sparkle:version>13</sparkle:version>
+            <sparkle:shortVersionString>1.7.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown">## Highlights
+
+- CLI 改为以符号链接方式安装，指向 App 内的 `machoe-cli`：通过应用内更新升级 MachOKnife 后，终端里的 CLI 会自动同步为新版本
+- 打开任意大小的文件都在后台解析，界面在打开文件、保存后重新载入时不再卡顿
+- Retag 工具在后台读取输入文件，读取期间显示进度，大文件或大型静态库不再卡住窗口
+
+## 改进与修复
+
+- 启动时自动把旧版本以复制方式安装的 CLI、或因 App 被移动而失效的链接更新为指向当前 App；安装在需要管理员权限的目录（如 `/usr/local/bin`）时，请在「设置 › CLI」中点一次「安装 CLI」完成切换
+- 从 DMG 直接运行 App 时安装 CLI 仍会复制文件，避免卸载镜像后链接失效
+- 卸载 CLI 时能正确移除已失效的链接，失效的链接不再显示为「已安装」
+- Retag 读取新文件期间不能开始改写，读取中途换文件或清空时旧的结果不会再回填
+- Retag 窗口输入区的按钮固定在右侧，不再随路径长短移动
+</description>
+            <enclosure url="https://github.com/wangwanjie/MachOKnife/releases/download/v1.7.2/MachOKnife_V_1.7.2_arm64.dmg" length="8137964" type="application/octet-stream" sparkle:edSignature="u1CNZkMKi/SyHtnSOArlK6YK0uy/fd+iidAAnevqNnRtiUC0Lylq4MTuX69IYm412BRCQBSzM589OsJkO9PpBQ==" />
+        </item>
+        <item>
+            <title>1.7.2</title>
+            <pubDate>Thu, 19 Nov 2026 01:18:28 +0800</pubDate>
+            <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.7.2</link>
+            <sparkle:version>13</sparkle:version>
+            <sparkle:shortVersionString>1.7.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown">## Highlights
+
+- CLI 改为以符号链接方式安装，指向 App 内的 `machoe-cli`：通过应用内更新升级 MachOKnife 后，终端里的 CLI 会自动同步为新版本
+- 打开任意大小的文件都在后台解析，界面在打开文件、保存后重新载入时不再卡顿
+- Retag 工具在后台读取输入文件，读取期间显示进度，大文件或大型静态库不再卡住窗口
+
+## 改进与修复
+
+- 启动时自动把旧版本以复制方式安装的 CLI、或因 App 被移动而失效的链接更新为指向当前 App；安装在需要管理员权限的目录（如 `/usr/local/bin`）时，请在「设置 › CLI」中点一次「安装 CLI」完成切换
+- 从 DMG 直接运行 App 时安装 CLI 仍会复制文件，避免卸载镜像后链接失效
+- 卸载 CLI 时能正确移除已失效的链接，失效的链接不再显示为「已安装」
+- Retag 读取新文件期间不能开始改写，读取中途换文件或清空时旧的结果不会再回填
+- Retag 窗口输入区的按钮固定在右侧，不再随路径长短移动
+</description>
+            <enclosure url="https://github.com/wangwanjie/MachOKnife/releases/download/v1.7.2/MachOKnife_V_1.7.2_x86_64.dmg" length="8543859" type="application/octet-stream" sparkle:edSignature="9xfiJ/ztr3VURj0EQPgDilxyE4ItEBqOluyJQhwEaaHCZ5XX/MF93f0R8wHaab1O9umExp1JcHdp9wiDjYRcBw==" />
+        </item>
+        <item>
             <title>1.7.1</title>
             <pubDate>Thu, 19 Nov 2026 00:51:03 +0800</pubDate>
             <link>https://github.com/wangwanjie/MachOKnife/releases/tag/v1.7.1</link>
